@@ -53,17 +53,25 @@ func TestIAMTools_RefuseACrossTenantRequest(t *testing.T) {
 	}
 }
 
-// TestIAMTools_RefuseTheSystemTenantNamingATenant: the system tenant gets no
-// cross-tenant lift through tenant_id, matching tenantctx.Target.
-func TestIAMTools_RefuseTheSystemTenantNamingATenant(t *testing.T) {
+// TestIAMTools_SystemCallerActsInTheNamedTenant: a system-tenant caller that
+// names a tenant in tenant_id acts in it, as over REST (tenantctx.AdminTarget,
+// pkg/api/rest/tenant_lift_test.go, go-quicbaas#2741): the handler reads the
+// named tenant and runs with it bound on ctx.
+func TestIAMTools_SystemCallerActsInTheNamedTenant(t *testing.T) {
 	t.Parallel()
-	reg := newIAMTestRegistry(&mockIAMService{})
+	var gotArg, gotCtx string
+	reg := newIAMTestRegistry(&mockIAMService{listUsersFunc: func(ctx context.Context, req *service.IAMListUsersRequest) (*service.IAMListUsersResponse, error) {
+		gotArg = req.TenantID
+		gotCtx, _ = tenantctx.Lookup(ctx)
+		return &service.IAMListUsersResponse{}, nil
+	}})
 
 	_, err := reg.executeIAMTool(tenantctx.WithSystem(context.Background()), "quicbaas_iam_user_list",
 		map[string]interface{}{"tenant_id": "acme"})
 
-	var cross *tenantctx.CrossTenantError
-	require.ErrorAs(t, err, &cross)
+	require.NoError(t, err)
+	assert.Equal(t, "acme", gotArg, "the handler reads the named tenant")
+	assert.Equal(t, "acme", gotCtx, "the handler runs with the named tenant bound on ctx")
 }
 
 // TestIAMTools_RefuseAnUnboundCaller: a call with no tenant bound is refused
@@ -115,7 +123,7 @@ func TestScopeIAMTenant_PassesUnscopedToolsThrough(t *testing.T) {
 	t.Parallel()
 	args := map[string]interface{}{"tenant_id": "acme"}
 
-	got, err := scopeIAMTenant(context.Background(), "quicbaas_mfa_status", args)
+	_, got, err := scopeIAMTenant(context.Background(), "quicbaas_mfa_status", args)
 
 	require.NoError(t, err)
 	assert.Equal(t, args, got)

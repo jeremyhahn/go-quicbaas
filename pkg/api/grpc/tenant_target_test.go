@@ -51,13 +51,44 @@ func TestRequireCallerTenant_RefusesEveryOtherCaller(t *testing.T) {
 	}
 }
 
+// TestRequireAdminTarget_SystemCallerActsInTheNamedTenant mirrors the REST
+// rule (pkg/api/rest/tenant_lift_test.go): a system-tenant caller that names a
+// tenant acts in it, and the returned context carries that tenant.
+func TestRequireAdminTarget_SystemCallerActsInTheNamedTenant(t *testing.T) {
+	ctx, err := requireAdminTarget(tenantctx.WithSystem(context.Background()), "grpc.Test", "acme")
+	require.NoError(t, err)
+	require.Equal(t, "acme", boundTenant(ctx))
+}
+
+func TestRequireAdminTarget_TenantCallerNamingAnotherTenantIsRefused(t *testing.T) {
+	ctx, err := requireAdminTarget(callerContext("burnin"), "grpc.Test", "acme")
+	require.Equal(t, codes.PermissionDenied, status.Code(err), "err = %v", err)
+	require.Equal(t, "burnin", boundTenant(ctx), "a refusal must not rebind the caller's tenant")
+}
+
+func TestRequireAdminTarget_TenantCallerActsInItsOwnTenant(t *testing.T) {
+	for name, requested := range map[string]string{"names itself": "acme", "names none": ""} {
+		t.Run(name, func(t *testing.T) {
+			ctx, err := requireAdminTarget(callerContext("acme"), "grpc.Test", requested)
+			require.NoError(t, err)
+			require.Equal(t, "acme", boundTenant(ctx))
+		})
+	}
+}
+
+func TestRequireAdminTarget_UnboundContextIsRefused(t *testing.T) {
+	_, err := requireAdminTarget(context.Background(), "grpc.Test", "acme")
+	require.Equal(t, codes.PermissionDenied, status.Code(err), "err = %v", err)
+}
+
 // TestTenantScopedServers_RefuseATenantThatIsNotTheCallers proves the IAM,
-// WebAuthn, federation, project and session servers honour a request's
-// tenant_id only for the caller's own tenant. The service doubles fail on any
-// call, so a refusal must happen before the service is reached.
+// WebAuthn, project and session servers honour a request's tenant_id only for
+// the caller's own tenant. The service doubles fail on any call, so a refusal
+// must happen before the service is reached. The Federation server follows
+// the REST AdminTarget rule instead (go-quicbaas#2741); its tests are in
+// server_iam_federation_test.go.
 func TestTenantScopedServers_RefuseATenantThatIsNotTheCallers(t *testing.T) {
 	iamSrv, _ := newTestIAMServer(t)
-	federationSrv, _ := newTestFederationServer(t)
 	projectSrv := newProjectServer(t, &grpcMockProjectService{})
 	sessionSrv, _ := createTestSessionServer(t)
 	orchestratorSrv := newSessionEventsServer(t, seedConversationLog(t, "acme", "s1"))
@@ -73,10 +104,6 @@ func TestTenantScopedServers_RefuseATenantThatIsNotTheCallers(t *testing.T) {
 		},
 		"iam.ListWebAuthnCredentials": func(ctx context.Context) error {
 			_, err := iamSrv.ListWebAuthnCredentials(ctx, &iampb.ListWebAuthnCredentialsRequest{TenantId: "acme", UserId: "u1"})
-			return err
-		},
-		"federation.ListProviders": func(ctx context.Context) error {
-			_, err := federationSrv.ListProviders(ctx, &iampb.ListProvidersRequest{TenantId: "acme"})
 			return err
 		},
 		"project.ListProjects": func(ctx context.Context) error {
