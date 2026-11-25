@@ -271,7 +271,9 @@ func resolveEnrolledAdmin(ctx context.Context, t *testing.T, c quicbaas.Client, 
 
 // A PIV key the administrator enrolls through AdminFactors().Enroll holds a
 // certificate the server CA signed, and the unified login accepts a nonce
-// signed by that key, on every transport. Any other key is refused.
+// signed by that key, on every transport but MCP. Any other key is refused.
+// Over MCP the enrolment succeeds and the slot holds the issued certificate,
+// but the login is refused: the unified login tools are not permitted on MCP.
 func TestAdminFactors_PIVEnrollsThenLogsIn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -308,6 +310,15 @@ func TestAdminFactors_PIVEnrollsThenLogsIn(t *testing.T) {
 			lookupKey := sha256.Sum256(slotCert.Raw)
 			slotMeta := map[string]string{"slot": metadata["slot"]}
 
+			if tr == transportMCP {
+				_, err = runSDKLogin(ctx, c, qrdbtransport.FactorTypePIV, adminSubject,
+					lookupKey[:], signWith(signer), slotMeta)
+				require.Equal(t, sdkerrors.CodeForbidden, sdkerrors.Code(err),
+					"[%s] PIV login must be refused over MCP, got %v", tr, err)
+				require.ErrorContains(t, err,
+					"tool not permitted (no permission registration): quicbaas_login_begin", "[%s]", tr)
+				return
+			}
 			res, err := runSDKLogin(ctx, c, qrdbtransport.FactorTypePIV, adminSubject,
 				lookupKey[:], signWith(signer), slotMeta)
 			require.NoError(t, err, "[%s] login with the enrolled PIV key", tr)
