@@ -1366,6 +1366,9 @@ func (s *Server) startSecrets() error {
 		Backend: backend,
 		Logger:  logAdapter,
 		Locker:  nil,
+		// The node's seal is the only at-rest protection the platform
+		// store's secret values have; without it the Manager refuses.
+		AtRestBarrier: func() bool { return s.secretsAtRest },
 	})
 	if err != nil {
 		return api.NewOperationFailedError("create secrets manager", err)

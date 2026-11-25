@@ -233,8 +233,12 @@ type Server struct {
 	// KMS and Secrets components
 	kmsManager     *kms.KMSService
 	secretsManager *secrets.Manager
-	vectorService  service.VectorService
-	vectorStorage  interfaces.VectorStorage
+	// secretsAtRest is true when the node's platform store sits behind an
+	// at-rest barrier (the effective node seal, with a strategy other than
+	// none). The secrets Manager refuses writes and value reads without it.
+	secretsAtRest bool
+	vectorService service.VectorService
+	vectorStorage interfaces.VectorStorage
 
 	// ownsXKMS records that THIS server's initXKMS call created the
 	// process-global xkms service (initializeCA or startKMS), so Shutdown

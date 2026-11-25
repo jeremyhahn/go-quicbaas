@@ -340,6 +340,12 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 	return qcfg, nil
 }
 
+// platformAtRest reports whether the node buildQRDBConfig describes keeps its
+// platform store behind an at-rest barrier.
+func platformAtRest(qcfg *qrdbsdk.DaemonConfig) bool {
+	return qcfg != nil && qcfg.Seal.Enabled && qcfg.Seal.Strategy != string(qrdbsdk.StrategyNone)
+}
+
 // buildXKMSCryptoOptions collects hardware strategy factories registered via
 // the quicbaas seal_factory_*.go files and constructs the canonical
 // []qrdbsdk.ServerOption via XKMSCryptoOptions. When no hardware strategy is
@@ -966,6 +972,7 @@ func (s *Server) initStandaloneQRDBNode() error {
 	if qcfgErr != nil {
 		return &QRDBNodeError{Stage: "build qrdb config", Cause: qcfgErr}
 	}
+	s.secretsAtRest = platformAtRest(qcfg)
 
 	// Build the hardware seal strategy ONCE up front (single TPM open) so its
 	// open TPM2 backend can be shared with both the embedded node's barrier
@@ -1179,6 +1186,7 @@ func (s *Server) initClusteredQRDBNode() error {
 	if qcfgErr != nil {
 		return &QRDBNodeError{Stage: "build qrdb config", Cause: qcfgErr}
 	}
+	s.secretsAtRest = platformAtRest(qcfg)
 
 	members, err := buildClusterMembers(s.config)
 	if err != nil {
