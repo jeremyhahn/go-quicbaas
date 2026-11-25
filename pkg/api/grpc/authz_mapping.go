@@ -218,7 +218,10 @@ var grpcRequestPermissions = map[string]func(req interface{}) ([]methodPermissio
 		if !ok {
 			return nil, fmt.Errorf("unexpected request type %T for UpdateUser", req)
 		}
-		if len(r.GetRoles()) > 0 {
+		// Attributes carry authorization data (go-qrdb's
+		// AuthorizeRoleAssignmentWrite gates attribute writes on roles:assign
+		// too), so an attributes-only update needs it as well.
+		if len(r.GetRoles()) > 0 || len(r.GetAttributes()) > 0 {
 			return []methodPermission{{"roles", "assign"}}, nil
 		}
 		return nil, nil
