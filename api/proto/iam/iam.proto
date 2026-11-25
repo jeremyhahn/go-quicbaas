@@ -40,8 +40,14 @@ service IAMService {
       option (qrdb.v1.permission) = "users:read";
   }
   rpc UpdateUser(UpdateUserRequest) returns (User);
-  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
-  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  // DeleteUser takes users:delete, the grant QRDBService's DeleteUser takes.
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
+      option (qrdb.v1.permission) = "users:delete";
+  }
+  // ListUsers takes users:list, the grant QRDBService's ListUsers takes.
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
+      option (qrdb.v1.permission) = "users:list";
+  }
   // GetUserByUsername is the tenant-scoped username lookup. Like GetUser it
   // takes users:read, the grant QRDBService's user reads take.
   rpc GetUserByUsername(GetUserByUsernameRequest) returns (User) {
