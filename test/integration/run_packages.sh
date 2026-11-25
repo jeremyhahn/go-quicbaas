@@ -138,7 +138,7 @@ for pkg in "$@"; do
 	# shellcheck disable=SC2086 # FLAGS is split into separate go test flags.
 	{
 		timeout --kill-after=30s "$pkg_kill_timeout" \
-			go test -v -p 1 -failfast -tags "$tags" -timeout "$pkg_timeout" $flags "$pkg"
+			go test -v -p 1 -tags "$tags" -timeout "$pkg_timeout" $flags "$pkg"
 		echo $? >"$status_file"
 	} 2>&1 | tee -a "$log"
 	read -r rc <"$status_file"
