@@ -467,7 +467,9 @@ func (s *IAMServer) UpdateUser(ctx context.Context, req *iampb.UpdateUserRequest
 	if err != nil {
 		return nil, err
 	}
-	if len(req.GetRoles()) > 0 {
+	// Attributes are authorization data: writing them needs roles:assign
+	// exactly as naming roles does, checked before any write.
+	if len(req.GetRoles()) > 0 || len(req.GetAttributes()) > 0 {
 		if err := s.requireRoleAssign(ctx); err != nil {
 			return nil, err
 		}
