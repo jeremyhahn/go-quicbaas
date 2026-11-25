@@ -13,7 +13,11 @@
 
 // fido2_handler.go carries the tenant-scoped WebAuthn ceremony verbs behind
 // Security().Auth().FIDO2() over the MCP transport, mapping each method onto
-// the server's xkms.fido2.* tools. The SDK request and response types are
+// the server's xkms_fido2_* tools, named as the node registers them (the
+// dots of the xkms.fido2.* registry names become underscores). The node
+// serves only the add-credential pair (BeginAddCredential,
+// FinishRegistration); the other three answer "not found" there. The SDK
+// request and response types are
 // the go-xkms transport structs verbatim; the only quicbaas addition is the
 // tenant_id argument injected from the request context
 // (transport.TenantFromContext), because QuicBaaS runs one relying party per
@@ -49,13 +53,16 @@ func isMCPFIDO2Service(service string) bool {
 const fido2MethodBeginAddCredential = "BeginAddCredential"
 
 // fido2MethodTools maps FIDO2 methods (the xkms FIDO2Service vocabulary) to
-// the server's xkms.fido2.* tool names.
+// the server's tool names as the node registers them: the xkms.fido2.*
+// registry names with dots replaced by underscores. Passkeys stay off MCP:
+// the node serves none of these tools there, so every method answers "not
+// found" over MCP.
 var fido2MethodTools = map[string]string{
-	"BeginRegistration":    "xkms.fido2.beginRegistration",
-	"FinishRegistration":   "xkms.fido2.finishRegistration",
-	"BeginAddCredential":   "xkms.fido2.beginAddCredential",
-	"BeginAuthentication":  "xkms.fido2.beginAuthentication",
-	"FinishAuthentication": "xkms.fido2.finishAuthentication",
+	"BeginRegistration":    "xkms_fido2_beginRegistration",
+	"FinishRegistration":   "xkms_fido2_finishRegistration",
+	"BeginAddCredential":   "xkms_fido2_beginAddCredential",
+	"BeginAuthentication":  "xkms_fido2_beginAuthentication",
+	"FinishAuthentication": "xkms_fido2_finishAuthentication",
 }
 
 // fido2ToolName returns the MCP tool name for a FIDO2 method and whether the

@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
@@ -1783,7 +1784,7 @@ func TestSchedulerServer_TypeConversions(t *testing.T) {
 			{pb.OwnerType_OWNER_TYPE_SYSTEM, service.SchedulerOwnerTypeSystem},
 			{pb.OwnerType_OWNER_TYPE_TENANT, service.SchedulerOwnerTypeTenant},
 			{pb.OwnerType_OWNER_TYPE_DELEGATED, service.SchedulerOwnerTypeDelegated},
-			{pb.OwnerType_OWNER_TYPE_UNSPECIFIED, service.SchedulerOwnerTypeSystem},
+			{pb.OwnerType_OWNER_TYPE_UNSPECIFIED, ""},
 		}
 
 		for _, tc := range tests {
@@ -2089,6 +2090,31 @@ func TestNewSchedulerServer(t *testing.T) {
 		assert.NotNil(t, server.schedulerSvc)
 		assert.NotNil(t, server.logger)
 	})
+}
+
+// A tenant caller's CreateJob that names no owner type is not refused as
+// acting for the system tenant: the job is owned by the caller's tenant.
+func TestSchedulerServer_CreateJob_TenantCallerUnspecifiedOwnerIsTenantOwned(t *testing.T) {
+	client, _, _ := startLegacySchedulerListener(t, "tenant-a")
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer good")
+
+	created, err := client.CreateJob(ctx, &pb.CreateJobRequest{
+		Name: "report", Type: pb.JobType_JOB_TYPE_ONE_SHOT, Handler: "h",
+		OwnerType: pb.OwnerType_OWNER_TYPE_UNSPECIFIED, ExecuteAt: time.Now().Add(time.Hour).Unix(),
+	})
+	require.NoError(t, err)
+	job := created.GetJob()
+	require.NotNil(t, job)
+	assert.Equal(t, pb.OwnerType_OWNER_TYPE_TENANT, job.GetOwnerType())
+	assert.Equal(t, "tenant-a", job.GetOwnerId())
+	assert.Equal(t, "tenant-a", job.GetTargetTenantId())
+
+	// An explicit system owner from the same tenant caller is still refused.
+	_, err = client.CreateJob(ctx, &pb.CreateJobRequest{
+		Name: "rotation", Type: pb.JobType_JOB_TYPE_ONE_SHOT, Handler: "h",
+		OwnerType: pb.OwnerType_OWNER_TYPE_SYSTEM, ExecuteAt: time.Now().Add(time.Hour).Unix(),
+	})
+	require.Error(t, err)
 }
 
 // =============================================================================

@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"time"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
@@ -224,8 +225,36 @@ func (c *mcpCryptoClient) callTool(ctx context.Context, toolName string, args ma
 // =============================================================================
 
 // parseCryptoEncryptResponse parses the MCP response into an EncryptResponse.
+// getB64Bytes reads a []byte field from an MCP crypto response. MCP returns
+// []byte fields as the base64 strings encoding/json writes, so they are
+// decoded once here. A missing key or nil value gives (nil, nil); a []byte is
+// returned as is; a string that is not valid base64 is an error naming the key.
+func getB64Bytes(m map[string]interface{}, key string) ([]byte, error) {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return nil, nil
+	}
+	switch val := v.(type) {
+	case string:
+		b, err := base64.StdEncoding.DecodeString(val)
+		if err != nil {
+			return nil, fmt.Errorf("decode %s: %w", key, err)
+		}
+		return b, nil
+	case []byte:
+		return val, nil
+	default:
+		return nil, fmt.Errorf("decode %s: unexpected type %T", key, v)
+	}
+}
+
 func parseCryptoEncryptResponse(result interface{}) (*service.EncryptResponse, error) {
 	data, err := toJSONMap(result)
+	if err != nil {
+		return nil, err
+	}
+
+	ciphertextBytes, err := getB64Bytes(data, "ciphertext")
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +262,7 @@ func parseCryptoEncryptResponse(result interface{}) (*service.EncryptResponse, e
 	resp := &service.EncryptResponse{
 		KeyID:      getString(data, "key_id"),
 		KeyVersion: uint64(getInt64(data, "key_version")),
-		Ciphertext: getBytes(data, "ciphertext"),
+		Ciphertext: ciphertextBytes,
 	}
 	return resp, nil
 }
@@ -245,10 +274,15 @@ func parseCryptoDecryptResponse(result interface{}) (*service.DecryptResponse, e
 		return nil, err
 	}
 
+	plaintextBytes, err := getB64Bytes(data, "plaintext")
+	if err != nil {
+		return nil, err
+	}
+
 	resp := &service.DecryptResponse{
 		KeyID:      getString(data, "key_id"),
 		KeyVersion: uint64(getInt64(data, "key_version")),
-		Plaintext:  getBytes(data, "plaintext"),
+		Plaintext:  plaintextBytes,
 	}
 	return resp, nil
 }
@@ -260,10 +294,15 @@ func parseCryptoSignResponse(result interface{}) (*service.SignResponse, error) 
 		return nil, err
 	}
 
+	signatureBytes, err := getB64Bytes(data, "signature")
+	if err != nil {
+		return nil, err
+	}
+
 	resp := &service.SignResponse{
 		KeyID:         getString(data, "key_id"),
 		KeyVersion:    uint64(getInt64(data, "key_version")),
-		Signature:     getBytes(data, "signature"),
+		Signature:     signatureBytes,
 		HashAlgorithm: service.HashAlgorithm(getString(data, "hash_algorithm")),
 		Timestamp:     time.Now(),
 	}
@@ -293,9 +332,14 @@ func parseCryptoHashResponse(result interface{}) (*service.HashResponse, error) 
 		return nil, err
 	}
 
+	hashBytes, err := getB64Bytes(data, "hash")
+	if err != nil {
+		return nil, err
+	}
+
 	resp := &service.HashResponse{
 		Algorithm: service.HashAlgorithm(getString(data, "algorithm")),
-		Hash:      getBytes(data, "hash"),
+		Hash:      hashBytes,
 		Timestamp: time.Now(),
 	}
 	return resp, nil
@@ -308,10 +352,15 @@ func parseCryptoHMACResponse(result interface{}) (*service.HMACResponse, error) 
 		return nil, err
 	}
 
+	hmacBytes, err := getB64Bytes(data, "hmac")
+	if err != nil {
+		return nil, err
+	}
+
 	resp := &service.HMACResponse{
 		KeyID:         getString(data, "key_id"),
 		KeyVersion:    uint64(getInt64(data, "key_version")),
-		HMAC:          getBytes(data, "hmac"),
+		HMAC:          hmacBytes,
 		HashAlgorithm: service.HashAlgorithm(getString(data, "hash_algorithm")),
 		Timestamp:     time.Now(),
 	}
@@ -341,11 +390,16 @@ func parseCryptoRewrapResponse(result interface{}) (*service.RewrapResponse, err
 		return nil, err
 	}
 
+	ciphertextBytes, err := getB64Bytes(data, "ciphertext")
+	if err != nil {
+		return nil, err
+	}
+
 	resp := &service.RewrapResponse{
 		KeyID:         getString(data, "key_id"),
 		OldKeyVersion: uint64(getInt64(data, "old_key_version")),
 		NewKeyVersion: uint64(getInt64(data, "new_key_version")),
-		Ciphertext:    getBytes(data, "ciphertext"),
+		Ciphertext:    ciphertextBytes,
 		Timestamp:     time.Now(),
 	}
 	return resp, nil
@@ -358,10 +412,19 @@ func parseCryptoGenerateDataKeyResponse(result interface{}) (*service.GenerateDa
 		return nil, err
 	}
 
+	plaintextBytes, err := getB64Bytes(data, "plaintext")
+	if err != nil {
+		return nil, err
+	}
+	ciphertextBlob, err := getB64Bytes(data, "ciphertext_blob")
+	if err != nil {
+		return nil, err
+	}
+
 	resp := &service.GenerateDataKeyResponse{
 		KeyID:          getString(data, "key_id"),
-		Plaintext:      getBytes(data, "plaintext"),
-		CiphertextBlob: getBytes(data, "ciphertext_blob"),
+		Plaintext:      plaintextBytes,
+		CiphertextBlob: ciphertextBlob,
 		Timestamp:      time.Now(),
 	}
 	return resp, nil
@@ -374,8 +437,13 @@ func parseCryptoGenerateRandomResponse(result interface{}) (*service.GenerateRan
 		return nil, err
 	}
 
+	randomBytes, err := getB64Bytes(data, "random_bytes")
+	if err != nil {
+		return nil, err
+	}
+
 	resp := &service.GenerateRandomResponse{
-		RandomBytes: getBytes(data, "random_bytes"),
+		RandomBytes: randomBytes,
 		Timestamp:   time.Now(),
 	}
 	return resp, nil

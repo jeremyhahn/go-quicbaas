@@ -418,7 +418,7 @@ type testMockSessionClient struct {
 	ListFunc         func(ctx context.Context, req *iam.ListSessionsRequest) (*iam.ListSessionsResponse, error)
 	RevokeFunc       func(ctx context.Context, sessionID string) error
 	RevokeAllFunc    func(ctx context.Context, tenantID, userID string) error
-	RevokeOthersFunc func(ctx context.Context, keepSessionID string) error
+	RevokeOthersFunc func(ctx context.Context, tenantID, keepSessionID string) error
 	TouchFunc        func(ctx context.Context, sessionID string) error
 }
 
@@ -453,9 +453,9 @@ func (m *testMockSessionClient) RevokeAll(ctx context.Context, tenantID, userID 
 	return nil
 }
 
-func (m *testMockSessionClient) RevokeOthers(ctx context.Context, keepSessionID string) error {
+func (m *testMockSessionClient) RevokeOthers(ctx context.Context, tenantID, keepSessionID string) error {
 	if m.RevokeOthersFunc != nil {
-		return m.RevokeOthersFunc(ctx, keepSessionID)
+		return m.RevokeOthersFunc(ctx, tenantID, keepSessionID)
 	}
 	return nil
 }

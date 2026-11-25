@@ -207,7 +207,7 @@ func TestMCPCostNarrowsToAHost(t *testing.T) {
 		entries float64
 	}{
 		"the unattributed host": {"-", 2},
-		"a host that ran none":  {"gpu-host:9091", 0},
+		"a host that ran none":  {"gpu-01:9091", 0},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
