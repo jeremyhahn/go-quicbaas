@@ -427,8 +427,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// Mirrors REST POST .../users/{user_id}/gdpr/deletion (tenants:create).
 	"/quicbaas.iam.v1.IAMService/RequestDeletion": {"tenants", "create"},
 
-	// Mirrors REST PUT .../users/{user_id} (tenants:create). A request naming roles also takes roles:assign (grpcRequestPermissions).
-	"/quicbaas.iam.v1.IAMService/UpdateUser": {"tenants", "create"},
+	// UpdateUser takes users:update, as GetUser takes users:read, ListUsers
+	// users:list and DeleteUser users:delete. A request naming roles also
+	// takes roles:assign (grpcRequestPermissions).
+	"/quicbaas.iam.v1.IAMService/UpdateUser": {"users", "update"},
 
 	// ---- quicbaas.iam.v1.FederationService: providers and account links ----
 	//

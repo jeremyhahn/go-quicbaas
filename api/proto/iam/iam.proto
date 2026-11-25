@@ -39,9 +39,9 @@ service IAMService {
   rpc GetUser(GetUserRequest) returns (User) {
       option (qrdb.v1.permission) = "users:read";
   }
-  // UpdateUser mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id} and takes its tenants:create grant. A request naming roles also takes roles:assign.
+  // UpdateUser takes users:update, as GetUser, ListUsers and DeleteUser take their users grant. A request naming roles also takes roles:assign.
   rpc UpdateUser(UpdateUserRequest) returns (User) {
-      option (qrdb.v1.permission) = "tenants:create";
+      option (qrdb.v1.permission) = "users:update";
   }
   // DeleteUser takes users:delete, the grant QRDBService's DeleteUser takes.
   rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {

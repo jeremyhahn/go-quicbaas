@@ -83,8 +83,9 @@ var iamRESTParityGrants = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/RequestExport": {"tenants", "create"},
 	// POST .../users/{user_id}/gdpr/deletion
 	"/quicbaas.iam.v1.IAMService/RequestDeletion": {"tenants", "create"},
-	// PUT .../users/{user_id}
-	"/quicbaas.iam.v1.IAMService/UpdateUser": {"tenants", "create"},
+	// users:update, as GetUser, ListUsers and DeleteUser take their users
+	// grant; a request naming roles also takes roles:assign.
+	"/quicbaas.iam.v1.IAMService/UpdateUser": {"users", "update"},
 }
 
 func TestIAMRESTParityGRPCResourceAndAction(t *testing.T) {

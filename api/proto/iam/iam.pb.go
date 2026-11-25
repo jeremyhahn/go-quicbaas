@@ -14790,7 +14790,7 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x19PROVIDER_TYPE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12PROVIDER_TYPE_OIDC\x10\x01\x12\x16\n" +
 	"\x12PROVIDER_TYPE_SAML\x10\x02\x12\x18\n" +
-	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\xb92\n" +
+	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\xb72\n" +
 	"\n" +
 	"IAMService\x12a\n" +
 	"\fCreateTenant\x12$.quicbaas.iam.v1.CreateTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\"\x12\xc2\xf3\x18\x0etenants:create\x12Y\n" +
@@ -14802,9 +14802,9 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\n" +
 	"CreateUser\x12\".quicbaas.iam.v1.CreateUserRequest\x1a\x15.quicbaas.iam.v1.User\"\x10\xc2\xf3\x18\fusers:create\x12Q\n" +
 	"\aGetUser\x12\x1f.quicbaas.iam.v1.GetUserRequest\x1a\x15.quicbaas.iam.v1.User\"\x0e\xc2\xf3\x18\n" +
-	"users:read\x12[\n" +
+	"users:read\x12Y\n" +
 	"\n" +
-	"UpdateUser\x12\".quicbaas.iam.v1.UpdateUserRequest\x1a\x15.quicbaas.iam.v1.User\"\x12\xc2\xf3\x18\x0etenants:create\x12g\n" +
+	"UpdateUser\x12\".quicbaas.iam.v1.UpdateUserRequest\x1a\x15.quicbaas.iam.v1.User\"\x10\xc2\xf3\x18\fusers:update\x12g\n" +
 	"\n" +
 	"DeleteUser\x12\".quicbaas.iam.v1.DeleteUserRequest\x1a#.quicbaas.iam.v1.DeleteUserResponse\"\x10\xc2\xf3\x18\fusers:delete\x12b\n" +
 	"\tListUsers\x12!.quicbaas.iam.v1.ListUsersRequest\x1a\".quicbaas.iam.v1.ListUsersResponse\"\x0e\xc2\xf3\x18\n" +

@@ -133,8 +133,8 @@ func TestUserGRPCCreateWithRolesRequiresRolesAssign(t *testing.T) {
 }
 
 // TestUserGRPCUpdateWithRolesRequiresRolesAssign pins that an UpdateUser
-// request naming roles takes roles:assign on top of the REST twin's
-// tenants:create, and that one without roles takes only tenants:create.
+// request naming roles takes roles:assign on top of its users:update
+// grant (the users grant GetUser, ListUsers and DeleteUser also take), and that one without roles takes only users:update.
 func TestUserGRPCUpdateWithRolesRequiresRolesAssign(t *testing.T) {
 	const method = "/quicbaas.iam.v1.IAMService/UpdateUser"
 	info := &grpc.UnaryServerInfo{FullMethod: method}
@@ -154,39 +154,39 @@ func TestUserGRPCUpdateWithRolesRequiresRolesAssign(t *testing.T) {
 		return authz, called, err
 	}
 
-	t.Run("tenants:create only, roles named", func(t *testing.T) {
-		authz, called, err := run(t, []string{"tenants:create"},
+	t.Run("users:update only, roles named", func(t *testing.T) {
+		authz, called, err := run(t, []string{"users:update"},
 			&iampb.UpdateUserRequest{Roles: []string{"admin"}})
 		require.Error(t, err)
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 		assert.False(t, called, "handler must not run without roles:assign")
-		assert.Equal(t, []string{"tenants:create", "roles:assign"}, authz.asked)
+		assert.Equal(t, []string{"users:update", "roles:assign"}, authz.asked)
 	})
 
-	t.Run("tenants:create only, no roles", func(t *testing.T) {
-		authz, called, err := run(t, []string{"tenants:create"}, &iampb.UpdateUserRequest{Name: "n"})
+	t.Run("users:update only, no roles", func(t *testing.T) {
+		authz, called, err := run(t, []string{"users:update"}, &iampb.UpdateUserRequest{Name: "n"})
 		require.NoError(t, err)
 		assert.True(t, called)
-		assert.Equal(t, []string{"tenants:create"}, authz.asked)
+		assert.Equal(t, []string{"users:update"}, authz.asked)
 	})
 
-	t.Run("tenants:create and roles:assign, roles named", func(t *testing.T) {
-		authz, called, err := run(t, []string{"tenants:create", "roles:assign"},
+	t.Run("users:update and roles:assign, roles named", func(t *testing.T) {
+		authz, called, err := run(t, []string{"users:update", "roles:assign"},
 			&iampb.UpdateUserRequest{Roles: []string{"admin"}})
 		require.NoError(t, err)
 		assert.True(t, called)
-		assert.Equal(t, []string{"tenants:create", "roles:assign"}, authz.asked)
+		assert.Equal(t, []string{"users:update", "roles:assign"}, authz.asked)
 	})
 
 	t.Run("nil request", func(t *testing.T) {
-		_, called, err := run(t, []string{"tenants:create", "roles:assign"}, nil)
+		_, called, err := run(t, []string{"users:update", "roles:assign"}, nil)
 		require.Error(t, err)
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 		assert.False(t, called)
 	})
 
 	t.Run("request of another type", func(t *testing.T) {
-		_, called, err := run(t, []string{"tenants:create", "roles:assign"}, &iampb.GetUserRequest{})
+		_, called, err := run(t, []string{"users:update", "roles:assign"}, &iampb.GetUserRequest{})
 		require.Error(t, err)
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 		assert.False(t, called)
