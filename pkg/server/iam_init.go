@@ -1964,6 +1964,13 @@ func (s *Server) buildIAMServer(getter iamComponentsGetter) iampb.IAMServiceServ
 	}
 	iamServer := grpcapi.NewIAMServer(iamAdapter, s.logger)
 	iamServer.SetInviteOrigin(s.inviteOrigin())
+	// UpdateUser asks this validator for roles:assign when a request names
+	// roles, on every gRPC listener. Without it such requests are refused.
+	if validator, err := s.buildPlatformValidator(ctx); err != nil {
+		s.logger.WithError(err).Warn("IAM gRPC role assignment disabled: platform-token validator unavailable")
+	} else {
+		iamServer.SetRoleAuthorizer(validator)
+	}
 	return iamServer
 }
 
