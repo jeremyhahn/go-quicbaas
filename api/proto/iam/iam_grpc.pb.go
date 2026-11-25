@@ -100,6 +100,7 @@ type IAMServiceClient interface {
 	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*User, error)
 	// GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
 	GetUser(ctx context.Context, in *GetUserRequest, opts ...grpc.CallOption) (*User, error)
+	// UpdateUser mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id} and takes its tenants:create grant.
 	UpdateUser(ctx context.Context, in *UpdateUserRequest, opts ...grpc.CallOption) (*User, error)
 	// DeleteUser takes users:delete, the grant QRDBService's DeleteUser takes.
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
@@ -134,12 +135,19 @@ type IAMServiceClient interface {
 	ActivateFIDO2Finish(ctx context.Context, in *ActivateFIDO2FinishRequest, opts ...grpc.CallOption) (*ActivateInviteResponse, error)
 	ActivatePIV(ctx context.Context, in *ActivatePIVRequest, opts ...grpc.CallOption) (*ActivateInviteResponse, error)
 	// Role management
+	// CreateRole mirrors REST POST /api/v1/tenants/{tenant_id}/roles/ and takes its tenants:create grant.
 	CreateRole(ctx context.Context, in *CreateRoleRequest, opts ...grpc.CallOption) (*Role, error)
+	// GetRole mirrors REST GET /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:read grant.
 	GetRole(ctx context.Context, in *GetRoleRequest, opts ...grpc.CallOption) (*Role, error)
+	// UpdateRole mirrors REST PUT /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:create grant.
 	UpdateRole(ctx context.Context, in *UpdateRoleRequest, opts ...grpc.CallOption) (*Role, error)
+	// DeleteRole mirrors REST DELETE /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:delete grant.
 	DeleteRole(ctx context.Context, in *DeleteRoleRequest, opts ...grpc.CallOption) (*DeleteRoleResponse, error)
+	// ListRoles mirrors REST GET /api/v1/tenants/{tenant_id}/roles/ and takes its tenants:read grant.
 	ListRoles(ctx context.Context, in *ListRolesRequest, opts ...grpc.CallOption) (*ListRolesResponse, error)
+	// AssignRole mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/roles and takes its tenants:create grant.
 	AssignRole(ctx context.Context, in *AssignRoleRequest, opts ...grpc.CallOption) (*AssignRoleResponse, error)
+	// RevokeRole mirrors REST DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} and takes its tenants:delete grant.
 	RevokeRole(ctx context.Context, in *RevokeRoleRequest, opts ...grpc.CallOption) (*RevokeRoleResponse, error)
 	// ReconcileRoles converges a tenant's stored built-in roles onto the
 	// definitions the running build carries. It takes the role-create family
@@ -151,43 +159,74 @@ type IAMServiceClient interface {
 	// TestGRPCPermissions_ProtoOptionMatchesAuthzMapping.
 	ReconcileRoles(ctx context.Context, in *ReconcileRolesRequest, opts ...grpc.CallOption) (*ReconcileRolesResponse, error)
 	// Application (OAuth client) management
+	// RegisterApp mirrors REST POST /api/v1/tenants/{tenant_id}/apps/ and takes its tenants:create grant.
 	RegisterApp(ctx context.Context, in *RegisterAppRequest, opts ...grpc.CallOption) (*Application, error)
+	// GetApp mirrors REST GET /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:read grant.
 	GetApp(ctx context.Context, in *GetAppRequest, opts ...grpc.CallOption) (*Application, error)
+	// UpdateApp mirrors REST PUT /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:create grant.
 	UpdateApp(ctx context.Context, in *UpdateAppRequest, opts ...grpc.CallOption) (*Application, error)
+	// DeleteApp mirrors REST DELETE /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:delete grant.
 	DeleteApp(ctx context.Context, in *DeleteAppRequest, opts ...grpc.CallOption) (*DeleteAppResponse, error)
+	// ListApps mirrors REST GET /api/v1/tenants/{tenant_id}/apps/ and takes its tenants:read grant.
 	ListApps(ctx context.Context, in *ListAppsRequest, opts ...grpc.CallOption) (*ListAppsResponse, error)
+	// RotateAppSecret mirrors REST POST /api/v1/tenants/{tenant_id}/apps/{client_id}/rotate-secret and takes its tenants:create grant.
 	RotateAppSecret(ctx context.Context, in *RotateAppSecretRequest, opts ...grpc.CallOption) (*Application, error)
 	// Policy management
+	// CreatePolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/ and takes its tenants:create grant.
 	CreatePolicy(ctx context.Context, in *CreatePolicyRequest, opts ...grpc.CallOption) (*Policy, error)
+	// GetPolicy mirrors REST GET /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:read grant.
 	GetPolicy(ctx context.Context, in *GetPolicyRequest, opts ...grpc.CallOption) (*Policy, error)
+	// UpdatePolicy mirrors REST PUT /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:create grant.
 	UpdatePolicy(ctx context.Context, in *UpdatePolicyRequest, opts ...grpc.CallOption) (*Policy, error)
+	// DeletePolicy mirrors REST DELETE /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:delete grant.
 	DeletePolicy(ctx context.Context, in *DeletePolicyRequest, opts ...grpc.CallOption) (*DeletePolicyResponse, error)
+	// ListPolicies mirrors REST GET /api/v1/tenants/{tenant_id}/policies/ and takes its tenants:read grant.
 	ListPolicies(ctx context.Context, in *ListPoliciesRequest, opts ...grpc.CallOption) (*ListPoliciesResponse, error)
+	// ValidatePolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/validate and takes its tenants:create grant.
 	ValidatePolicy(ctx context.Context, in *ValidatePolicyRequest, opts ...grpc.CallOption) (*ValidatePolicyResponse, error)
+	// TestPolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/test and takes its tenants:create grant.
 	TestPolicy(ctx context.Context, in *TestPolicyRequest, opts ...grpc.CallOption) (*TestPolicyResponse, error)
 	// Delegated Administration
+	// CreateAdminAssignment mirrors REST POST /api/v1/admin/assignments/ and takes its roles:assign grant.
 	CreateAdminAssignment(ctx context.Context, in *CreateAdminAssignmentRequest, opts ...grpc.CallOption) (*AdminAssignment, error)
+	// GetAdminAssignment mirrors REST GET /api/v1/admin/assignments/{assignment_id} and takes its roles:read grant.
 	GetAdminAssignment(ctx context.Context, in *GetAdminAssignmentRequest, opts ...grpc.CallOption) (*AdminAssignment, error)
+	// UpdateAdminAssignment mirrors REST PUT /api/v1/admin/assignments/{assignment_id} and takes its roles:assign grant.
 	UpdateAdminAssignment(ctx context.Context, in *UpdateAdminAssignmentRequest, opts ...grpc.CallOption) (*AdminAssignment, error)
+	// DeleteAdminAssignment mirrors REST DELETE /api/v1/admin/assignments/{assignment_id} and takes its roles:unassign grant.
 	DeleteAdminAssignment(ctx context.Context, in *DeleteAdminAssignmentRequest, opts ...grpc.CallOption) (*DeleteAdminAssignmentResponse, error)
+	// ListAdminAssignments mirrors REST GET /api/v1/admin/assignments/ and takes its roles:list grant.
 	ListAdminAssignments(ctx context.Context, in *ListAdminAssignmentsRequest, opts ...grpc.CallOption) (*AdminAssignmentList, error)
+	// CheckAdminPermission mirrors REST POST /api/v1/admin/check-permission and takes its permissions:resolve grant.
 	CheckAdminPermission(ctx context.Context, in *CheckAdminPermissionRequest, opts ...grpc.CallOption) (*CheckAdminPermissionResponse, error)
+	// StartImpersonation mirrors REST POST /api/v1/admin/impersonation/start and takes its users:update grant.
 	StartImpersonation(ctx context.Context, in *StartImpersonationRequest, opts ...grpc.CallOption) (*ImpersonationSession, error)
+	// EndImpersonation mirrors REST POST /api/v1/admin/impersonation/{session_id}/end and takes its users:update grant.
 	EndImpersonation(ctx context.Context, in *EndImpersonationRequest, opts ...grpc.CallOption) (*EndImpersonationResponse, error)
+	// GetActiveImpersonations mirrors REST GET /api/v1/admin/users/{user_id}/impersonations and takes its users:read grant.
 	GetActiveImpersonations(ctx context.Context, in *GetActiveImpersonationsRequest, opts ...grpc.CallOption) (*ImpersonationSessionList, error)
 	// GDPR Consent Management
+	// GrantConsent mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent and takes its tenants:create grant.
 	GrantConsent(ctx context.Context, in *GrantConsentRequest, opts ...grpc.CallOption) (*Consent, error)
+	// WithdrawConsent mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose}/withdraw and takes its tenants:create grant.
 	WithdrawConsent(ctx context.Context, in *WithdrawConsentRequest, opts ...grpc.CallOption) (*WithdrawConsentResponse, error)
+	// GetConsent mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose} and takes its tenants:read grant.
 	GetConsent(ctx context.Context, in *GetConsentRequest, opts ...grpc.CallOption) (*Consent, error)
+	// ListUserConsents mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consents and takes its tenants:read grant.
 	ListUserConsents(ctx context.Context, in *ListUserConsentsRequest, opts ...grpc.CallOption) (*ConsentList, error)
 	// GDPR Data Export
+	// RequestExport mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export and takes its tenants:create grant.
 	RequestExport(ctx context.Context, in *RequestExportRequest, opts ...grpc.CallOption) (*DataExportRequest, error)
+	// GetExportStatus mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export/{export_id} and takes its tenants:read grant.
 	GetExportStatus(ctx context.Context, in *GetExportStatusRequest, opts ...grpc.CallOption) (*DataExportRequest, error)
 	GenerateExport(ctx context.Context, in *GenerateExportRequest, opts ...grpc.CallOption) (*UserDataExport, error)
 	// GDPR Data Deletion
+	// RequestDeletion mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion and takes its tenants:create grant.
 	RequestDeletion(ctx context.Context, in *RequestDeletionRequest, opts ...grpc.CallOption) (*DataDeletionRequest, error)
+	// CancelDeletion mirrors REST DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} and takes its tenants:delete grant.
 	CancelDeletion(ctx context.Context, in *CancelDeletionRequest, opts ...grpc.CallOption) (*CancelDeletionResponse, error)
 	ProcessDeletion(ctx context.Context, in *ProcessDeletionRequest, opts ...grpc.CallOption) (*DeletionSummary, error)
+	// GetDeletionStatus mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} and takes its tenants:read grant.
 	GetDeletionStatus(ctx context.Context, in *GetDeletionStatusRequest, opts ...grpc.CallOption) (*DataDeletionRequest, error)
 }
 
@@ -827,6 +866,7 @@ type IAMServiceServer interface {
 	CreateUser(context.Context, *CreateUserRequest) (*User, error)
 	// GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
 	GetUser(context.Context, *GetUserRequest) (*User, error)
+	// UpdateUser mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id} and takes its tenants:create grant.
 	UpdateUser(context.Context, *UpdateUserRequest) (*User, error)
 	// DeleteUser takes users:delete, the grant QRDBService's DeleteUser takes.
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
@@ -861,12 +901,19 @@ type IAMServiceServer interface {
 	ActivateFIDO2Finish(context.Context, *ActivateFIDO2FinishRequest) (*ActivateInviteResponse, error)
 	ActivatePIV(context.Context, *ActivatePIVRequest) (*ActivateInviteResponse, error)
 	// Role management
+	// CreateRole mirrors REST POST /api/v1/tenants/{tenant_id}/roles/ and takes its tenants:create grant.
 	CreateRole(context.Context, *CreateRoleRequest) (*Role, error)
+	// GetRole mirrors REST GET /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:read grant.
 	GetRole(context.Context, *GetRoleRequest) (*Role, error)
+	// UpdateRole mirrors REST PUT /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:create grant.
 	UpdateRole(context.Context, *UpdateRoleRequest) (*Role, error)
+	// DeleteRole mirrors REST DELETE /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:delete grant.
 	DeleteRole(context.Context, *DeleteRoleRequest) (*DeleteRoleResponse, error)
+	// ListRoles mirrors REST GET /api/v1/tenants/{tenant_id}/roles/ and takes its tenants:read grant.
 	ListRoles(context.Context, *ListRolesRequest) (*ListRolesResponse, error)
+	// AssignRole mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/roles and takes its tenants:create grant.
 	AssignRole(context.Context, *AssignRoleRequest) (*AssignRoleResponse, error)
+	// RevokeRole mirrors REST DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} and takes its tenants:delete grant.
 	RevokeRole(context.Context, *RevokeRoleRequest) (*RevokeRoleResponse, error)
 	// ReconcileRoles converges a tenant's stored built-in roles onto the
 	// definitions the running build carries. It takes the role-create family
@@ -878,43 +925,74 @@ type IAMServiceServer interface {
 	// TestGRPCPermissions_ProtoOptionMatchesAuthzMapping.
 	ReconcileRoles(context.Context, *ReconcileRolesRequest) (*ReconcileRolesResponse, error)
 	// Application (OAuth client) management
+	// RegisterApp mirrors REST POST /api/v1/tenants/{tenant_id}/apps/ and takes its tenants:create grant.
 	RegisterApp(context.Context, *RegisterAppRequest) (*Application, error)
+	// GetApp mirrors REST GET /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:read grant.
 	GetApp(context.Context, *GetAppRequest) (*Application, error)
+	// UpdateApp mirrors REST PUT /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:create grant.
 	UpdateApp(context.Context, *UpdateAppRequest) (*Application, error)
+	// DeleteApp mirrors REST DELETE /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:delete grant.
 	DeleteApp(context.Context, *DeleteAppRequest) (*DeleteAppResponse, error)
+	// ListApps mirrors REST GET /api/v1/tenants/{tenant_id}/apps/ and takes its tenants:read grant.
 	ListApps(context.Context, *ListAppsRequest) (*ListAppsResponse, error)
+	// RotateAppSecret mirrors REST POST /api/v1/tenants/{tenant_id}/apps/{client_id}/rotate-secret and takes its tenants:create grant.
 	RotateAppSecret(context.Context, *RotateAppSecretRequest) (*Application, error)
 	// Policy management
+	// CreatePolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/ and takes its tenants:create grant.
 	CreatePolicy(context.Context, *CreatePolicyRequest) (*Policy, error)
+	// GetPolicy mirrors REST GET /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:read grant.
 	GetPolicy(context.Context, *GetPolicyRequest) (*Policy, error)
+	// UpdatePolicy mirrors REST PUT /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:create grant.
 	UpdatePolicy(context.Context, *UpdatePolicyRequest) (*Policy, error)
+	// DeletePolicy mirrors REST DELETE /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:delete grant.
 	DeletePolicy(context.Context, *DeletePolicyRequest) (*DeletePolicyResponse, error)
+	// ListPolicies mirrors REST GET /api/v1/tenants/{tenant_id}/policies/ and takes its tenants:read grant.
 	ListPolicies(context.Context, *ListPoliciesRequest) (*ListPoliciesResponse, error)
+	// ValidatePolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/validate and takes its tenants:create grant.
 	ValidatePolicy(context.Context, *ValidatePolicyRequest) (*ValidatePolicyResponse, error)
+	// TestPolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/test and takes its tenants:create grant.
 	TestPolicy(context.Context, *TestPolicyRequest) (*TestPolicyResponse, error)
 	// Delegated Administration
+	// CreateAdminAssignment mirrors REST POST /api/v1/admin/assignments/ and takes its roles:assign grant.
 	CreateAdminAssignment(context.Context, *CreateAdminAssignmentRequest) (*AdminAssignment, error)
+	// GetAdminAssignment mirrors REST GET /api/v1/admin/assignments/{assignment_id} and takes its roles:read grant.
 	GetAdminAssignment(context.Context, *GetAdminAssignmentRequest) (*AdminAssignment, error)
+	// UpdateAdminAssignment mirrors REST PUT /api/v1/admin/assignments/{assignment_id} and takes its roles:assign grant.
 	UpdateAdminAssignment(context.Context, *UpdateAdminAssignmentRequest) (*AdminAssignment, error)
+	// DeleteAdminAssignment mirrors REST DELETE /api/v1/admin/assignments/{assignment_id} and takes its roles:unassign grant.
 	DeleteAdminAssignment(context.Context, *DeleteAdminAssignmentRequest) (*DeleteAdminAssignmentResponse, error)
+	// ListAdminAssignments mirrors REST GET /api/v1/admin/assignments/ and takes its roles:list grant.
 	ListAdminAssignments(context.Context, *ListAdminAssignmentsRequest) (*AdminAssignmentList, error)
+	// CheckAdminPermission mirrors REST POST /api/v1/admin/check-permission and takes its permissions:resolve grant.
 	CheckAdminPermission(context.Context, *CheckAdminPermissionRequest) (*CheckAdminPermissionResponse, error)
+	// StartImpersonation mirrors REST POST /api/v1/admin/impersonation/start and takes its users:update grant.
 	StartImpersonation(context.Context, *StartImpersonationRequest) (*ImpersonationSession, error)
+	// EndImpersonation mirrors REST POST /api/v1/admin/impersonation/{session_id}/end and takes its users:update grant.
 	EndImpersonation(context.Context, *EndImpersonationRequest) (*EndImpersonationResponse, error)
+	// GetActiveImpersonations mirrors REST GET /api/v1/admin/users/{user_id}/impersonations and takes its users:read grant.
 	GetActiveImpersonations(context.Context, *GetActiveImpersonationsRequest) (*ImpersonationSessionList, error)
 	// GDPR Consent Management
+	// GrantConsent mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent and takes its tenants:create grant.
 	GrantConsent(context.Context, *GrantConsentRequest) (*Consent, error)
+	// WithdrawConsent mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose}/withdraw and takes its tenants:create grant.
 	WithdrawConsent(context.Context, *WithdrawConsentRequest) (*WithdrawConsentResponse, error)
+	// GetConsent mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose} and takes its tenants:read grant.
 	GetConsent(context.Context, *GetConsentRequest) (*Consent, error)
+	// ListUserConsents mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consents and takes its tenants:read grant.
 	ListUserConsents(context.Context, *ListUserConsentsRequest) (*ConsentList, error)
 	// GDPR Data Export
+	// RequestExport mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export and takes its tenants:create grant.
 	RequestExport(context.Context, *RequestExportRequest) (*DataExportRequest, error)
+	// GetExportStatus mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export/{export_id} and takes its tenants:read grant.
 	GetExportStatus(context.Context, *GetExportStatusRequest) (*DataExportRequest, error)
 	GenerateExport(context.Context, *GenerateExportRequest) (*UserDataExport, error)
 	// GDPR Data Deletion
+	// RequestDeletion mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion and takes its tenants:create grant.
 	RequestDeletion(context.Context, *RequestDeletionRequest) (*DataDeletionRequest, error)
+	// CancelDeletion mirrors REST DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} and takes its tenants:delete grant.
 	CancelDeletion(context.Context, *CancelDeletionRequest) (*CancelDeletionResponse, error)
 	ProcessDeletion(context.Context, *ProcessDeletionRequest) (*DeletionSummary, error)
+	// GetDeletionStatus mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} and takes its tenants:read grant.
 	GetDeletionStatus(context.Context, *GetDeletionStatusRequest) (*DataDeletionRequest, error)
 }
 

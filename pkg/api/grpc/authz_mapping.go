@@ -291,8 +291,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// also outside brokerServiceDescs; they are mapped below by REST parity,
 	// each taking the grant its REST twin requires (go-quicbaas#1624).
 	//
-	// Every other IAMService method stays unmapped and default-denied; a
-	// method is mapped only by REST parity, taking its REST twin's grant.
+	// A method is mapped only by REST parity, taking exactly its REST twin's
+	// grant; every other IAMService method stays unmapped and default-denied.
+	// GenerateExport and ProcessDeletion stay unmapped by owner ruling: export
+	// generation and erasure processing are refused on every transport.
 	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
 	"/quicbaas.iam.v1.IAMService/ApproveUser": {"users", "enable"},
 	// Mirrors QRDBService CreateUser (users:create). A request naming roles
@@ -338,6 +340,99 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/ListTenants":  {"tenants", "list"},
 	"/quicbaas.iam.v1.IAMService/UpdateTenant": {"tenants", "create"},
 	"/quicbaas.iam.v1.IAMService/DeleteTenant": {"tenants", "delete"},
+
+	// ---- IAMService apps, policies, roles, delegated admin, gdpr, UpdateUser ----
+	//
+	// By owner ruling each takes exactly its REST route's grant
+	// (pkg/api/rest/routes_permissions_generated.go), nothing wider. Paths
+	// under .../ are /api/v1/tenants/{tenant_id}/.
+
+	// Mirrors REST POST .../apps/ (tenants:create).
+	"/quicbaas.iam.v1.IAMService/RegisterApp": {"tenants", "create"},
+	// Mirrors REST GET .../apps/{client_id} (tenants:read).
+	"/quicbaas.iam.v1.IAMService/GetApp": {"tenants", "read"},
+	// Mirrors REST GET .../apps/ (tenants:read).
+	"/quicbaas.iam.v1.IAMService/ListApps": {"tenants", "read"},
+	// Mirrors REST PUT .../apps/{client_id} (tenants:create).
+	"/quicbaas.iam.v1.IAMService/UpdateApp": {"tenants", "create"},
+	// Mirrors REST DELETE .../apps/{client_id} (tenants:delete).
+	"/quicbaas.iam.v1.IAMService/DeleteApp": {"tenants", "delete"},
+	// Mirrors REST POST .../apps/{client_id}/rotate-secret (tenants:create).
+	"/quicbaas.iam.v1.IAMService/RotateAppSecret": {"tenants", "create"},
+
+	// Mirrors REST POST .../policies/ (tenants:create).
+	"/quicbaas.iam.v1.IAMService/CreatePolicy": {"tenants", "create"},
+	// Mirrors REST GET .../policies/{policy_name} (tenants:read).
+	"/quicbaas.iam.v1.IAMService/GetPolicy": {"tenants", "read"},
+	// Mirrors REST GET .../policies/ (tenants:read).
+	"/quicbaas.iam.v1.IAMService/ListPolicies": {"tenants", "read"},
+	// Mirrors REST PUT .../policies/{policy_name} (tenants:create).
+	"/quicbaas.iam.v1.IAMService/UpdatePolicy": {"tenants", "create"},
+	// Mirrors REST DELETE .../policies/{policy_name} (tenants:delete).
+	"/quicbaas.iam.v1.IAMService/DeletePolicy": {"tenants", "delete"},
+	// Mirrors REST POST .../policies/test (tenants:create).
+	"/quicbaas.iam.v1.IAMService/TestPolicy": {"tenants", "create"},
+	// Mirrors REST POST .../policies/validate (tenants:create).
+	"/quicbaas.iam.v1.IAMService/ValidatePolicy": {"tenants", "create"},
+
+	// Mirrors REST POST .../roles/ (tenants:create).
+	"/quicbaas.iam.v1.IAMService/CreateRole": {"tenants", "create"},
+	// Mirrors REST GET .../roles/{role_id} (tenants:read).
+	"/quicbaas.iam.v1.IAMService/GetRole": {"tenants", "read"},
+	// Mirrors REST GET .../roles/ (tenants:read).
+	"/quicbaas.iam.v1.IAMService/ListRoles": {"tenants", "read"},
+	// Mirrors REST PUT .../roles/{role_id} (tenants:create).
+	"/quicbaas.iam.v1.IAMService/UpdateRole": {"tenants", "create"},
+	// Mirrors REST DELETE .../roles/{role_id} (tenants:delete).
+	"/quicbaas.iam.v1.IAMService/DeleteRole": {"tenants", "delete"},
+	// Mirrors REST POST .../users/{user_id}/roles (tenants:create).
+	"/quicbaas.iam.v1.IAMService/AssignRole": {"tenants", "create"},
+	// Mirrors REST DELETE .../users/{user_id}/roles/{role} (tenants:delete).
+	"/quicbaas.iam.v1.IAMService/RevokeRole": {"tenants", "delete"},
+
+	// Mirrors REST POST /api/v1/admin/assignments/ (roles:assign).
+	"/quicbaas.iam.v1.IAMService/CreateAdminAssignment": {"roles", "assign"},
+	// Mirrors REST GET /api/v1/admin/assignments/{assignment_id} (roles:read).
+	"/quicbaas.iam.v1.IAMService/GetAdminAssignment": {"roles", "read"},
+	// Mirrors REST PUT /api/v1/admin/assignments/{assignment_id} (roles:assign).
+	"/quicbaas.iam.v1.IAMService/UpdateAdminAssignment": {"roles", "assign"},
+	// Mirrors REST DELETE /api/v1/admin/assignments/{assignment_id} (roles:unassign).
+	"/quicbaas.iam.v1.IAMService/DeleteAdminAssignment": {"roles", "unassign"},
+	// Mirrors REST GET /api/v1/admin/assignments/ (roles:list).
+	"/quicbaas.iam.v1.IAMService/ListAdminAssignments": {"roles", "list"},
+	// Mirrors REST POST /api/v1/admin/check-permission (permissions:resolve).
+	"/quicbaas.iam.v1.IAMService/CheckAdminPermission": {"permissions", "resolve"},
+	// Mirrors REST POST /api/v1/admin/impersonation/start (users:update).
+	"/quicbaas.iam.v1.IAMService/StartImpersonation": {"users", "update"},
+	// Mirrors REST POST /api/v1/admin/impersonation/{session_id}/end (users:update).
+	"/quicbaas.iam.v1.IAMService/EndImpersonation": {"users", "update"},
+	// Mirrors REST GET /api/v1/admin/users/{user_id}/impersonations (users:read).
+	"/quicbaas.iam.v1.IAMService/GetActiveImpersonations": {"users", "read"},
+
+	// Mirrors REST POST .../users/{user_id}/gdpr/consent (tenants:create).
+	"/quicbaas.iam.v1.IAMService/GrantConsent": {"tenants", "create"},
+	// Mirrors REST PUT .../users/{user_id}/gdpr/consent/{purpose}/withdraw (tenants:create).
+	"/quicbaas.iam.v1.IAMService/WithdrawConsent": {"tenants", "create"},
+	// Mirrors REST GET .../users/{user_id}/gdpr/consent/{purpose} (tenants:read).
+	"/quicbaas.iam.v1.IAMService/GetConsent": {"tenants", "read"},
+	// Mirrors REST GET .../users/{user_id}/gdpr/consents (tenants:read).
+	"/quicbaas.iam.v1.IAMService/ListUserConsents": {"tenants", "read"},
+
+	// Mirrors REST POST .../users/{user_id}/gdpr/export (tenants:create).
+	"/quicbaas.iam.v1.IAMService/RequestExport": {"tenants", "create"},
+	// Mirrors REST GET .../users/{user_id}/gdpr/export/{export_id} (tenants:read).
+	"/quicbaas.iam.v1.IAMService/GetExportStatus": {"tenants", "read"},
+
+	// Mirrors REST POST .../users/{user_id}/gdpr/deletion (tenants:create).
+	"/quicbaas.iam.v1.IAMService/RequestDeletion": {"tenants", "create"},
+	// Mirrors REST DELETE .../users/{user_id}/gdpr/deletion/{deletion_id} (tenants:delete).
+	"/quicbaas.iam.v1.IAMService/CancelDeletion": {"tenants", "delete"},
+	// Mirrors REST GET .../users/{user_id}/gdpr/deletion/{deletion_id} (tenants:read).
+	"/quicbaas.iam.v1.IAMService/GetDeletionStatus": {"tenants", "read"},
+
+	// Mirrors REST PUT .../users/{user_id} (tenants:create). REST's handler
+	// checks nothing more, so there is no grpcRequestPermissions entry.
+	"/quicbaas.iam.v1.IAMService/UpdateUser": {"tenants", "create"},
 
 	// ---- quicbaas.iam.v1.FederationService: providers and account links ----
 	//

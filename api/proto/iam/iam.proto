@@ -39,7 +39,10 @@ service IAMService {
   rpc GetUser(GetUserRequest) returns (User) {
       option (qrdb.v1.permission) = "users:read";
   }
-  rpc UpdateUser(UpdateUserRequest) returns (User);
+  // UpdateUser mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id} and takes its tenants:create grant.
+  rpc UpdateUser(UpdateUserRequest) returns (User) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
   // DeleteUser takes users:delete, the grant QRDBService's DeleteUser takes.
   rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
       option (qrdb.v1.permission) = "users:delete";
@@ -91,13 +94,34 @@ service IAMService {
   rpc ActivatePIV(ActivatePIVRequest) returns (ActivateInviteResponse);
 
   // Role management
-  rpc CreateRole(CreateRoleRequest) returns (Role);
-  rpc GetRole(GetRoleRequest) returns (Role);
-  rpc UpdateRole(UpdateRoleRequest) returns (Role);
-  rpc DeleteRole(DeleteRoleRequest) returns (DeleteRoleResponse);
-  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
-  rpc AssignRole(AssignRoleRequest) returns (AssignRoleResponse);
-  rpc RevokeRole(RevokeRoleRequest) returns (RevokeRoleResponse);
+  // CreateRole mirrors REST POST /api/v1/tenants/{tenant_id}/roles/ and takes its tenants:create grant.
+  rpc CreateRole(CreateRoleRequest) returns (Role) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  // GetRole mirrors REST GET /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:read grant.
+  rpc GetRole(GetRoleRequest) returns (Role) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
+  // UpdateRole mirrors REST PUT /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:create grant.
+  rpc UpdateRole(UpdateRoleRequest) returns (Role) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  // DeleteRole mirrors REST DELETE /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:delete grant.
+  rpc DeleteRole(DeleteRoleRequest) returns (DeleteRoleResponse) {
+      option (qrdb.v1.permission) = "tenants:delete";
+  }
+  // ListRoles mirrors REST GET /api/v1/tenants/{tenant_id}/roles/ and takes its tenants:read grant.
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
+  // AssignRole mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/roles and takes its tenants:create grant.
+  rpc AssignRole(AssignRoleRequest) returns (AssignRoleResponse) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  // RevokeRole mirrors REST DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} and takes its tenants:delete grant.
+  rpc RevokeRole(RevokeRoleRequest) returns (RevokeRoleResponse) {
+      option (qrdb.v1.permission) = "tenants:delete";
+  }
   // ReconcileRoles converges a tenant's stored built-in roles onto the
   // definitions the running build carries. It takes the role-create family
   // rather than a verb of its own: a dedicated roles:reconcile would be absent
@@ -111,49 +135,142 @@ service IAMService {
   }
 
   // Application (OAuth client) management
-  rpc RegisterApp(RegisterAppRequest) returns (Application);
-  rpc GetApp(GetAppRequest) returns (Application);
-  rpc UpdateApp(UpdateAppRequest) returns (Application);
-  rpc DeleteApp(DeleteAppRequest) returns (DeleteAppResponse);
-  rpc ListApps(ListAppsRequest) returns (ListAppsResponse);
-  rpc RotateAppSecret(RotateAppSecretRequest) returns (Application);
+  // RegisterApp mirrors REST POST /api/v1/tenants/{tenant_id}/apps/ and takes its tenants:create grant.
+  rpc RegisterApp(RegisterAppRequest) returns (Application) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  // GetApp mirrors REST GET /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:read grant.
+  rpc GetApp(GetAppRequest) returns (Application) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
+  // UpdateApp mirrors REST PUT /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:create grant.
+  rpc UpdateApp(UpdateAppRequest) returns (Application) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  // DeleteApp mirrors REST DELETE /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:delete grant.
+  rpc DeleteApp(DeleteAppRequest) returns (DeleteAppResponse) {
+      option (qrdb.v1.permission) = "tenants:delete";
+  }
+  // ListApps mirrors REST GET /api/v1/tenants/{tenant_id}/apps/ and takes its tenants:read grant.
+  rpc ListApps(ListAppsRequest) returns (ListAppsResponse) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
+  // RotateAppSecret mirrors REST POST /api/v1/tenants/{tenant_id}/apps/{client_id}/rotate-secret and takes its tenants:create grant.
+  rpc RotateAppSecret(RotateAppSecretRequest) returns (Application) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
 
   // Policy management
-  rpc CreatePolicy(CreatePolicyRequest) returns (Policy);
-  rpc GetPolicy(GetPolicyRequest) returns (Policy);
-  rpc UpdatePolicy(UpdatePolicyRequest) returns (Policy);
-  rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse);
-  rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse);
-  rpc ValidatePolicy(ValidatePolicyRequest) returns (ValidatePolicyResponse);
-  rpc TestPolicy(TestPolicyRequest) returns (TestPolicyResponse);
+  // CreatePolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/ and takes its tenants:create grant.
+  rpc CreatePolicy(CreatePolicyRequest) returns (Policy) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  // GetPolicy mirrors REST GET /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:read grant.
+  rpc GetPolicy(GetPolicyRequest) returns (Policy) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
+  // UpdatePolicy mirrors REST PUT /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:create grant.
+  rpc UpdatePolicy(UpdatePolicyRequest) returns (Policy) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  // DeletePolicy mirrors REST DELETE /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:delete grant.
+  rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse) {
+      option (qrdb.v1.permission) = "tenants:delete";
+  }
+  // ListPolicies mirrors REST GET /api/v1/tenants/{tenant_id}/policies/ and takes its tenants:read grant.
+  rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
+  // ValidatePolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/validate and takes its tenants:create grant.
+  rpc ValidatePolicy(ValidatePolicyRequest) returns (ValidatePolicyResponse) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  // TestPolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/test and takes its tenants:create grant.
+  rpc TestPolicy(TestPolicyRequest) returns (TestPolicyResponse) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
 
   // Delegated Administration
-  rpc CreateAdminAssignment(CreateAdminAssignmentRequest) returns (AdminAssignment);
-  rpc GetAdminAssignment(GetAdminAssignmentRequest) returns (AdminAssignment);
-  rpc UpdateAdminAssignment(UpdateAdminAssignmentRequest) returns (AdminAssignment);
-  rpc DeleteAdminAssignment(DeleteAdminAssignmentRequest) returns (DeleteAdminAssignmentResponse);
-  rpc ListAdminAssignments(ListAdminAssignmentsRequest) returns (AdminAssignmentList);
-  rpc CheckAdminPermission(CheckAdminPermissionRequest) returns (CheckAdminPermissionResponse);
-  rpc StartImpersonation(StartImpersonationRequest) returns (ImpersonationSession);
-  rpc EndImpersonation(EndImpersonationRequest) returns (EndImpersonationResponse);
-  rpc GetActiveImpersonations(GetActiveImpersonationsRequest) returns (ImpersonationSessionList);
+  // CreateAdminAssignment mirrors REST POST /api/v1/admin/assignments/ and takes its roles:assign grant.
+  rpc CreateAdminAssignment(CreateAdminAssignmentRequest) returns (AdminAssignment) {
+      option (qrdb.v1.permission) = "roles:assign";
+  }
+  // GetAdminAssignment mirrors REST GET /api/v1/admin/assignments/{assignment_id} and takes its roles:read grant.
+  rpc GetAdminAssignment(GetAdminAssignmentRequest) returns (AdminAssignment) {
+      option (qrdb.v1.permission) = "roles:read";
+  }
+  // UpdateAdminAssignment mirrors REST PUT /api/v1/admin/assignments/{assignment_id} and takes its roles:assign grant.
+  rpc UpdateAdminAssignment(UpdateAdminAssignmentRequest) returns (AdminAssignment) {
+      option (qrdb.v1.permission) = "roles:assign";
+  }
+  // DeleteAdminAssignment mirrors REST DELETE /api/v1/admin/assignments/{assignment_id} and takes its roles:unassign grant.
+  rpc DeleteAdminAssignment(DeleteAdminAssignmentRequest) returns (DeleteAdminAssignmentResponse) {
+      option (qrdb.v1.permission) = "roles:unassign";
+  }
+  // ListAdminAssignments mirrors REST GET /api/v1/admin/assignments/ and takes its roles:list grant.
+  rpc ListAdminAssignments(ListAdminAssignmentsRequest) returns (AdminAssignmentList) {
+      option (qrdb.v1.permission) = "roles:list";
+  }
+  // CheckAdminPermission mirrors REST POST /api/v1/admin/check-permission and takes its permissions:resolve grant.
+  rpc CheckAdminPermission(CheckAdminPermissionRequest) returns (CheckAdminPermissionResponse) {
+      option (qrdb.v1.permission) = "permissions:resolve";
+  }
+  // StartImpersonation mirrors REST POST /api/v1/admin/impersonation/start and takes its users:update grant.
+  rpc StartImpersonation(StartImpersonationRequest) returns (ImpersonationSession) {
+      option (qrdb.v1.permission) = "users:update";
+  }
+  // EndImpersonation mirrors REST POST /api/v1/admin/impersonation/{session_id}/end and takes its users:update grant.
+  rpc EndImpersonation(EndImpersonationRequest) returns (EndImpersonationResponse) {
+      option (qrdb.v1.permission) = "users:update";
+  }
+  // GetActiveImpersonations mirrors REST GET /api/v1/admin/users/{user_id}/impersonations and takes its users:read grant.
+  rpc GetActiveImpersonations(GetActiveImpersonationsRequest) returns (ImpersonationSessionList) {
+      option (qrdb.v1.permission) = "users:read";
+  }
 
   // GDPR Consent Management
-  rpc GrantConsent(GrantConsentRequest) returns (Consent);
-  rpc WithdrawConsent(WithdrawConsentRequest) returns (WithdrawConsentResponse);
-  rpc GetConsent(GetConsentRequest) returns (Consent);
-  rpc ListUserConsents(ListUserConsentsRequest) returns (ConsentList);
+  // GrantConsent mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent and takes its tenants:create grant.
+  rpc GrantConsent(GrantConsentRequest) returns (Consent) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  // WithdrawConsent mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose}/withdraw and takes its tenants:create grant.
+  rpc WithdrawConsent(WithdrawConsentRequest) returns (WithdrawConsentResponse) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  // GetConsent mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose} and takes its tenants:read grant.
+  rpc GetConsent(GetConsentRequest) returns (Consent) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
+  // ListUserConsents mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consents and takes its tenants:read grant.
+  rpc ListUserConsents(ListUserConsentsRequest) returns (ConsentList) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
 
   // GDPR Data Export
-  rpc RequestExport(RequestExportRequest) returns (DataExportRequest);
-  rpc GetExportStatus(GetExportStatusRequest) returns (DataExportRequest);
+  // RequestExport mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export and takes its tenants:create grant.
+  rpc RequestExport(RequestExportRequest) returns (DataExportRequest) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  // GetExportStatus mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export/{export_id} and takes its tenants:read grant.
+  rpc GetExportStatus(GetExportStatusRequest) returns (DataExportRequest) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
   rpc GenerateExport(GenerateExportRequest) returns (UserDataExport);
 
   // GDPR Data Deletion
-  rpc RequestDeletion(RequestDeletionRequest) returns (DataDeletionRequest);
-  rpc CancelDeletion(CancelDeletionRequest) returns (CancelDeletionResponse);
+  // RequestDeletion mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion and takes its tenants:create grant.
+  rpc RequestDeletion(RequestDeletionRequest) returns (DataDeletionRequest) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  // CancelDeletion mirrors REST DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} and takes its tenants:delete grant.
+  rpc CancelDeletion(CancelDeletionRequest) returns (CancelDeletionResponse) {
+      option (qrdb.v1.permission) = "tenants:delete";
+  }
   rpc ProcessDeletion(ProcessDeletionRequest) returns (DeletionSummary);
-  rpc GetDeletionStatus(GetDeletionStatusRequest) returns (DataDeletionRequest);
+  // GetDeletionStatus mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} and takes its tenants:read grant.
+  rpc GetDeletionStatus(GetDeletionStatusRequest) returns (DataDeletionRequest) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
 }
 
 // Policy Enforcement Point Service
