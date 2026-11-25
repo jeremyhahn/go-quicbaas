@@ -382,16 +382,6 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// POST /api/v1/iam/sessions/revoke-others
 	"/quicbaas.iam.v1.SessionService/RevokeOtherSessions": {"users", "update"},
 
-	// ---- quicbaas.iam.v1.AuditService ----
-	//
-	// Each RPC takes the grant its REST twin requires. RecordAuditEvent stays
-	// unmapped, so it is default-denied on the node.
-	//
-	// GET /api/v1/iam/audit
-	"/quicbaas.iam.v1.AuditService/QueryAuditEvents": {"audit", "query"},
-	// GET /api/v1/iam/audit/{id}
-	"/quicbaas.iam.v1.AuditService/GetAuditEvent": {"audit", "read"},
-
 	// ---- quicbaas.iam.v1.PEPService ----
 	//
 	// Each RPC takes the grant its REST twin requires. Subscribe stays
