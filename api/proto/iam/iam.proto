@@ -11,17 +11,30 @@ import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 // IAM Service for identity and access management
 service IAMService {
   // Tenant management
-  rpc CreateTenant(CreateTenantRequest) returns (Tenant);
-  rpc GetTenant(GetTenantRequest) returns (Tenant);
-  rpc UpdateTenant(UpdateTenantRequest) returns (Tenant);
-  rpc DeleteTenant(DeleteTenantRequest) returns (DeleteTenantResponse);
-  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse);
+  rpc CreateTenant(CreateTenantRequest) returns (Tenant) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  rpc GetTenant(GetTenantRequest) returns (Tenant) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
+  rpc UpdateTenant(UpdateTenantRequest) returns (Tenant) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  rpc DeleteTenant(DeleteTenantRequest) returns (DeleteTenantResponse) {
+      option (qrdb.v1.permission) = "tenants:delete";
+  }
+  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse) {
+      option (qrdb.v1.permission) = "tenants:list";
+  }
   rpc ProvisionTenant(ProvisionTenantRequest) returns (ProvisionTenantResponse) {
       option (qrdb.v1.permission) = "tenants:create";
   }
 
   // User management
-  rpc CreateUser(CreateUserRequest) returns (User);
+  // CreateUser takes users:create, the grant QRDBService's CreateUser takes.
+  rpc CreateUser(CreateUserRequest) returns (User) {
+      option (qrdb.v1.permission) = "users:create";
+  }
   // GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
   rpc GetUser(GetUserRequest) returns (User) {
       option (qrdb.v1.permission) = "users:read";
@@ -138,12 +151,19 @@ service IAMService {
 }
 
 // Policy Enforcement Point Service
+//
+// Check and CheckBatch take the grant their REST twins take
+// (permissions:resolve). Subscribe carries none and is default-denied.
 service PEPService {
   // Single authorization check
-  rpc Check(CheckRequest) returns (CheckResponse);
+  rpc Check(CheckRequest) returns (CheckResponse) {
+      option (qrdb.v1.permission) = "permissions:resolve";
+  }
 
   // Batch authorization check
-  rpc CheckBatch(CheckBatchRequest) returns (CheckBatchResponse);
+  rpc CheckBatch(CheckBatchRequest) returns (CheckBatchResponse) {
+      option (qrdb.v1.permission) = "permissions:resolve";
+  }
 
   // Subscribe to policy updates (streaming)
   rpc Subscribe(SubscribeRequest) returns (stream PolicyUpdate);
@@ -1634,10 +1654,14 @@ message RevokeOtherSessionsResponse {
 // Audit Service for querying audit logs
 service AuditService {
   // Query audit events with filters
-  rpc QueryAuditEvents(QueryAuditEventsRequest) returns (QueryAuditEventsResponse);
+  rpc QueryAuditEvents(QueryAuditEventsRequest) returns (QueryAuditEventsResponse) {
+      option (qrdb.v1.permission) = "audit:query";
+  }
 
   // Get a specific audit event
-  rpc GetAuditEvent(GetAuditEventRequest) returns (AuditEvent);
+  rpc GetAuditEvent(GetAuditEventRequest) returns (AuditEvent) {
+      option (qrdb.v1.permission) = "audit:read";
+  }
 
   // Record (emit) a new audit event onto the platform audit chain. This is
   // the remote-write counterpart to Query/Get: a caller (e.g. a downstream

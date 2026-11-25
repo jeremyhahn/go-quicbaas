@@ -14894,17 +14894,17 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x19PROVIDER_TYPE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12PROVIDER_TYPE_OIDC\x10\x01\x12\x16\n" +
 	"\x12PROVIDER_TYPE_SAML\x10\x02\x12\x18\n" +
-	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\x87-\n" +
+	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\xf9-\n" +
 	"\n" +
-	"IAMService\x12M\n" +
-	"\fCreateTenant\x12$.quicbaas.iam.v1.CreateTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\x12G\n" +
-	"\tGetTenant\x12!.quicbaas.iam.v1.GetTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\x12M\n" +
-	"\fUpdateTenant\x12$.quicbaas.iam.v1.UpdateTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\x12[\n" +
-	"\fDeleteTenant\x12$.quicbaas.iam.v1.DeleteTenantRequest\x1a%.quicbaas.iam.v1.DeleteTenantResponse\x12X\n" +
-	"\vListTenants\x12#.quicbaas.iam.v1.ListTenantsRequest\x1a$.quicbaas.iam.v1.ListTenantsResponse\x12x\n" +
-	"\x0fProvisionTenant\x12'.quicbaas.iam.v1.ProvisionTenantRequest\x1a(.quicbaas.iam.v1.ProvisionTenantResponse\"\x12\xc2\xf3\x18\x0etenants:create\x12G\n" +
+	"IAMService\x12a\n" +
+	"\fCreateTenant\x12$.quicbaas.iam.v1.CreateTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\"\x12\xc2\xf3\x18\x0etenants:create\x12Y\n" +
+	"\tGetTenant\x12!.quicbaas.iam.v1.GetTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\"\x10\xc2\xf3\x18\ftenants:read\x12a\n" +
+	"\fUpdateTenant\x12$.quicbaas.iam.v1.UpdateTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\"\x12\xc2\xf3\x18\x0etenants:create\x12o\n" +
+	"\fDeleteTenant\x12$.quicbaas.iam.v1.DeleteTenantRequest\x1a%.quicbaas.iam.v1.DeleteTenantResponse\"\x12\xc2\xf3\x18\x0etenants:delete\x12j\n" +
+	"\vListTenants\x12#.quicbaas.iam.v1.ListTenantsRequest\x1a$.quicbaas.iam.v1.ListTenantsResponse\"\x10\xc2\xf3\x18\ftenants:list\x12x\n" +
+	"\x0fProvisionTenant\x12'.quicbaas.iam.v1.ProvisionTenantRequest\x1a(.quicbaas.iam.v1.ProvisionTenantResponse\"\x12\xc2\xf3\x18\x0etenants:create\x12Y\n" +
 	"\n" +
-	"CreateUser\x12\".quicbaas.iam.v1.CreateUserRequest\x1a\x15.quicbaas.iam.v1.User\x12Q\n" +
+	"CreateUser\x12\".quicbaas.iam.v1.CreateUserRequest\x1a\x15.quicbaas.iam.v1.User\"\x10\xc2\xf3\x18\fusers:create\x12Q\n" +
 	"\aGetUser\x12\x1f.quicbaas.iam.v1.GetUserRequest\x1a\x15.quicbaas.iam.v1.User\"\x0e\xc2\xf3\x18\n" +
 	"users:read\x12G\n" +
 	"\n" +
@@ -14970,12 +14970,12 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x0fRequestDeletion\x12'.quicbaas.iam.v1.RequestDeletionRequest\x1a$.quicbaas.iam.v1.DataDeletionRequest\x12a\n" +
 	"\x0eCancelDeletion\x12&.quicbaas.iam.v1.CancelDeletionRequest\x1a'.quicbaas.iam.v1.CancelDeletionResponse\x12\\\n" +
 	"\x0fProcessDeletion\x12'.quicbaas.iam.v1.ProcessDeletionRequest\x1a .quicbaas.iam.v1.DeletionSummary\x12d\n" +
-	"\x11GetDeletionStatus\x12).quicbaas.iam.v1.GetDeletionStatusRequest\x1a$.quicbaas.iam.v1.DataDeletionRequest2\xfc\x01\n" +
+	"\x11GetDeletionStatus\x12).quicbaas.iam.v1.GetDeletionStatusRequest\x1a$.quicbaas.iam.v1.DataDeletionRequest2\xae\x02\n" +
 	"\n" +
-	"PEPService\x12F\n" +
-	"\x05Check\x12\x1d.quicbaas.iam.v1.CheckRequest\x1a\x1e.quicbaas.iam.v1.CheckResponse\x12U\n" +
+	"PEPService\x12_\n" +
+	"\x05Check\x12\x1d.quicbaas.iam.v1.CheckRequest\x1a\x1e.quicbaas.iam.v1.CheckResponse\"\x17\xc2\xf3\x18\x13permissions:resolve\x12n\n" +
 	"\n" +
-	"CheckBatch\x12\".quicbaas.iam.v1.CheckBatchRequest\x1a#.quicbaas.iam.v1.CheckBatchResponse\x12O\n" +
+	"CheckBatch\x12\".quicbaas.iam.v1.CheckBatchRequest\x1a#.quicbaas.iam.v1.CheckBatchResponse\"\x17\xc2\xf3\x18\x13permissions:resolve\x12O\n" +
 	"\tSubscribe\x12!.quicbaas.iam.v1.SubscribeRequest\x1a\x1d.quicbaas.iam.v1.PolicyUpdate0\x012\x89\t\n" +
 	"\n" +
 	"MFAService\x12j\n" +
@@ -15010,10 +15010,11 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"users:read\x12p\n" +
 	"\rRevokeSession\x12%.quicbaas.iam.v1.RevokeSessionRequest\x1a&.quicbaas.iam.v1.RevokeSessionResponse\"\x10\xc2\xf3\x18\fusers:update\x12|\n" +
 	"\x11RevokeAllSessions\x12).quicbaas.iam.v1.RevokeAllSessionsRequest\x1a*.quicbaas.iam.v1.RevokeAllSessionsResponse\"\x10\xc2\xf3\x18\fusers:update\x12\x82\x01\n" +
-	"\x13RevokeOtherSessions\x12+.quicbaas.iam.v1.RevokeOtherSessionsRequest\x1a,.quicbaas.iam.v1.RevokeOtherSessionsResponse\"\x10\xc2\xf3\x18\fusers:update2\xb5\x02\n" +
-	"\fAuditService\x12g\n" +
-	"\x10QueryAuditEvents\x12(.quicbaas.iam.v1.QueryAuditEventsRequest\x1a).quicbaas.iam.v1.QueryAuditEventsResponse\x12S\n" +
-	"\rGetAuditEvent\x12%.quicbaas.iam.v1.GetAuditEventRequest\x1a\x1b.quicbaas.iam.v1.AuditEvent\x12g\n" +
+	"\x13RevokeOtherSessions\x12+.quicbaas.iam.v1.RevokeOtherSessionsRequest\x1a,.quicbaas.iam.v1.RevokeOtherSessionsResponse\"\x10\xc2\xf3\x18\fusers:update2\xd6\x02\n" +
+	"\fAuditService\x12x\n" +
+	"\x10QueryAuditEvents\x12(.quicbaas.iam.v1.QueryAuditEventsRequest\x1a).quicbaas.iam.v1.QueryAuditEventsResponse\"\x0f\xc2\xf3\x18\vaudit:query\x12c\n" +
+	"\rGetAuditEvent\x12%.quicbaas.iam.v1.GetAuditEventRequest\x1a\x1b.quicbaas.iam.v1.AuditEvent\"\x0e\xc2\xf3\x18\n" +
+	"audit:read\x12g\n" +
 	"\x10RecordAuditEvent\x12(.quicbaas.iam.v1.RecordAuditEventRequest\x1a).quicbaas.iam.v1.RecordAuditEventResponseB5Z3github.com/jeremyhahn/go-quicbaas/api/proto/iam;iamb\x06proto3"
 
 var (

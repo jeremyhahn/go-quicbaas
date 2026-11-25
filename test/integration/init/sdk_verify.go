@@ -38,7 +38,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -75,6 +74,8 @@ const sdkLivenessTimeout = 10 * time.Second
 func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBundle, dataDir, adminToken string) {
 	t.Helper()
 
+	// MCP: main's anonymous-session refusal first, then the admin session's
+	// liveness check below.
 	if transport == "mcp" {
 		// MCP has no anonymous session: an initialize without a bearer is
 		// refused with 401 before the authenticated liveness call below.
@@ -118,30 +119,6 @@ func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBu
 		t.Fatalf("Health.Liveness over %q: nil response", transport)
 	}
 	assertLivenessResponseHealthy(t, transport, resp)
-}
-
-// verifySealedMCPWindow is the SDK phase of a shamir MCP cell. A shamir init
-// only records the M-of-N parameters, so the daemon boots SEALED with no
-// administrator: first boot issues none until the officers' ceremony unseals
-// it (cmd/quicbaasd init_runtime_test.go). There is no credential to log in
-// with, and MCP refuses an uncredentialed session (CA ruling 571), so the
-// cell proves the sealed window instead: no administrator certificate exists,
-// the MCP listener completed its TLS handshake in the readiness probe, and an
-// SDK client without a credential is refused rather than served.
-func verifySealedMCPWindow(t *testing.T, ports PortBundle, dataDir string) {
-	t.Helper()
-
-	adminCert := filepath.Join(dataDir, "admin", "admin.crt")
-	if _, err := os.Stat(adminCert); err == nil {
-		t.Fatalf("sealed shamir node issued an administrator certificate (%s) before its ceremony", adminCert)
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("stat %s: %v", adminCert, err)
-	}
-
-	if err := checkSealedMCPWindow(ports, dataDir); err != nil {
-		t.Fatalf("sealed shamir node: %v", err)
-	}
-	t.Logf("uncredentialed MCP initialize refused with 401 on the sealed node")
 }
 
 // checkSealedMCPWindow probes the sealed node's MCP endpoint. It first

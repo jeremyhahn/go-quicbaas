@@ -294,7 +294,7 @@ type SpendModel struct {
 // SpendHost is one host's share of a scope's spend: the node or worker host
 // the turns ran on.
 type SpendHost struct {
-	// Host is the host's address as the fleet knows it ("gpu-host:9091"). It
+	// Host is the host's address as the fleet knows it ("gpu-01:9091"). It
 	// is empty when Unattributed.
 	Host string `json:"host,omitempty"`
 

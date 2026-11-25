@@ -186,6 +186,35 @@ func TestSessionOwnership_RevokeOtherSessions(t *testing.T) {
 	requireSessionKept(t, storage, ownSessionID, otherUserSessionID, otherTenantSessionID)
 }
 
+// TestSessionOwnership_RevokeOtherSessions_KeepsUnstoredCurrentSession: login
+// mints the session ID into the token but stores no record for it, so a kept
+// ID with no record revokes every stored session of the caller and nobody
+// else's.
+// keptBearerRevoker records the kept session and revokes no bearer.
+type keptBearerRevoker struct{ keep string }
+
+func (k *keptBearerRevoker) RevokeSubjectBearers(_ context.Context, _, _, keepSessionID string) (int, error) {
+	k.keep = keepSessionID
+	return 0, nil
+}
+
+func TestSessionOwnership_RevokeOtherSessions_KeepsUnstoredCurrentSession(t *testing.T) {
+	server, storage := sessionOwnershipFixture(t)
+	bearers := &keptBearerRevoker{}
+	server = server.WithBearerRevoker(bearers)
+	ctx := sessionCallerContext("t1", "alice")
+
+	resp, err := server.RevokeOtherSessions(ctx, &iampb.RevokeOtherSessionsRequest{TenantId: "t1", KeepSessionId: "token-sid-not-stored"})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), resp.RevokedCount)
+	assert.Equal(t, "token-sid-not-stored", bearers.keep)
+	for _, id := range []string{ownSessionID, ownSecondSessionID} {
+		_, err := storage.GetSession(context.Background(), id)
+		assert.Error(t, err, "session %s should be revoked", id)
+	}
+	requireSessionKept(t, storage, otherUserSessionID, otherTenantSessionID)
+}
+
 func TestSessionOwnership_ListSessions(t *testing.T) {
 	server, _ := sessionOwnershipFixture(t)
 	ctx := sessionCallerContext("t1", "alice")

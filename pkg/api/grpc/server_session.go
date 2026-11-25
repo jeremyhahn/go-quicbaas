@@ -27,6 +27,7 @@ import (
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -44,7 +45,36 @@ type SessionServer struct {
 	sessionService SessionService
 	callers        service.CallerAccountResolver
 	credentials    CredentialRevoker
+	bearers        SessionBearerRevoker
 	logger         *logger.Logger
+}
+
+// SessionBearerRevoker revokes a subject's login bearer tokens in a tenant,
+// except those minted for keepSessionID (none kept when it is empty).
+type SessionBearerRevoker interface {
+	RevokeSubjectBearers(ctx context.Context, tenantID, subject, keepSessionID string) (int, error)
+}
+
+// WithBearerRevoker sets the revoker that ends the caller's login bearers
+// alongside their stored sessions.
+func (s *SessionServer) WithBearerRevoker(r SessionBearerRevoker) *SessionServer {
+	s.bearers = r
+	return s
+}
+
+// revokeCallerBearers revokes the authenticated caller's own login bearers in
+// tenantID except those of keepSessionID.
+func (s *SessionServer) revokeCallerBearers(ctx context.Context, tenantID, keepSessionID string) (int, error) {
+	subject, ok := auth.SubjectFromContext(ctx)
+	if !ok || !subject.Authenticated || subject.ID == "" {
+		return 0, status.Error(codes.Unauthenticated, "caller is not authenticated")
+	}
+	count, err := s.bearers.RevokeSubjectBearers(ctx, tenantID, subject.ID, keepSessionID)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to revoke login bearers")
+		return 0, status.Errorf(codes.Internal, "failed to revoke login bearers: %v", err)
+	}
+	return count, nil
 }
 
 // CredentialRevoker ends the login credentials a subject holds in a
@@ -238,7 +268,7 @@ func (s *SessionServer) RevokeSession(ctx context.Context, req *iampb.RevokeSess
 // access and refresh credentials in the tenant, then deletes the caller's
 // session records. A login keeps no session record, so deleting the records
 // alone would leave its bearer and refresh credential usable. Without a
-// credential revoker it refuses, rather than report a logout that left
+// credential or bearer revoker it refuses, rather than report a logout that left
 // credentials usable, and a revocation failure leaves the records in place.
 func (s *SessionServer) RevokeAllSessions(ctx context.Context, req *iampb.RevokeAllSessionsRequest) (*iampb.RevokeAllSessionsResponse, error) {
 	tenantID, userID, err := s.callerSessionScope(ctx, req.TenantId, req.UserId)
@@ -246,22 +276,33 @@ func (s *SessionServer) RevokeAllSessions(ctx context.Context, req *iampb.Revoke
 		return nil, err
 	}
 
-	if s.credentials == nil {
+	if s.credentials == nil && s.bearers == nil {
 		return nil, status.Error(codes.Unavailable, "credential revocation not available")
 	}
-	// callerSessionScope already refused an unauthenticated caller, and the
-	// scope it resolved is the caller's own tenant and account.
-	subject, _ := auth.SubjectFromContext(ctx)
-	if _, err := s.credentials.RevokeSubjectCredentials(ctx, tenantID, subject.ID); err != nil {
-		s.logger.WithError(err).Error("Failed to revoke login credentials")
-		return nil, status.Error(codes.Internal, "failed to revoke login credentials")
+	if s.credentials != nil {
+		// callerSessionScope already refused an unauthenticated caller, and the
+		// scope it resolved is the caller's own tenant and account.
+		subject, _ := auth.SubjectFromContext(ctx)
+		if _, err := s.credentials.RevokeSubjectCredentials(ctx, tenantID, subject.ID); err != nil {
+			s.logger.WithError(err).Error("Failed to revoke login credentials")
+			return nil, status.Error(codes.Internal, "failed to revoke login credentials")
+		}
+	}
+	count := 0
+	if s.bearers != nil {
+		bearers, err := s.revokeCallerBearers(ctx, tenantID, "")
+		if err != nil {
+			return nil, err
+		}
+		count += bearers
 	}
 
-	count, err := s.sessionService.RevokeAllSessions(ctx, tenantID, userID)
+	revoked, err := s.sessionService.RevokeAllSessions(ctx, tenantID, userID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to revoke all sessions")
 		return nil, status.Errorf(codes.Internal, "failed to revoke all sessions: %v", err)
 	}
+	count += revoked
 
 	return &iampb.RevokeAllSessionsResponse{RevokedCount: int32(count)}, nil
 }
@@ -278,15 +319,40 @@ func (s *SessionServer) RevokeOtherSessions(ctx context.Context, req *iampb.Revo
 		return nil, status.Error(codes.InvalidArgument, "keep_session_id is required")
 	}
 	// The kept session names whose sessions are revoked, so it must be the
-	// caller's own.
-	if _, err := s.ownedSession(ctx, req.KeepSessionId); err != nil {
+	// caller's own. A kept ID with no stored record is the caller's current
+	// token session, which login does not store: revoke every stored session
+	// of the caller, which keeps it.
+	tenantID, callerID, err := s.sessionCaller(ctx)
+	if err != nil {
 		return nil, err
 	}
-
-	count, err := s.sessionService.RevokeOtherSessions(ctx, req.TenantId, req.KeepSessionId)
+	kept, err := s.sessionService.GetSession(ctx, req.KeepSessionId)
+	var count int
+	switch {
+	case err == nil:
+		if kept.UserID != callerID || kept.TenantID != tenantID {
+			return nil, status.Error(codes.PermissionDenied, "access denied")
+		}
+		count, err = s.sessionService.RevokeOtherSessions(ctx, req.TenantId, req.KeepSessionId)
+	case qberrors.IsNotFound(err) || status.Code(err) == codes.NotFound:
+		if s.bearers == nil {
+			return nil, status.Error(codes.FailedPrecondition, "login bearer revocation not available")
+		}
+		count, err = s.sessionService.RevokeAllSessions(ctx, tenantID, callerID)
+	default:
+		s.logger.WithError(err).Error("Failed to get session")
+		return nil, status.Errorf(codes.Internal, "failed to get session: %v", err)
+	}
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to revoke other sessions")
 		return nil, status.Errorf(codes.Internal, "failed to revoke other sessions: %v", err)
+	}
+	if s.bearers != nil {
+		bearers, err := s.revokeCallerBearers(ctx, tenantID, req.KeepSessionId)
+		if err != nil {
+			return nil, err
+		}
+		count += bearers
 	}
 
 	return &iampb.RevokeOtherSessionsResponse{RevokedCount: int32(count)}, nil

@@ -28,7 +28,6 @@ import (
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
-	xkmslib "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
@@ -695,13 +694,7 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 	s.warnSelfServiceRegistrationPosture()
 
 	xkmsModule, err := xkmssdk.NewServiceModule(
-		func() *xkmslib.XKMSService {
-			svc, getErr := xkmssdk.Get()
-			if getErr != nil {
-				return nil
-			}
-			return svc
-		},
+		s.xkmsServiceForModule,
 		// go-xkms v0.7.1-alpha: without these Host self-build options the
 		// module registered zero HTTP routes (RegisterHTTP returned
 		// immediately for lack of a REST resolver -- there is no SDK

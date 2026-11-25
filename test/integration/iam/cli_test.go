@@ -434,18 +434,90 @@ func provisionRESTBearer(t *testing.T) {
 	bearer, expiresAt, err := helpers.AuthPIVSession(ctx, getRESTEndpointForCLI(), "", "", "")
 	require.NoError(t, err, "PIV login for REST CLI bearer failed")
 
+	require.NoError(t, clitoken.SaveToken(cliTokenPath(t), &clitoken.TokenData{
+		AccessToken: bearer,
+		ExpiresAt:   expiresAt,
+		TokenType:   "Bearer",
+	}), "persist REST CLI bearer")
+}
+
+// cliTokenPath returns the token file the CLI under test reads its bearer from.
+func cliTokenPath(t *testing.T) string {
+	t.Helper()
+
 	path := os.Getenv("QUICBAAS_TEST_TOKEN_PATH")
 	if path == "" {
 		defaultPath, pathErr := clitoken.GetDefaultTokenPath()
 		require.NoError(t, pathErr, "resolve CLI default token path")
 		path = defaultPath
 	}
+	return path
+}
 
-	require.NoError(t, clitoken.SaveToken(path, &clitoken.TokenData{
+// newIAMCLITenantSessionContext provisions tenantID (deleted when t ends) and
+// returns a gRPC CLI context whose token file holds that tenant's admin
+// bearer. The self-service Session API serves only the caller's own sessions
+// in the caller's own tenant, so the CLI derives the caller from this token.
+func newIAMCLITenantSessionContext(t *testing.T, tenantID string) *iamCLITestContext {
+	t.Helper()
+
+	proto := getGRPCProtocolConfig()
+	return newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
+}
+
+// newIAMCLITenantSessionContextFor provisions tenantID (deleted when t ends)
+// and returns a CLI context on the given transport whose token file holds
+// that tenant's admin bearer. The system admin only provisions the tenant;
+// every tenant-scoped call is made by the tenant's own admin
+// (helpers/auth_tenant_admin.go), because gRPC gives the system tenant no
+// lift into another tenant (pkg/api/grpc/tenant_target.go).
+func newIAMCLITenantSessionContextFor(t *testing.T, tenantID, protocol, address string) *iamCLITestContext {
+	t.Helper()
+
+	admin := iamCLITenantAdmin(t, tenantID)
+
+	cli := newIAMCLITestContext(t, protocol, address, tenantID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	bearer, expiresAt, err := admin.BearerSession(ctx)
+	require.NoError(t, err, "tenant admin login for CLI session tests failed")
+
+	require.NoError(t, clitoken.SaveToken(cliTokenPath(t), &clitoken.TokenData{
 		AccessToken: bearer,
 		ExpiresAt:   expiresAt,
 		TokenType:   "Bearer",
-	}), "persist REST CLI bearer")
+	}), "persist tenant admin CLI bearer")
+
+	return cli
+}
+
+// sharedIAMCLITenantID returns the package's shared CLI tenant
+// (shared_tenant_test.go), provisioned with its admin on first use the way
+// helpers.TenantAdmin provisions a fresh one, and deleted after m.Run. A CLI
+// test takes it only when every assertion it makes is about objects it names
+// uniquely; a test that revokes the admin's sessions or acts on the tenant
+// itself keeps a fresh tenant (generateUniqueTenantIDForCLI).
+func sharedIAMCLITenantID(t *testing.T) string {
+	t.Helper()
+	return provisionSharedTenant(t, getRESTEndpointForCLI(), "cli", generateUniqueTenantIDForCLI).id
+}
+
+// iamCLITenantAdmin returns the admin session of tenantID: the shared
+// tenant's cached session, or helpers.TenantAdmin, which provisions a fresh
+// tenant deleted when t ends.
+func iamCLITenantAdmin(t *testing.T, tenantID string) *helpers.TenantAdminSession {
+	t.Helper()
+	sharedTenants.Lock()
+	for _, s := range sharedTenants.byName {
+		if s.id == tenantID && s.admin != nil {
+			sharedTenants.Unlock()
+			return s.admin
+		}
+	}
+	sharedTenants.Unlock()
+	return helpers.TenantAdmin(t, getRESTEndpointForCLI(), tenantID)
 }
 
 // generateUniqueTenantIDForCLI generates a unique tenant ID for CLI testing.
@@ -457,7 +529,7 @@ func generateUniqueTenantIDForCLI() string {
 func setupIAMCLITestTenant(t *testing.T) string {
 	t.Helper()
 
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := generateUniqueTenantIDForCLI() // fresh: tenant control-plane fixture
 	restEndpoint := getRESTEndpointForCLI()
 
 	// Creating a tenant is a system-tenant route: the system admin's.
@@ -691,11 +763,8 @@ func TestCLISessionRevokeAllKeepCurrent(t *testing.T) {
 
 // TestCLIAuditQuery tests the audit query command.
 func TestCLIAuditQuery(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("query-audit-logs", func(t *testing.T) {
 		output, err := cli.run("iam", "audit", "query", "--tenant", tenantID)
@@ -715,11 +784,8 @@ func TestCLIAuditQuery(t *testing.T) {
 
 // TestCLIAuditQueryWithFilters tests the audit query command with filters.
 func TestCLIAuditQueryWithFilters(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	testCases := []struct {
 		name   string
@@ -745,11 +811,8 @@ func TestCLIAuditQueryWithFilters(t *testing.T) {
 
 // TestCLIAuditQueryWithPagination tests the audit query command with pagination.
 func TestCLIAuditQueryWithPagination(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("query-with-limit", func(t *testing.T) {
 		output, err := cli.run("iam", "audit", "query", "--tenant", tenantID, "--limit", "10")
@@ -766,11 +829,8 @@ func TestCLIAuditQueryWithPagination(t *testing.T) {
 
 // TestCLIAuditGet tests the audit get command.
 func TestCLIAuditGet(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("get-audit-event", func(t *testing.T) {
 		// First, query to get an event ID
@@ -827,11 +887,8 @@ func TestCLIAuditMissingTenant(t *testing.T) {
 
 // TestCLIPEPCheck tests the PEP check command for allowed access.
 func TestCLIPEPCheck(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("check-access-allowed", func(t *testing.T) {
 		subject := `{"id":"user1","type":"user"}`
@@ -857,11 +914,8 @@ func TestCLIPEPCheck(t *testing.T) {
 
 // TestCLIPEPCheckDeny tests the PEP check command for denied access.
 func TestCLIPEPCheckDeny(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("check-access-denied", func(t *testing.T) {
 		// Use an invalid or unauthorized subject/resource combination
@@ -890,11 +944,8 @@ func TestCLIPEPCheckDeny(t *testing.T) {
 
 // TestCLIPEPCheckBatch tests the PEP check-batch command.
 func TestCLIPEPCheckBatch(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("check-batch", func(t *testing.T) {
 		// Create a temporary file with batch requests
@@ -937,10 +988,9 @@ func TestCLIPEPCheckBatch(t *testing.T) {
 // TestCLIPEPCheckMissingArgs tests that PEP check fails with missing arguments.
 func TestCLIPEPCheckMissingArgs(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	testCases := []struct {
 		name string
@@ -1025,10 +1075,9 @@ func TestCLIAuditErrors(t *testing.T) {
 // TestCLIPEPErrors tests error handling for PEP commands.
 func TestCLIPEPErrors(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	t.Run("check-invalid-subject-json", func(t *testing.T) {
 		_, err := cli.runExpectError("iam", "pep", "check",
@@ -1134,18 +1183,19 @@ func TestCLIIAMPEPHelp(t *testing.T) {
 
 // TestCLIIAMOutputFormats tests different output formats for IAM commands.
 func TestCLIIAMOutputFormats(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
+	// Provision the tenant once in the parent: each subtest's TenantAdmin call
+	// reuses this cached session instead of provisioning the tenant again.
+	iamCLITenantAdmin(t, tenantID)
 
 	outputFormats := []string{"json", "table", "yaml"}
 
 	for _, format := range outputFormats {
 		t.Run(fmt.Sprintf("session-list-%s", format), func(t *testing.T) {
-			cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+			cli := newIAMCLITenantSessionContext(t, tenantID)
 			cli.outputFmt = format
 
-			output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user")
+			output, err := cli.run("iam", "session", "list", "--tenant", tenantID)
 			require.NoError(t, err, "session list with %s output should succeed", format)
 
 			// Verify format-specific content
@@ -1173,22 +1223,19 @@ func TestCLIIAMOutputFormats(t *testing.T) {
 
 // TestCLIIAMSessionWorkflow tests a complete session management workflow.
 func TestCLIIAMSessionWorkflow(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI() // fresh: revokes the tenant admin's sessions
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	// Step 1: List sessions
 	t.Run("workflow-list", func(t *testing.T) {
-		output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user")
+		output, err := cli.run("iam", "session", "list", "--tenant", tenantID)
 		require.NoError(t, err, "session list should succeed")
 		t.Logf("Initial session list: %s", output)
 	})
 
 	// Step 2: Get details of first session (if any)
 	t.Run("workflow-get", func(t *testing.T) {
-		listOutput, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user", "--limit", "1")
+		listOutput, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--limit", "1")
 		require.NoError(t, err, "session list should succeed")
 
 		var sessionID string
@@ -1213,7 +1260,7 @@ func TestCLIIAMSessionWorkflow(t *testing.T) {
 
 	// Step 3: Revoke all (for cleanup)
 	t.Run("workflow-revoke-all", func(t *testing.T) {
-		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--user", "test-user", "--yes")
+		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--yes")
 		require.NoError(t, err, "session revoke-all should succeed")
 		t.Logf("Revoke all result: %s", output)
 	})
@@ -1221,11 +1268,8 @@ func TestCLIIAMSessionWorkflow(t *testing.T) {
 
 // TestCLIIAMAuditWorkflow tests a complete audit query workflow.
 func TestCLIIAMAuditWorkflow(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	// Step 1: Query all events
 	t.Run("workflow-query-all", func(t *testing.T) {
@@ -1272,11 +1316,8 @@ func TestCLIIAMAuditWorkflow(t *testing.T) {
 
 // TestCLIIAMPEPWorkflow tests a complete PEP access check workflow.
 func TestCLIIAMPEPWorkflow(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	// Step 1: Check read access
 	t.Run("workflow-check-read", func(t *testing.T) {
@@ -1546,14 +1587,17 @@ func TestCLITenantDelete(t *testing.T) {
 
 // TestCLIUserCreateMultiProtocol tests the user create command across all protocols.
 func TestCLIUserCreateMultiProtocol(t *testing.T) {
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
+	// Provision the tenant once in the parent: each protocol's TenantAdmin
+	// call reuses this cached session, and the tenant's own admin creates
+	// the users (the system admin has no gRPC lift into the tenant).
+	iamCLITenantAdmin(t, tenantID)
 
 	protocols := getAllProtocolConfigs()
 
 	for _, proto := range protocols {
 		t.Run(proto.name, func(t *testing.T) {
-			cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+			cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 			t.Run("create-user", func(t *testing.T) {
 				email := fmt.Sprintf("user-%s-%d@test.local", proto.name, time.Now().UnixNano())
@@ -1600,10 +1644,9 @@ func TestCLIUserCreateMultiProtocol(t *testing.T) {
 // TestCLIUserCreate tests the user create command (single protocol for quick validation).
 func TestCLIUserCreate(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	t.Run("create-user", func(t *testing.T) {
 		email := fmt.Sprintf("user-%d@test.local", time.Now().UnixNano())
@@ -1643,14 +1686,16 @@ func TestCLIUserCreate(t *testing.T) {
 
 // TestCLIUserCRUDMultiProtocol tests full user CRUD across all protocols.
 func TestCLIUserCRUDMultiProtocol(t *testing.T) {
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
+	// Provision once in the parent; each protocol reuses the cached tenant
+	// admin session and acts in the tenant as that tenant's own admin.
+	iamCLITenantAdmin(t, tenantID)
 
 	protocols := getAllProtocolConfigs()
 
 	for _, proto := range protocols {
 		t.Run(proto.name, func(t *testing.T) {
-			cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+			cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 			email := fmt.Sprintf("crud-user-%s-%d@test.local", proto.name, time.Now().UnixNano())
 
 			// Create
@@ -1695,10 +1740,9 @@ func TestCLIUserCRUDMultiProtocol(t *testing.T) {
 // TestCLIUserGet tests the user get command (single protocol for quick validation).
 func TestCLIUserGet(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Create a user first
 	email := fmt.Sprintf("get-user-%d@test.local", time.Now().UnixNano())
@@ -1736,10 +1780,9 @@ func TestCLIUserGet(t *testing.T) {
 // TestCLIUserList tests the user list command.
 func TestCLIUserList(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	t.Run("list-users", func(t *testing.T) {
 		output, err := cli.run("iam", "user", "list", "--tenant", tenantID)
@@ -1762,10 +1805,9 @@ func TestCLIUserList(t *testing.T) {
 // TestCLIUserUpdate tests the user update command.
 func TestCLIUserUpdate(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Create a user first
 	email := fmt.Sprintf("update-user-%d@test.local", time.Now().UnixNano())
@@ -1797,10 +1839,9 @@ func TestCLIUserUpdate(t *testing.T) {
 // TestCLIUserDelete tests the user delete command.
 func TestCLIUserDelete(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Create a user to delete
 	email := fmt.Sprintf("delete-user-%d@test.local", time.Now().UnixNano())
@@ -1832,10 +1873,9 @@ func TestCLIUserDelete(t *testing.T) {
 // TestCLIUserRoleManagement tests user role assignment and revocation.
 func TestCLIUserRoleManagement(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Create a user
 	email := fmt.Sprintf("role-user-%d@test.local", time.Now().UnixNano())
@@ -1908,10 +1948,9 @@ func TestCLIUserRoleManagement(t *testing.T) {
 // TestCLIRoleCreate tests the role create command.
 func TestCLIRoleCreate(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	t.Run("create-role", func(t *testing.T) {
 		roleID := fmt.Sprintf("role-%d", time.Now().UnixNano())
@@ -1928,10 +1967,9 @@ func TestCLIRoleCreate(t *testing.T) {
 // TestCLIRoleGet tests the role get command.
 func TestCLIRoleGet(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Create a role first
 	roleID := fmt.Sprintf("get-role-%d", time.Now().UnixNano())
@@ -1956,10 +1994,9 @@ func TestCLIRoleGet(t *testing.T) {
 // TestCLIRoleList tests the role list command.
 func TestCLIRoleList(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	t.Run("list-roles", func(t *testing.T) {
 		output, err := cli.run("iam", "role", "list", "--tenant", tenantID)
@@ -1971,10 +2008,9 @@ func TestCLIRoleList(t *testing.T) {
 // TestCLIRoleUpdate tests the role update command.
 func TestCLIRoleUpdate(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Create a role first
 	roleID := fmt.Sprintf("update-role-%d", time.Now().UnixNano())
@@ -1996,10 +2032,9 @@ func TestCLIRoleUpdate(t *testing.T) {
 // TestCLIRoleDelete tests the role delete command.
 func TestCLIRoleDelete(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Create a role to delete
 	roleID := fmt.Sprintf("delete-role-%d", time.Now().UnixNano())
@@ -2024,10 +2059,9 @@ func TestCLIRoleDelete(t *testing.T) {
 // TestCLIPolicyApply tests the policy apply command.
 func TestCLIPolicyApply(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	t.Run("apply-policy", func(t *testing.T) {
 		// Create a policy YAML file
@@ -2064,10 +2098,9 @@ spec:
 // TestCLIPolicyGet tests the policy get command.
 func TestCLIPolicyGet(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Apply a policy first
 	policyName := fmt.Sprintf("get-policy-%d", time.Now().UnixNano())
@@ -2113,10 +2146,9 @@ spec:
 // TestCLIPolicyList tests the policy list command.
 func TestCLIPolicyList(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	t.Run("list-policies", func(t *testing.T) {
 		output, err := cli.run("iam", "policy", "list", "--tenant", tenantID)
@@ -2128,10 +2160,9 @@ func TestCLIPolicyList(t *testing.T) {
 // TestCLIPolicyDelete tests the policy delete command.
 func TestCLIPolicyDelete(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Apply a policy to delete
 	policyName := fmt.Sprintf("delete-policy-%d", time.Now().UnixNano())
@@ -2173,10 +2204,9 @@ spec:
 // TestCLIPolicyValidate tests the policy validate command.
 func TestCLIPolicyValidate(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	t.Run("validate-valid-policy", func(t *testing.T) {
 		policyYAML := fmt.Sprintf(`apiVersion: iam.quicbaas.io/v1
@@ -2227,10 +2257,9 @@ spec:
 // TestCLIPolicyTest tests the policy test command.
 func TestCLIPolicyTest(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	t.Run("test-policy", func(t *testing.T) {
 		output, err := cli.run("iam", "policy", "test",
@@ -2254,10 +2283,9 @@ func TestCLIPolicyTest(t *testing.T) {
 // TestCLIAppRegister tests the app register command.
 func TestCLIAppRegister(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	t.Run("register-app", func(t *testing.T) {
 		appName := fmt.Sprintf("test-app-%d", time.Now().UnixNano())
@@ -2274,10 +2302,9 @@ func TestCLIAppRegister(t *testing.T) {
 // TestCLIAppGet tests the app get command.
 func TestCLIAppGet(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Register an app first
 	appName := fmt.Sprintf("get-app-%d", time.Now().UnixNano())
@@ -2315,10 +2342,9 @@ func TestCLIAppGet(t *testing.T) {
 // TestCLIAppList tests the app list command.
 func TestCLIAppList(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	t.Run("list-apps", func(t *testing.T) {
 		output, err := cli.run("iam", "app", "list", "--tenant", tenantID)
@@ -2330,10 +2356,9 @@ func TestCLIAppList(t *testing.T) {
 // TestCLIAppUpdate tests the app update command.
 func TestCLIAppUpdate(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Register an app first
 	appName := fmt.Sprintf("update-app-%d", time.Now().UnixNano())
@@ -2367,10 +2392,9 @@ func TestCLIAppUpdate(t *testing.T) {
 // TestCLIAppDelete tests the app delete command.
 func TestCLIAppDelete(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Register an app to delete
 	appName := fmt.Sprintf("delete-app-%d", time.Now().UnixNano())
@@ -2403,10 +2427,9 @@ func TestCLIAppDelete(t *testing.T) {
 // TestCLIAppRotateSecret tests the app rotate-secret command.
 func TestCLIAppRotateSecret(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Register an app
 	appName := fmt.Sprintf("rotate-app-%d", time.Now().UnixNano())
@@ -2442,10 +2465,9 @@ func TestCLIAppRotateSecret(t *testing.T) {
 // TestCLIMFAStatus tests the MFA status command.
 func TestCLIMFAStatus(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Create a user first
 	email := fmt.Sprintf("mfa-user-%d@test.local", time.Now().UnixNano())
@@ -2477,10 +2499,9 @@ func TestCLIMFAStatus(t *testing.T) {
 // TestCLIMFAEnroll tests the MFA enrollment flow.
 func TestCLIMFAEnroll(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Create a user first
 	email := fmt.Sprintf("mfa-enroll-%d@test.local", time.Now().UnixNano())
@@ -2516,10 +2537,9 @@ func TestCLIMFAEnroll(t *testing.T) {
 // TestCLIMFADisable tests the MFA disable command.
 func TestCLIMFADisable(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Create a user
 	email := fmt.Sprintf("mfa-disable-%d@test.local", time.Now().UnixNano())
@@ -2555,10 +2575,9 @@ func TestCLIMFADisable(t *testing.T) {
 // TestCLIMFABackupCodes tests MFA backup codes management.
 func TestCLIMFABackupCodes(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := sharedIAMCLITenantID(t)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	// Create a user
 	email := fmt.Sprintf("mfa-backup-%d@test.local", time.Now().UnixNano())
@@ -2639,11 +2658,18 @@ func TestCLIE2ETenantUserWorkflow(t *testing.T) {
 		assert.Contains(t, output, tenantID)
 	})
 
+	// The system admin only creates and deletes the tenant; every step inside
+	// it is made by the tenant's own admin (gRPC gives the system tenant no
+	// lift into another tenant). The CLI token file is shared, so this
+	// context's tenant admin bearer replaces the system admin's until the
+	// cleanup step restores it for the tenant delete.
+	tenantCLI := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
+
 	// Step 3: Create users
 	var user1ID, user2ID string
 	t.Run("e2e-create-users", func(t *testing.T) {
 		email1 := fmt.Sprintf("e2e-user1-%d@test.local", time.Now().UnixNano())
-		output1, err := cli.run("iam", "user", "create", email1,
+		output1, err := tenantCLI.run("iam", "user", "create", email1,
 			"--tenant", tenantID,
 			"--name", "E2E User 1")
 		require.NoError(t, err, "user create should succeed")
@@ -2659,7 +2685,7 @@ func TestCLIE2ETenantUserWorkflow(t *testing.T) {
 		}
 
 		email2 := fmt.Sprintf("e2e-user2-%d@test.local", time.Now().UnixNano())
-		output2, err := cli.run("iam", "user", "create", email2,
+		output2, err := tenantCLI.run("iam", "user", "create", email2,
 			"--tenant", tenantID,
 			"--name", "E2E User 2")
 		require.NoError(t, err, "user create should succeed")
@@ -2679,13 +2705,13 @@ func TestCLIE2ETenantUserWorkflow(t *testing.T) {
 	// grouping identity offers; quicbaas keeps no groups of its own.
 	roleID := fmt.Sprintf("e2e-role-%d", time.Now().UnixNano())
 	t.Run("e2e-create-role", func(t *testing.T) {
-		_, err := cli.run("iam", "role", "create", roleID,
+		_, err := tenantCLI.run("iam", "role", "create", roleID,
 			"--tenant", tenantID,
 			"--name", "E2E Test Role")
 		require.NoError(t, err, "role create should succeed")
 
 		for _, userID := range []string{user1ID, user2ID} {
-			_, err = cli.run("iam", "user", "role", "assign",
+			_, err = tenantCLI.run("iam", "user", "role", "assign",
 				"--tenant", tenantID,
 				"--user", userID,
 				"--role", roleID)
@@ -2719,13 +2745,13 @@ spec:
 		require.NoError(t, err)
 		tmpFile.Close()
 
-		_, err = cli.run("iam", "policy", "apply", "-f", tmpFile.Name())
+		_, err = tenantCLI.run("iam", "policy", "apply", "-f", tmpFile.Name())
 		require.NoError(t, err, "policy apply should succeed")
 	})
 
 	// Step 6: Test access check
 	t.Run("e2e-access-check", func(t *testing.T) {
-		output, err := cli.run("iam", "pep", "check",
+		output, err := tenantCLI.run("iam", "pep", "check",
 			"--tenant", tenantID,
 			"--subject", fmt.Sprintf(`{"id":"%s","type":"user","roles":["%s"]}`, user1ID, roleID),
 			"--action", "read",
@@ -2736,10 +2762,13 @@ spec:
 
 	// Cleanup
 	t.Run("e2e-cleanup", func(t *testing.T) {
-		_, _ = cli.run("iam", "policy", "delete", policyName, "--tenant", tenantID, "--yes")
-		_, _ = cli.run("iam", "role", "delete", roleID, "--tenant", tenantID, "--yes")
-		_, _ = cli.run("iam", "user", "delete", user1ID, "--tenant", tenantID, "--yes")
-		_, _ = cli.run("iam", "user", "delete", user2ID, "--tenant", tenantID, "--yes")
+		_, _ = tenantCLI.run("iam", "policy", "delete", policyName, "--tenant", tenantID, "--yes")
+		_, _ = tenantCLI.run("iam", "role", "delete", roleID, "--tenant", tenantID, "--yes")
+		_, _ = tenantCLI.run("iam", "user", "delete", user1ID, "--tenant", tenantID, "--yes")
+		_, _ = tenantCLI.run("iam", "user", "delete", user2ID, "--tenant", tenantID, "--yes")
+		// Restore the system admin bearer: deleting the tenant is a
+		// system-tenant route.
+		provisionRESTBearer(t)
 		_, _ = cli.run("iam", "tenant", "delete", tenantID, "--yes")
 	})
 }

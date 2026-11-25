@@ -248,7 +248,7 @@ func TestHandleAgentRegister_EnrollsOnlyTheCertificateItWasGiven(t *testing.T) {
 		f.postRegister(t, agentSPIFFEPeerCert(t, agentOAuthTestTenant, agentOAuthTestTenant, "agent-agent-04")).Code)
 
 	ctx := context.Background()
-	if _, err := f.identity.GetUserByUsername(ctx, agentOAuthTestTenant, "agent-gpu-host"); err == nil {
+	if _, err := f.identity.GetUserByUsername(ctx, agentOAuthTestTenant, "agent-gpu-01"); err == nil {
 		t.Fatal("registering one agent must not enroll another")
 	}
 }

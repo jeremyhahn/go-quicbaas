@@ -723,17 +723,21 @@ func TestMakeStageTagCheckCatchesALostTagArgument(t *testing.T) {
 	}
 }
 
-// TestNoWorkflowRunsOnASchedule pins the owner ruling of 2026-10-11: the
-// coordinator dispatches the nightly full tier, no workflow schedules itself.
+// scheduleExempt names the workflows that may carry a `schedule:` trigger.
 // automerge.yml is under owner hold and keeps its sweep. worker-image.yml keeps
-// its nightly build and publish of the worker image, an owner exception.
+// its nightly build and publish of the worker image, an owner exception (owner
+// ruling 2026-10-15, go-quicbaas#1385).
 // nightly.yml runs on a daily schedule at 04:05 UTC by the owner order of
 // 2026-11-22, which supersedes the 2026-10-11 rule for that workflow only.
+var scheduleExempt = map[string]bool{"automerge.yml": true, "worker-image.yml": true, "nightly.yml": true}
+
+// TestNoWorkflowRunsOnASchedule pins the owner ruling of 2026-10-11: the
+// coordinator dispatches the nightly full tier, no workflow schedules itself,
+// except the ones scheduleExempt names.
 func TestNoWorkflowRunsOnASchedule(t *testing.T) {
 	scheduleRe := regexp.MustCompile(`(?m)^  schedule:`)
-	exempt := map[string]bool{"automerge.yml": true, "worker-image.yml": true, "nightly.yml": true}
 	for _, path := range workflowFiles(t) {
-		if exempt[filepath.Base(path)] {
+		if scheduleExempt[filepath.Base(path)] {
 			continue
 		}
 		if scheduleRe.MatchString(readFile(t, path)) {
