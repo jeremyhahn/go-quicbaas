@@ -347,7 +347,7 @@ func TestConclusionEvidence_PrefersTheRunSummaryOverTheResult(t *testing.T) {
 func TestHooks_TaskConcluded_PostsTheRunSummaryNotTheOutput(t *testing.T) {
 	rig := concludedRig(t)
 	task := exhaustedTask()
-	task.Result.Output = "sdlc: push to https://bot:hunter2@git.corp.internal failed with qbx_live_9f8e7d6c5b4a3f2e1d0c"
+	task.Result.Output = "sdlc: push to https://bot:hunter2@git.example.com failed with qbx_live_9f8e7d6c5b4a3f2e1d0c"
 	summary := summarizeRun(runSummaryInput{
 		TaskID: task.ID, JobID: "job-3", Attempt: 3, Err: &PublishCommandError{Command: "push origin", ExitCode: 1, Output: task.Result.Output},
 	})
@@ -368,7 +368,7 @@ func TestHooks_TaskConcluded_PostsTheRunSummaryNotTheOutput(t *testing.T) {
 	if !strings.Contains(body, "outcome: `failed`") {
 		t.Fatalf("the comment does not quote the run summary:\n%s", body)
 	}
-	for _, private := range []string{"https://bot:hunter2@git.corp.internal", "qbx_live_9f8e7d6c5b4a3f2e1d0c"} {
+	for _, private := range []string{"https://bot:hunter2@git.example.com", "qbx_live_9f8e7d6c5b4a3f2e1d0c"} {
 		if strings.Contains(body, private) {
 			t.Fatalf("the comment carries %q:\n%s", private, body)
 		}
@@ -380,7 +380,7 @@ func TestHooks_TaskConcluded_PostsTheRunSummaryNotTheOutput(t *testing.T) {
 func TestHooks_TaskConcluded_WithNoSummaryPostsNoOutput(t *testing.T) {
 	rig := concludedRig(t)
 	task := exhaustedTask()
-	task.Result.Output = "sdlc: push to https://bot:hunter2@git.corp.internal failed with qbx_live_9f8e7d6c5b4a3f2e1d0c"
+	task.Result.Output = "sdlc: push to https://bot:hunter2@git.example.com failed with qbx_live_9f8e7d6c5b4a3f2e1d0c"
 	rig.tasks.replace(task)
 
 	err := rig.hooks.TaskConcluded(context.Background(), orchestration.TaskConclusion{
@@ -397,7 +397,7 @@ func TestHooks_TaskConcluded_WithNoSummaryPostsNoOutput(t *testing.T) {
 	if !strings.Contains(body, "the run recorded no public summary; see the task's audit trail") {
 		t.Fatalf("the comment lacks the fixed line:\n%s", body)
 	}
-	for _, private := range []string{"https://bot:hunter2@git.corp.internal", "qbx_live_9f8e7d6c5b4a3f2e1d0c", "sdlc: push"} {
+	for _, private := range []string{"https://bot:hunter2@git.example.com", "qbx_live_9f8e7d6c5b4a3f2e1d0c", "sdlc: push"} {
 		if strings.Contains(body, private) {
 			t.Fatalf("the comment carries %q:\n%s", private, body)
 		}

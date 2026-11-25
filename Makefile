@@ -1816,11 +1816,11 @@ integration-test-orchestration-gpu: ## Run GPU-accelerated orchestration integra
 # every feature.
 INTEGRATION_FEATURES := account agent agents api attestation auth backup batch \
 	cache-redis cli cluster containerruntime dataplane dek durability embedded \
-	fleet-enrollment fleet-runtime forge-gitea iam init kms lifecycle login mcp merge-result messaging \
+	fleet-enrollment fleet-runtime forge-gitea forge-github iam init kms lifecycle login mcp merge-result messaging \
 	observability orchestration orchestration-gpu orchestrator parameter_store \
 	placement project quicbaasd raft rag registry routing scheduler sdk-go sdk-js seal \
 	seal-hardware secrets secrets-resolver server session-attach signalbridge \
-	standalone storage storage-file tenantbarrier timeseries transactions transport vector \
+	standalone storage storage-file tenantbarrier timeseries train-github transactions transport vector \
 	workerimage
 FEATURE_PATHS_account           := test/integration/cli/account_test.go
 FEATURE_PATHS_agent             := test/integration/agent/
@@ -1841,6 +1841,7 @@ FEATURE_PATHS_embedded          := test/integration/embedded/
 FEATURE_PATHS_fleet-enrollment  := test/integration/fleet_enrollment/
 FEATURE_PATHS_fleet-runtime     := test/integration/fleet_runtime/
 FEATURE_PATHS_forge-gitea       := pkg/sdlc/forge_gitea_live_test.go
+FEATURE_PATHS_forge-github      := pkg/sdlc/forge_github_live_test.go
 FEATURE_PATHS_iam               := test/integration/iam/
 FEATURE_PATHS_init              := test/integration/init/
 FEATURE_PATHS_kms               := test/integration/kms/
@@ -1876,6 +1877,7 @@ FEATURE_PATHS_storage           := test/integration/storage/
 FEATURE_PATHS_storage-file      := pkg/storage/file/integration_test.go
 FEATURE_PATHS_tenantbarrier     := test/integration/tenantbarrier/
 FEATURE_PATHS_timeseries        := test/integration/timeseries/
+FEATURE_PATHS_train-github      := cmd/quicbaasd/sdlc_train_github_e2e_test.go
 FEATURE_PATHS_transactions      := test/integration/transactions/
 FEATURE_PATHS_transport         := test/integration/transport/
 FEATURE_PATHS_vector            := test/integration/vector/

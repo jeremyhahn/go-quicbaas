@@ -56,12 +56,12 @@ func TestSDLCForge_NegativeIsRefusedAndZeroIsNot(t *testing.T) {
 }
 
 func TestSDLCForge_TokenCommandRefusalsNameTheirKey(t *testing.T) {
-	const argv = "/usr/local/bin/forge-mint"
+	const argv = "/usr/local/bin/forge-token-helper"
 	const api = "https://api.github.com"
 	cases := map[string]map[string]SDLCForgeTokenCommand{
 		"sdlc.forge.token_commands.gitlab":                   {"gitlab": {Argv: []string{argv}}},
 		"sdlc.forge.token_commands.github.argv":              {"github": {}},
-		"sdlc.forge.token_commands.gitea.argv":               {"gitea": {Argv: []string{"bin/forge-mint"}}},
+		"sdlc.forge.token_commands.gitea.argv":               {"gitea": {Argv: []string{"bin/forge-token-helper"}}},
 		"sdlc.forge.token_commands.github.refresh_before":    {"github": {Argv: []string{argv}, RefreshBefore: -time.Second, AllowedBaseURLs: []string{api}}},
 		"sdlc.forge.token_commands.github.timeout":           {"github": {Argv: []string{argv}, Timeout: -time.Second, AllowedBaseURLs: []string{api}}},
 		"sdlc.forge.token_commands.github.allowed_base_urls": {"github": {Argv: []string{argv}}},

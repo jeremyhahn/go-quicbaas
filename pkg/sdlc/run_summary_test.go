@@ -62,9 +62,9 @@ func TestRunSummary_CarriesOnlyAllowlistedFields(t *testing.T) {
 // forge-shaped one is built at run time.
 func privateMarkers() []string {
 	return []string{
-		"git.corp.internal",
+		"git.example.com",
 		"10.20.30.40",
-		"https://bot:hunter2@git.corp.internal/acme/api.git",
+		"https://bot:hunter2@git.example.com/acme/api.git",
 		"qbx_live_9f8e7d6c5b4a3f2e1d0c",
 		"ghp_" + strings.Repeat("a1B2c3", 6),
 		"/home/builder/.ssh/id_ed25519",
@@ -77,7 +77,7 @@ func privateMarkers() []string {
 func TestRunSummary_LeaksNothingPrivate(t *testing.T) {
 	markers := privateMarkers()
 	all := strings.Join(markers, " ")
-	failedName := "DEPLOY_TOKEN=s3cr3t-v4lue /home/builder/bin/make test --url=https://bot:hunter2@git.corp.internal"
+	failedName := "DEPLOY_TOKEN=s3cr3t-v4lue /home/builder/bin/make test --url=https://bot:hunter2@git.example.com"
 	delivery := &Delivery{
 		TaskID:      "task-1",
 		Branch:      all,
