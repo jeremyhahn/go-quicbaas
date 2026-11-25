@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	xkmsv1 "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -123,5 +124,74 @@ func TestCertificateHandler_GetCACertificate_NilRequest(t *testing.T) {
 	h := newCertificateHandlerWithServer(t, false)
 	if _, err := h.handleRequest(context.Background(), "quicbaas.Certificate", "GetCACertificate", nil); err != nil {
 		t.Fatalf("nil request should be tolerated: %v", err)
+	}
+}
+
+// fakeKeystoreServer serves only go-xkms's canonical SignCSR and records
+// the request.
+type fakeKeystoreServer struct {
+	xkmsv1.UnimplementedKeystoreServiceServer
+	got *xkmsv1.SignCSRRequest
+}
+
+func (f *fakeKeystoreServer) SignCSR(_ context.Context, req *xkmsv1.SignCSRRequest) (*xkmsv1.SignCSRResponse, error) {
+	f.got = req
+	return &xkmsv1.SignCSRResponse{CertificatePem: []byte("leaf"), ChainPem: []byte("chain"), SerialNumber: "0a"}, nil
+}
+
+// TestCertificateHandler_SignCSR_FallsBackToCanonicalKeystore: a server that
+// serves only the canonical KeystoreService (as a TCP peer sees the node)
+// still signs the CSR.
+func TestCertificateHandler_SignCSR_FallsBackToCanonicalKeystore(t *testing.T) {
+	fake := &fakeKeystoreServer{}
+	srv := newHandlerServer(t, func(s *grpc.Server) {
+		xkmsv1.RegisterKeystoreServiceServer(s, fake)
+	})
+	h := newCertificateHandler(srv.dial(t))
+
+	got, err := h.handleRequest(context.Background(), "quicbaas.Certificate", "SignCSR",
+		&certificate.SignCSRRequest{CSRPEM: "csr", ValidityDays: 30, Usage: "client"})
+	if err != nil {
+		t.Fatalf("SignCSR: %v", err)
+	}
+	resp, ok := got.(*certificate.SignCSRResponse)
+	if !ok {
+		t.Fatalf("SignCSR response type = %T, want *certificate.SignCSRResponse", got)
+	}
+	if resp.CertificatePEM != "leaf" || resp.ChainPEM != "chain" || resp.SerialNumber != "0a" {
+		t.Fatalf("SignCSR response = %+v, want leaf/chain/0a", resp)
+	}
+	if fake.got == nil {
+		t.Fatal("canonical SignCSR was not called")
+	}
+	if string(fake.got.GetCsrPem()) != "csr" || fake.got.GetProfile() != "client" || fake.got.GetValidityDays() != 30 {
+		t.Fatalf("canonical SignCSR request = %+v, want csr/client/30", fake.got)
+	}
+}
+
+// TestCertificateHandler_SignCSR_LegacyErrorDoesNotFallBack: an error other
+// than Unimplemented from the legacy service is returned as is.
+func TestCertificateHandler_SignCSR_LegacyErrorDoesNotFallBack(t *testing.T) {
+	fake := &fakeKeystoreServer{}
+	srv := newHandlerServer(t, func(s *grpc.Server) {
+		pb.RegisterCertificateServiceServer(s, &fakeCertificateServer{fail: true})
+		xkmsv1.RegisterKeystoreServiceServer(s, fake)
+	})
+	h := newCertificateHandler(srv.dial(t))
+
+	if _, err := h.handleRequest(context.Background(), "quicbaas.Certificate", "SignCSR",
+		&certificate.SignCSRRequest{CSRPEM: "csr", ValidityDays: 30, Usage: "client"}); err == nil {
+		t.Fatal("SignCSR: expected the legacy service's error")
+	}
+	if fake.got != nil {
+		t.Fatalf("canonical SignCSR was called after a non-Unimplemented error: %+v", fake.got)
+	}
+}
+
+func TestCertUsageToProfile(t *testing.T) {
+	for usage, want := range map[string]string{"client": "client", "server": "server", "both": "", "": ""} {
+		if got := certUsageToProfile(usage); got != want {
+			t.Errorf("certUsageToProfile(%q) = %q, want %q", usage, got, want)
+		}
 	}
 }

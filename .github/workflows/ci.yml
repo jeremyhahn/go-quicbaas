@@ -301,7 +301,7 @@
 # v1.29.3 (Company Agent ruling 255(10)/(11)(c), 2026-10-29): one schedule
 # run per repository, skipped when a main run is in flight. The 04:00Z
 # nightly cron on every repository started six main runs over the throttle
-# and drove a CI runner host's /mnt/disk1 to 93 %. Two changes:
+# and drove a CI runner host's cache disk to 93 %. Two changes:
 #   - a schedule run's concurrency group is `schedule-{repository}`, with no
 #     sha, so a repository has one schedule run at a time. cancel-in-progress
 #     stays a literal `true`, so a newer schedule run cancels an older one
@@ -760,7 +760,8 @@ on:
     # `concurrency` block lets cancel the PR's run in progress. The cost:
     # adding `ci:full` waits for the PR's next push or update-branch, or takes
     # effect through `workflow_dispatch`.
-    types: [opened, synchronize, reopened]
+    # v1.35.3: `ready_for_review`, so a draft marked ready gets its run.
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:                    # re-fire a whole workflow; also the
                                         # only retry when a run was never
                                         # created (see v1.3 correction above)
@@ -1266,6 +1267,8 @@ jobs:
         run: python3 -I testdata/ci-mask-lan-tests.py
       - name: Job output handoff tests
         run: python3 -I testdata/job-output-handoff-tests.py
+      - name: Code review draft tests
+        run: python3 -I .github/workflows/testdata/code-review-v51213-tests.py .github/workflows/code-review.yml
 
   # v1.30 (fix 1): the toolchain image is built once per content hash, here,
   # and every other job pulls it (scripts/ci-image-cache.sh v2, ships beside
@@ -2090,7 +2093,7 @@ jobs:
       # v1.22: the cache volumes' trust class (as in the image job).
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
       CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}   # v1.30
-      # gpu-host's and the Dells' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      # the GPU runner's and the big-disk hosts' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
       IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
     steps:
       # No credential reaches a job. A runner that injects a git credential
@@ -2234,7 +2237,7 @@ jobs:
     if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
-      # gpu-host's and the Dells' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      # the GPU runner's and the big-disk hosts' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
       IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
       IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}

@@ -76,14 +76,18 @@ func TestUnifiedLogin_PasswordLoginUnsupported(t *testing.T) {
 // not exist" rejection from a transport whose protocol surface no longer
 // carries the retired password Login verb at all: the reserved QUIC opcode
 // 0x60 or the unregistered MCP quicbaas_login tool. Both surface as
-// invalid-input errors from the server's dispatch table.
+// invalid-input errors from the server's dispatch table. The MCP form is
+// mcp-go's unknown-tool refusal ("tool 'quicbaas_login' not found", mcp-go
+// server/server.go); the older "unknown tool: quicbaas_login" form is kept
+// for older servers. Only the exact quicbaas_login tool name matches.
 func isLegacyLoginVerbAbsent(err error) bool {
 	if err == nil || !sdkerrors.IsInvalidInput(err) {
 		return false
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "unknown opcode: 0x60") ||
-		strings.Contains(msg, "unknown tool: quicbaas_login")
+		strings.Contains(msg, "unknown tool: quicbaas_login") ||
+		strings.Contains(msg, "tool 'quicbaas_login' not found")
 }
 
 // TestUnifiedLogin_WebAuthnInContainerDeferred is SECURITY assertion (d),

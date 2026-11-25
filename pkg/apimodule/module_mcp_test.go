@@ -139,6 +139,26 @@ func TestMCPToolPermissions_LoginStaysRefused(t *testing.T) {
 	}
 }
 
+// TestMCPToolPermissions_PasskeyToolsStayRefused pins that no passkey
+// (FIDO2) tool is declared on the MCP listener: passkeys stay off MCP.
+func TestMCPToolPermissions_PasskeyToolsStayRefused(t *testing.T) {
+	backend := newMCPBackend(t)
+	m := newMCPModule(t, func() *mcpapi.Server { return backend })
+
+	perms := m.MCPToolPermissions()
+
+	for _, tool := range []string{
+		"xkms_fido2_beginRegistration",
+		"xkms_fido2_finishRegistration",
+		"xkms_fido2_beginAddCredential",
+		"xkms_fido2_beginAuthentication",
+		"xkms_fido2_finishAuthentication",
+	} {
+		_, declared := perms[mcpapi.ToolName(tool)]
+		assert.False(t, declared, "%s must stay undeclared (refused)", tool)
+	}
+}
+
 // TestMCPToolHandler_LazyAndDispatch proves the tool handler answers a tool
 // error while unresolved and dispatches the real registry handler once
 // resolved — without re-registration. Uses quicbaas_liveness: every

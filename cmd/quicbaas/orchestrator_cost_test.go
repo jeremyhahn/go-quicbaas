@@ -48,13 +48,13 @@ func runOrchCostWith(t *testing.T, args ...string) (*orchestratorSDK.GetSpendRep
 
 func TestOrchCostSendsTheScopeAndHost(t *testing.T) {
 	sent, err := runOrchCostWith(t, "--project", "p1", "--task", "w1", "--job", "j1", "--session", "s1",
-		"--round", "0", "--from", "2026-09-01T00:00:00Z", "--host", "gpu-host:9091")
+		"--round", "0", "--from", "2026-09-01T00:00:00Z", "--host", "gpu-01:9091")
 	require.NoError(t, err)
 	require.NotNil(t, sent)
 	assert.Equal(t, "p1", sent.ProjectID)
 	assert.Equal(t, "s1", sent.SessionID)
 	assert.True(t, sent.RoundSet, "round 0 is a level; the flag's presence selects it")
-	assert.Equal(t, "gpu-host:9091", sent.Host)
+	assert.Equal(t, "gpu-01:9091", sent.Host)
 	require.NotNil(t, sent.From)
 	assert.Equal(t, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), *sent.From)
 	assert.Nil(t, sent.To)
@@ -73,13 +73,13 @@ func TestOrchCostRefusesAMalformedInstant(t *testing.T) {
 
 func TestFormatSpendReport(t *testing.T) {
 	report := &orchestratorSDK.GetSpendReportResponse{
-		Level: orchestratorSDK.SpendLevelTenant, TenantID: "acme", Host: "gpu-host:9091",
+		Level: orchestratorSDK.SpendLevelTenant, TenantID: "acme", Host: "gpu-01:9091",
 		SpendTotals: orchestratorSDK.SpendTotals{
 			Entries: 3, TotalTokens: 42, EquivalentMicros: 1_500_000, PricedEntries: 2, UnpricedEntries: 1,
 			EnergyMilliWh: 2500, ElectricityEntries: 2, MeasuredEnergyEntries: 1,
 		},
 		Hosts: []orchestratorSDK.SpendHost{
-			{Host: "gpu-host:9091", SpendTotals: orchestratorSDK.SpendTotals{Entries: 2, TotalTokens: 40}},
+			{Host: "gpu-01:9091", SpendTotals: orchestratorSDK.SpendTotals{Entries: 2, TotalTokens: 40}},
 			{Unattributed: true, SpendTotals: orchestratorSDK.SpendTotals{Entries: 1, TotalTokens: 2}},
 		},
 	}
@@ -90,7 +90,7 @@ func TestFormatSpendReport(t *testing.T) {
 	assert.Contains(t, out, "$1.5000+", "a figure beside unpriced turns is a floor")
 	assert.Contains(t, out, "2.50 Wh (1 of 2 measured)")
 	assert.Contains(t, out, "(no host)")
-	assert.Contains(t, out, "gpu-host:9091")
+	assert.Contains(t, out, "gpu-01:9091")
 
 	var js bytes.Buffer
 	require.NoError(t, formatSpendReport(report, "json", &js))

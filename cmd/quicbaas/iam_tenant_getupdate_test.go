@@ -107,6 +107,45 @@ func TestRunIAMTenantUpdate_FetchesNameWhenNotSpecified(t *testing.T) {
 	assert.Equal(t, "Existing Name", gotName)
 }
 
+// TestRunIAMTenantUpdate_NameIsShownByUpdateAndGet pins #1700: the server keeps
+// a tenant's Name immutable and stores --name as the display name, so both
+// `tenant update` and `tenant get` must print the display name the user set.
+func TestRunIAMTenantUpdate_NameIsShownByUpdateAndGet(t *testing.T) {
+	cleanupLog := testInitLogger(t)
+	defer cleanupLog()
+	mock, cleanup := setupIAMMock(t)
+	defer cleanup()
+
+	stored := &iam.Tenant{ID: "acme", Name: "Lifecycle Test Tenant", DisplayName: "Lifecycle Test Tenant", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	mock.tenantClient.GetFunc = func(_ context.Context, _ string) (*iam.Tenant, error) {
+		cp := *stored
+		return &cp, nil
+	}
+	mock.tenantClient.UpdateFunc = func(_ context.Context, _ string, req *iam.UpdateTenantRequest) (*iam.Tenant, error) {
+		if req.DisplayName != "" {
+			stored.DisplayName = req.DisplayName
+		}
+		cp := *stored
+		return &cp, nil
+	}
+
+	origName := tenantName
+	defer func() { tenantName = origName }()
+	origFmt := iamOutputFormat
+	defer func() { iamOutputFormat = origFmt }()
+	iamOutputFormat = "table"
+
+	updateCmd := newIAMTenantUpdateCommand()
+	require.NoError(t, updateCmd.Flags().Set("name", "Updated Lifecycle Tenant"))
+	out, err := captureRoleStdout(t, func() error { return runIAMTenantUpdateCommand(updateCmd, []string{"acme"}) })
+	require.NoError(t, err)
+	assert.Contains(t, out, "Name: Updated Lifecycle Tenant")
+
+	out, err = captureRoleStdout(t, func() error { return runIAMTenantGetCommand(newIAMTenantGetCommand(), []string{"acme"}) })
+	require.NoError(t, err)
+	assert.Contains(t, out, "Name: Updated Lifecycle Tenant")
+}
+
 func TestRunIAMTenantUpdate_FetchNameFallsBackToName(t *testing.T) {
 	cleanupLog := testInitLogger(t)
 	defer cleanupLog()

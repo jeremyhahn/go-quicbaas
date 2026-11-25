@@ -265,7 +265,7 @@ func TestEnrollAgentCertIdentity_TwoDaemonsShareTheTenantRole(t *testing.T) {
 	store, memory := newAgentEnrollmentStore(t)
 	ctx := context.Background()
 
-	for _, cn := range []string{"agent-agent-04", "agent-gpu-host"} {
+	for _, cn := range []string{"agent-agent-04", "agent-gpu-01"} {
 		user, err := store.EnrollFleetNodeCertIdentity(ctx, "automatethethings", iam.FleetNodeCertIdentityOptions{
 			Certificate: newTestCert(t, cn, nil),
 			Permissions: iam.FleetRuntimeGrant(),
