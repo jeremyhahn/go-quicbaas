@@ -31,8 +31,9 @@
 //     accidentally binding a different port than env-configured) only
 //     surfaces when we drive it column-by-column.
 //
-// The two axes multiply (3 × 5 = 15) because they fail independently and
-// no single subset proves the combined behaviour. Hardware-backed
+// The two axes multiply (3 × 5, less the sealed shamir mcp and quic cells:
+// 13) because they fail independently and no single subset proves the
+// combined behaviour. Hardware-backed
 // strategies (pkcs11/tpm2/awskms/gcpkms/azurekv/vault) are intentionally
 // excluded — their factory wiring is gated on operator-supplied hardware
 // that belongs in dedicated env-gated suites per the spec.
@@ -68,18 +69,31 @@ import (
 	"time"
 )
 
-// matrixStrategy enumerates the three software-backed barrier strategies
-// the matrix exercises. The order is deterministic so log diffs across
-// runs stay readable.
-var matrixStrategies = []string{"none", "passphrase", "shamir"}
+// Barrier strategies the matrix initialises with.
+const (
+	strategyNone       = "none"
+	strategyPassphrase = "passphrase"
+	strategyShamir     = "shamir"
+)
 
-// matrixTransports enumerates the five transports per the locked
-// architecture (embedded is excluded per the spec — the in-process
-// transport is unit-test territory).
-var matrixTransports = []string{"rest", "grpc", "quic", "mcp", "unix"}
+// matrixCell is one (strategy, transport) combination the matrix runs.
+type matrixCell struct {
+	strategy  string
+	transport string
+}
+
+// matrixCells lists the cells in a deterministic order so log diffs across
+// runs stay readable. shamir has no mcp or quic cell: a sealed shamir node
+// serves those transports only after its officers' ceremony unseals it,
+// and this matrix does not drive the ceremony.
+var matrixCells = []matrixCell{
+	{strategyNone, "rest"}, {strategyNone, "grpc"}, {strategyNone, "quic"}, {strategyNone, "mcp"}, {strategyNone, "unix"},
+	{strategyPassphrase, "rest"}, {strategyPassphrase, "grpc"}, {strategyPassphrase, "quic"}, {strategyPassphrase, "mcp"}, {strategyPassphrase, "unix"},
+	{strategyShamir, "rest"}, {strategyShamir, "grpc"}, {strategyShamir, "unix"},
+}
 
 // TestCanonicalInit_Matrix runs every (strategy, transport) cell. The
-// 15 subtests run sequentially by default — they spawn real binaries and
+// 13 subtests run sequentially by default — they spawn real binaries and
 // the PebbleDB cold-boot dominates CPU, so parallel runs trade wall-clock
 // for resource contention without a meaningful coverage gain. Operators
 // can opt into parallelism by removing the top-level Helper if they have
@@ -89,12 +103,10 @@ func TestCanonicalInit_Matrix(t *testing.T) {
 	binary := resolveDaemonBinary(t)
 	cliBinary := resolveCLIBinary(t)
 
-	for _, strategy := range matrixStrategies {
-		for _, transport := range matrixTransports {
-			t.Run(matrixSubtestName(strategy, transport), func(t *testing.T) {
-				runMatrixCell(t, binary, cliBinary, strategy, transport)
-			})
-		}
+	for _, cell := range matrixCells {
+		t.Run(matrixSubtestName(cell.strategy, cell.transport), func(t *testing.T) {
+			runMatrixCell(t, binary, cliBinary, cell.strategy, cell.transport)
+		})
 	}
 }
 
@@ -113,8 +125,15 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
+	// A passphrase cell seals with a passphrase generated here; start
+	// (phase 2) auto-unseals with the same value.
+	var passphrase string
+	if strategy == strategyPassphrase {
+		passphrase = testSecret(t, "seal-")
+	}
+
 	// Phase 1: init.
-	initOutput, initErr := invokeInit(ctx, binary, strategy, dataDir)
+	initOutput, initErr := invokeInit(ctx, binary, strategy, dataDir, passphrase)
 	if initErr != nil {
 		t.Fatalf("`quicbaasd init --barrier-strategy %s` failed: %v\noutput:\n%s",
 			strategy, initErr, initOutput)
@@ -126,7 +145,7 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 
 	// Phase 2: start daemon + wait for transport readiness.
 	ports := allocPortBundle(t, transport, dataDir)
-	daemon := startDaemon(t, binary, dataDir, strategy, transport, ports)
+	daemon := startDaemonWithConfig(t, binary, dataDir, "", strategy, transport, ports, passphrase)
 	if err := waitForTransportReady(ctx, t, daemon, transport, ports, dataDir); err != nil {
 		t.Fatalf("transport %q for strategy %q never became ready: %v",
 			transport, strategy, err)
@@ -145,20 +164,15 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 	// MCP refuses an uncredentialed initialize (CA ruling 571), so an MCP
 	// cell logs in first; the other transports serve it publicly, which is
 	// what lets a sealed shamir node (no administrator until its officers
-	// unseal it) answer here. A sealed shamir MCP cell has no administrator
-	// to log in as, so it proves the sealed window instead. A successful response proves
+	// unseal it) answer here. A successful response proves
 	// the SDK transport stack lines up with the daemon's listener for this
 	// cell — a regression here would silently break every downstream SDK
 	// caller without firing in the raw-socket probes above.
-	switch {
-	case transport == "mcp" && strategy == "shamir":
-		verifySealedMCPWindow(t, ports, dataDir)
-	case transport == "mcp":
-		token := loginFirstBootAdmin(ctx, t, cliBinary, transport, ports, dataDir, strategy)
-		verifySDKLivenessOverTransport(t, transport, ports, dataDir, token)
-	default:
-		verifySDKLivenessOverTransport(t, transport, ports, dataDir, "")
+	var token string
+	if transport == "mcp" {
+		token = loginFirstBootAdmin(ctx, t, cliBinary, transport, ports, dataDir, strategy)
 	}
+	verifySDKLivenessOverTransport(t, transport, ports, dataDir, token)
 
 	// Phase 5: cross-strategy invariants on the marker (e.g. credential
 	// strategy default = "barrier"). assertInitDoneMarker already covered
@@ -187,11 +201,11 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 
 // invokeInit dispatches to the appropriate init helper for the
 // requested strategy. Keeps the matrix body free of strategy-specific
-// branching.
-func invokeInit(ctx context.Context, binary, strategy, dataDir string) (string, error) {
+// branching. passphrase is the seal passphrase for the passphrase strategy.
+func invokeInit(ctx context.Context, binary, strategy, dataDir, passphrase string) (string, error) {
 	switch strategy {
 	case "none", "passphrase":
-		return runInit(ctx, binary, strategy, dataDir)
+		return runInit(ctx, binary, strategy, dataDir, passphrase)
 	case "shamir":
 		return runShamirInit(ctx, binary, dataDir)
 	}
@@ -291,7 +305,7 @@ func TestCanonicalInit_NoneRejectsPINs(t *testing.T) {
 	output, err := execInit(ctx, binary, []string{
 		"init",
 		"--barrier-strategy", "none",
-		"--so-pin", "should-fail",
+		"--so-pin", testSecret(t, "so-"),
 		"--data-dir", dataDir,
 	})
 	if err == nil {
@@ -327,8 +341,8 @@ func TestCanonicalInit_UnsupportedHardwareGracefulSkip(t *testing.T) {
 			output, err := execInit(ctx, binary, []string{
 				"init",
 				"--barrier-strategy", strategy,
-				"--so-pin", "p",
-				"--user-pin", "u",
+				"--so-pin", testSecret(t, "so-"),
+				"--user-pin", testSecret(t, "user-"),
 				"--data-dir", dataDir,
 			})
 			if err == nil {

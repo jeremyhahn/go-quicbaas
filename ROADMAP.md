@@ -37,6 +37,7 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **secrets** — rotation policies are performed, not only stored — DC: [#723](../../issues/723) — blocked: see issue
 - **security-hardening** — the scoped FIPS gate runs on push; webhook fixtures use FIPS-strength HMAC keys — DC: [#769](../../issues/769), [#524](../../issues/524) — blocked: see issue
 - **release-readiness** — no private host, path or lab value in the published tree; docs meet the handbook rules; CI mounts no host Docker socket — DC: [#1130](../../issues/1130), [#1258](../../issues/1258), [#1168](../../issues/1168) — open
+- **maintenance** — the standing maintenance row: dependency updates and CI configuration, never gating a release date (owner ruling 1234) — [#2713](../../issues/2713) — standing
 
 ## Next
 - **attestation** — no firmware module in the dependency graph — PDC: [#1185](../../issues/1185) — blocked: see issue
@@ -76,6 +77,7 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 ## Future
 - **identity-refactor** — the identity surface layered over go-qrdb's primitives; authentication on UI routes — [docs/SPEC.md](docs/SPEC.md) — open
 - **tenant-agent** — a QuicBaaS tenant agent replaces the Company Agent — [milestone 33](../../milestone/33) — open
+- **ai-native-sdlc** — the AI-native SDLC built in: managed settings, OpenTelemetry session export, weekly security scans and a first responder, notifying over Signal (preferred) and Slack — [#2463](../../issues/2463) — open
 
 ## Dependencies
 - Up, pinned to release tags (`make check-library-pins`): go-xkms v0.49.0-alpha (the release without a firmware dependency is needed, [#1185](../../issues/1185)), go-qrdb v0.30.1-alpha, go-quicraft v0.15.0-alpha (indirect), go-signal v0.2.0-alpha (a `pkg/*` import), go-libsignal v0.2.0-alpha, go-objstore v0.3.0-alpha (a direct require: go-objstore owns all object storage and go-quicbaas re-exports it; buckets and multipart wait on go-objstore #89 and #90), go-enclave v0.6.1-alpha, go-auth v0.4.0-alpha, go-codec v1.4.0; the latest go-qrdb and go-xkms, embedded and remote: [#2370](../../issues/2370). Down: go-trusted-platform and go-recountly

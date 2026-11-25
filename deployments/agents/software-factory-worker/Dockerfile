@@ -246,7 +246,8 @@ FROM debian:trixie-slim
 # WebKit; jq is what release scripts run in a worker need, starting with
 # go-enclave's release.sh (go-quicbaas#1431); the headless JDK, at the
 # OPENJDK_MAJOR pin (toolchain.mk), is the Java a Java project builds with
-# (go-quicbaas#1746).
+# (go-quicbaas#1746). gcovr is the coverage report trusted-firmware's
+# `make test` runs (go-quicbaas#1829).
 ARG OPENJDK_MAJOR
 RUN set -eux; \
     if [ -z "${OPENJDK_MAJOR}" ]; then \
@@ -283,6 +284,7 @@ RUN set -eux; \
         ruby-bundler \
         libicu76 \
         "openjdk-${OPENJDK_MAJOR}-jdk-headless" \
+        gcovr \
         jq; \
     rm -rf /var/lib/apt/lists/*; \
     java -version 2>&1 | head -1 | grep -qF "\"${OPENJDK_MAJOR}."
@@ -638,6 +640,14 @@ RUN set -eux; \
     tar -xJf "/tmp/$tarball" -C /usr/local --strip-components=1 --no-same-owner; \
     rm -f "/tmp/$tarball" /usr/local/CHANGELOG.md /usr/local/README.md /usr/local/LICENSE; \
     test "$(node --version)" = "${NODE_VERSION}"
+
+# NODE 26'S BUILT-IN WEB STORAGE IS TURNED OFF. Node 26 defines a global
+# localStorage that shadows jsdom's window.localStorage, so a project's jsdom
+# web tests see Node's store and fail (go-xkms: 90 of 111, #2391). The flag
+# keeps the pinned Node and drops only that global. /etc/profile resets PATH,
+# not NODE_OPTIONS, so the `sh -lc` the agent runs keeps it; the toolchain
+# probe checks that localStorage is undefined.
+ENV NODE_OPTIONS=--no-experimental-webstorage
 
 # THE RELEASE-BINARY LANGUAGE SERVERS serena drives: clangd (C/C++),
 # rust-analyzer (Rust) and marksman (markdown). Each from its project's own
@@ -1283,6 +1293,10 @@ RUN set -eux; \
 # ever removed more than it added fails the build instead of shipping an image
 # without it.
 RUN jq --version
+
+# GCOVR SURVIVES THE PROOF. trusted-firmware's make test runs it
+# (go-quicbaas#1829), so it is asserted after the proof layer like jq.
+RUN gcovr --version
 
 # A SIGNED COMMIT SUCCEEDS AS THIS UID. This is the regression that would break
 # publishing silently, so the build proves it.

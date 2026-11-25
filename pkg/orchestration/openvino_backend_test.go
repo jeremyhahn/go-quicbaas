@@ -341,7 +341,7 @@ func TestStripThinking_KeepsTheAnswer(t *testing.T) {
 func TestOpenVINOBackend_SpawnReportsItsContainer(t *testing.T) {
 	runtime := &mockContainerRuntime{available: true, runID: "ctr-abc123"}
 	backend := NewOpenVINOBackend(OpenVINOBackendConfig{
-		BaseURL:      "http://gpu-host.invalid:9000",
+		BaseURL:      "http://gpu-01.invalid:9000",
 		DefaultModel: "qwen3-8b",
 	})
 	backend.SetContainerRuntime(runtime)
@@ -368,7 +368,7 @@ func TestOpenVINOBackend_SpawnReportsItsContainer(t *testing.T) {
 func TestOpenVINOBackend_AnUnsandboxedSpawnReportsNoContainer(t *testing.T) {
 	runtime := &mockContainerRuntime{available: true, runID: "ctr-abc123"}
 	backend := NewOpenVINOBackend(OpenVINOBackendConfig{
-		BaseURL:      "http://gpu-host.invalid:9000",
+		BaseURL:      "http://gpu-01.invalid:9000",
 		DefaultModel: "qwen3-8b",
 	})
 	backend.SetContainerRuntime(runtime)
@@ -398,7 +398,7 @@ func TestOpenVINOBackend_AnUnsandboxedSpawnReportsNoContainer(t *testing.T) {
 func TestOpenVINOBackend_TheKeepAliveCommandSurvivesTheRuntimeMapping(t *testing.T) {
 	runtime := &mockContainerRuntime{available: true, runID: "ctr-keepalive"}
 	backend := NewOpenVINOBackend(OpenVINOBackendConfig{
-		BaseURL:      "http://gpu-host.invalid:9000",
+		BaseURL:      "http://gpu-01.invalid:9000",
 		DefaultModel: "qwen3-8b",
 	})
 	backend.SetContainerRuntime(runtime)
@@ -438,7 +438,7 @@ func TestOpenVINOBackend_TheKeepAliveCommandSurvivesTheRuntimeMapping(t *testing
 func TestOpenVINOBackend_TheSpawnEnvironmentReachesTheContainer(t *testing.T) {
 	runtime := &mockContainerRuntime{available: true, runID: "ctr-env"}
 	backend := NewOpenVINOBackend(OpenVINOBackendConfig{
-		BaseURL:      "http://gpu-host.invalid:9000",
+		BaseURL:      "http://gpu-01.invalid:9000",
 		DefaultModel: "qwen3-8b",
 	})
 	backend.SetContainerRuntime(runtime)

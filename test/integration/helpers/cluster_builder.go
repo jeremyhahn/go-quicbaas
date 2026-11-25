@@ -24,6 +24,8 @@ import (
 	"time"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // nodeStatusTimeout bounds one node's Cluster().Status call in FindLeader, so
@@ -125,7 +127,7 @@ func (cb *ClusterBuilder) Build(ctx context.Context) (*TestCluster, error) {
 		return nil, err
 	}
 
-	cluster := &TestCluster{
+	tc := &TestCluster{
 		Endpoints:      cb.endpoints,
 		Nodes:          make([]*TestNode, len(cb.endpoints)),
 		Clients:        make([]quicbaas.Client, len(cb.endpoints)),
@@ -141,18 +143,18 @@ func (cb *ClusterBuilder) Build(ctx context.Context) (*TestCluster, error) {
 		client, err := connectToNode(ctx, endpoint, cb.timeout, cb.retries, cb.retryBackoff, opts...)
 		if err != nil {
 			// Clean up any successful connections
-			cluster.Close()
+			tc.Close()
 			return nil, fmt.Errorf("failed to connect to node %d (%s): %w", i+1, endpoint, err)
 		}
 
-		cluster.Clients[i] = client
-		cluster.Nodes[i] = &TestNode{
+		tc.Clients[i] = client
+		tc.Nodes[i] = &TestNode{
 			ID:          uint64(i + 1),
 			GRPCAddress: endpoint,
 		}
 	}
 
-	return cluster, nil
+	return tc, nil
 }
 
 // TestCluster represents a cluster of QuicBaaS nodes for testing.
@@ -196,6 +198,7 @@ func (tc *TestCluster) Close() error {
 // It queries Members from cluster status to find which node is the leader,
 // then returns that node and its client.
 func (tc *TestCluster) FindLeader(ctx context.Context) (*TestNode, quicbaas.Client, error) {
+	var lastErr error
 	// reasons records, for each node, why it did not name a leader, so the
 	// final error says what each node answered instead of only "no leader".
 	reasons := make([]string, 0, len(tc.Clients))
@@ -211,6 +214,12 @@ func (tc *TestCluster) FindLeader(ctx context.Context) (*TestNode, quicbaas.Clie
 		status, err := client.Cluster().Status(nodeCtx)
 		cancel()
 		if err != nil {
+			// A refused status says nothing about the leader: the caller's
+			// credential is wrong, and asking again will not change it.
+			if sdkerrors.IsUnauthorized(err) || sdkerrors.IsForbidden(err) {
+				return nil, nil, &ClusterStatusRefusedError{NodeID: tc.Nodes[i].ID, Endpoint: tc.Nodes[i].GRPCAddress, Cause: err}
+			}
+			lastErr = err
 			reasons = append(reasons, fmt.Sprintf("%s: %v", name, err))
 			continue
 		}
@@ -268,8 +277,68 @@ func (tc *TestCluster) FindLeader(ctx context.Context) (*TestNode, quicbaas.Clie
 		}
 	}
 
-	return nil, nil, fmt.Errorf("no leader found in cluster: %s", strings.Join(reasons, "; "))
+	return nil, nil, &NoLeaderError{LastErr: lastErr, Reasons: reasons}
 }
+
+// leaderOf matches the leader a status names to a node of the cluster: the
+// member flagged as leader first, else the status' LeaderID.
+func (tc *TestCluster) leaderOf(status *cluster.ClusterStatus) (*TestNode, quicbaas.Client, bool) {
+	ids := make([]string, 0, len(status.Members)+1)
+	for _, member := range status.Members {
+		if member.IsLeader {
+			ids = append(ids, member.ID)
+		}
+	}
+	if status.LeaderID != "" {
+		ids = append(ids, status.LeaderID)
+	}
+
+	for _, id := range ids {
+		leaderID, err := strconv.ParseUint(id, 10, 64)
+		if err != nil {
+			continue
+		}
+		for j, n := range tc.Nodes {
+			if n.ID == leaderID {
+				tc.Nodes[j].IsLeader = true
+				return tc.Nodes[j], tc.Clients[j], true
+			}
+		}
+	}
+	return nil, nil, false
+}
+
+// ClusterStatusRefusedError reports that a node refused the cluster status
+// call as unauthenticated or forbidden.
+type ClusterStatusRefusedError struct {
+	NodeID   uint64
+	Endpoint string
+	Cause    error
+}
+
+func (e *ClusterStatusRefusedError) Error() string {
+	return fmt.Sprintf("node %d (%s) refused the cluster status call: %v", e.NodeID, e.Endpoint, e.Cause)
+}
+
+func (e *ClusterStatusRefusedError) Unwrap() error { return e.Cause }
+
+// NoLeaderError reports that no node's status named a leader of the cluster.
+// LastErr is the last status error seen, nil if every node answered.
+// Reasons records, for each node, why it did not name a leader.
+type NoLeaderError struct {
+	LastErr error
+	Reasons []string
+}
+
+func (e *NoLeaderError) Error() string {
+	msg := "no leader found in cluster: " + strings.Join(e.Reasons, "; ")
+	if e.LastErr != nil {
+		msg += fmt.Sprintf(" (last status error: %v)", e.LastErr)
+	}
+	return msg
+}
+
+func (e *NoLeaderError) Unwrap() error { return e.LastErr }
 
 // connectToNode establishes a connection to a node using the SDK. The client
 // carries no credential of its own: the caller passes quicbaas.WithAuthToken
