@@ -1,0 +1,285 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package server
+
+import (
+	"context"
+	"errors"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	ggrpc "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
+	"github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	unixtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport/unix"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+)
+
+// TestServer_QRDBServiceOnUnixSocket_ServesNodeData proves the qrdb.v1
+// service registered on the Unix socket's gRPC server serves the embedded
+// node's data services: a go-qrdb client over the socket writes and reads a
+// key instead of getting Unimplemented.
+func TestServer_QRDBServiceOnUnixSocket_ServesNodeData(t *testing.T) {
+	ctx, cl := qrdbUnixDataClient(t, true)
+
+	require.NoError(t, cl.KV().Put(ctx, "row1652/unix", []byte("v")))
+	got, err := cl.KV().Get(ctx, "row1652/unix")
+	require.NoError(t, err)
+	require.Equal(t, "v", string(got))
+}
+
+// TestServer_QRDBServiceOnUnixSocket_HonoursDatabaseScope proves the Unix
+// chain carries the client's x-qrdb-database selection to the data
+// services: a client scoped to another database must not read the
+// system database.
+func TestServer_QRDBServiceOnUnixSocket_HonoursDatabaseScope(t *testing.T) {
+	ctx, cl := qrdbUnixDataClient(t, true)
+
+	require.NoError(t, cl.KV().Put(ctx, "row1652/scope", []byte("v")))
+	scoped, err := cl.DatabaseScoped("nope1652")
+	require.NoError(t, err)
+	got, err := scoped.KV().Get(ctx, "row1652/scope")
+	require.Error(t, err, "a client scoped to a missing database read %q from the system database", got)
+}
+
+// qrdbUnixDataClient serves the node's qrdb service on a Unix socket
+// through the server's own gRPC interceptor chain and returns a qrdb SDK
+// client connected to it.
+func qrdbUnixDataClient(t *testing.T, bindTenant bool) (context.Context, *qrdbsdk.Client) {
+	t.Helper()
+	_, ctx, cl := qrdbUnixDataServer(t, bindTenant)
+	return ctx, cl
+}
+
+// qrdbUnixDataServer is qrdbUnixDataClient that also returns the server, so
+// a test can reach the same node through another transport.
+func qrdbUnixDataServer(t *testing.T, bindTenant bool) (*Server, context.Context, *qrdbsdk.Client) {
+	t.Helper()
+	srv := withTempServer(t)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "initStandaloneQRDBNode")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
+	srv.dataPlaneBarrierPending.Store(false)
+
+	dir, err := os.MkdirTemp("", "qb1652")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "q.sock")
+	lis, err := net.Listen("unix", sock)
+	require.NoError(t, err)
+	u, st, err := srv.grpcServerInterceptors()
+	require.NoError(t, err)
+	if bindTenant {
+		u = append([]ggrpc.UnaryServerInterceptor{
+			func(ctx context.Context, req interface{}, _ *ggrpc.UnaryServerInfo, handler ggrpc.UnaryHandler) (interface{}, error) {
+				return handler(tenantctx.WithSystem(ctx), req)
+			},
+		}, u...)
+		st = append([]ggrpc.StreamServerInterceptor{
+			func(srv interface{}, ss ggrpc.ServerStream, _ *ggrpc.StreamServerInfo, handler ggrpc.StreamHandler) error {
+				return handler(srv, &qrdbTenantBoundStream{ServerStream: ss, ctx: tenantctx.WithSystem(ss.Context())})
+			},
+		}, st...)
+	}
+	gs := ggrpc.NewServer(ggrpc.ChainUnaryInterceptor(u...), ggrpc.ChainStreamInterceptor(st...))
+	srv.registerQRDBService(gs)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+
+	tr, err := unixtransport.New(qrdbtransport.WithAddress(sock))
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	if err := tr.Connect(ctx); err != nil && !strings.Contains(err.Error(), "health check failed") {
+		t.Fatal(err)
+	}
+	cl, err := qrdbsdk.NewClient(tr)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cl.Close() })
+	return srv, ctx, cl
+}
+
+// TestServer_QRDBEmbeddedData_SharesKeyspaceWithUnix proves an embedded data
+// call and a system-bound Unix data call of the same key meet in one
+// keyspace: each transport reads what the other wrote, and the last write
+// wins for both.
+func TestServer_QRDBEmbeddedData_SharesKeyspaceWithUnix(t *testing.T) {
+	srv, ctx, unix := qrdbUnixDataServer(t, true)
+	emb, embCtx := qrdbEmbeddedDataClient(t, srv)
+
+	require.NoError(t, emb.KV().Put(embCtx, "row1652/emb", []byte("from-embedded")))
+	got, err := unix.KV().Get(ctx, "row1652/emb")
+	require.NoError(t, err, "a Unix read of an embedded write")
+	require.Equal(t, "from-embedded", string(got))
+
+	require.NoError(t, unix.KV().Put(ctx, "row1652/unix-to-emb", []byte("from-unix")))
+	got, err = emb.KV().Get(embCtx, "row1652/unix-to-emb")
+	require.NoError(t, err, "an embedded read of a Unix write")
+	require.Equal(t, "from-unix", string(got))
+
+	require.NoError(t, unix.KV().Put(ctx, "row1652/same", []byte("u")))
+	require.NoError(t, emb.KV().Put(embCtx, "row1652/same", []byte("e")))
+	got, err = unix.KV().Get(ctx, "row1652/same")
+	require.NoError(t, err)
+	require.Equal(t, "e", string(got), "Unix read of a key both transports wrote")
+	got, err = emb.KV().Get(embCtx, "row1652/same")
+	require.NoError(t, err)
+	require.Equal(t, "e", string(got), "embedded read of a key both transports wrote")
+}
+
+// TestServer_QRDBEmbeddedData_BatchSharesKeyspaceWithUnix proves an embedded
+// batch write lands in the keyspace a system-bound Unix read sees.
+func TestServer_QRDBEmbeddedData_BatchSharesKeyspaceWithUnix(t *testing.T) {
+	srv, ctx, unix := qrdbUnixDataServer(t, true)
+	emb, embCtx := qrdbEmbeddedDataClient(t, srv)
+
+	_, err := emb.Batch().ExecuteBatch(embCtx, []qrdbtransport.Op{
+		{Type: qrdbtransport.OpPut, Key: []byte("row1652/batch/a"), Value: []byte("va")},
+		{Type: qrdbtransport.OpPut, Key: []byte("row1652/batch/b"), Value: []byte("vb")},
+	})
+	require.NoError(t, err)
+	for key, want := range map[string]string{"row1652/batch/a": "va", "row1652/batch/b": "vb"} {
+		got, err := unix.KV().Get(ctx, key)
+		require.NoError(t, err, "a Unix read of embedded batch key %s", key)
+		require.Equal(t, want, string(got), key)
+	}
+}
+
+// qrdbEmbeddedDataClient returns srv's embedded data client and a context
+// with no tenant bound, as the SDK's embedded QRDBData path calls it.
+func qrdbEmbeddedDataClient(t *testing.T, srv *Server) (*qrdbsdk.Client, context.Context) {
+	t.Helper()
+	emb, err := srv.QRDBDataClient()
+	require.NoError(t, err)
+	require.NotNil(t, emb)
+	// Close only marks this client's transport closed; the node is untouched.
+	t.Cleanup(func() { _ = emb.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	return emb, ctx
+}
+
+// qrdbTenantBoundStream carries a context with a bound tenant into a stream
+// handler.
+type qrdbTenantBoundStream struct {
+	ggrpc.ServerStream
+	ctx context.Context
+}
+
+// Context returns the tenant-bound context.
+func (s *qrdbTenantBoundStream) Context() context.Context { return s.ctx }
+
+// TestServer_QRDBServiceOnUnixSocket_RefusesUnboundTenant pins that a
+// certless caller with no tenant bound is refused before qrdb's handlers run:
+// they would read the absent tenant as the system tenant.
+func TestServer_QRDBServiceOnUnixSocket_RefusesUnboundTenant(t *testing.T) {
+	ctx, cl := qrdbUnixDataClient(t, false)
+	err := cl.KV().Put(ctx, "row1652/unbound", []byte("v"))
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err), "%v", err)
+}
+
+// TestQRDBDataRegistryProxy_RefusesOutOfRowServices pins that the registry
+// proxy refuses the watch, lease, lock and vector services: they are outside
+// the data-services surface, so the Unix socket never serves them, whether or
+// not authorization is on. Time-series is served through the scoped registry
+// holder, which fails closed while there is no node.
+func TestQRDBDataRegistryProxy_RefusesOutOfRowServices(t *testing.T) {
+	p := newQRDBDataRegistryProxy(&Server{})
+	var unsupported *qrdbservice.CapabilityUnsupportedError
+
+	watch, err := p.WatchService("system", "system")
+	require.Nil(t, watch)
+	require.True(t, errors.As(err, &unsupported), "watch: %v", err)
+
+	lease, err := p.LeaseService("system", "system")
+	require.Nil(t, lease)
+	require.True(t, errors.As(err, &unsupported), "lease: %v", err)
+
+	lock, err := p.LockService("system", "system")
+	require.Nil(t, lock)
+	require.True(t, errors.As(err, &unsupported), "lock: %v", err)
+
+	ts, err := p.TimeSeriesService("acme", tenant.DefaultDatabase)
+	require.Nil(t, ts)
+	var unavailable *QRDBUserServiceUnavailableError
+	require.True(t, errors.As(err, &unavailable), "time-series: %v", err)
+
+	vec, err := p.VectorService("system", "system")
+	require.Nil(t, vec)
+	require.True(t, errors.As(err, &unsupported), "vector: %v", err)
+}
+
+// TestQRDBDataRegistryProxy_ColdCacheBuildsOneRegistry pins that concurrent
+// first requests share one registry: each registry owns stateful collection
+// caches and ID generators, so two would let concurrent inserts collide.
+func TestQRDBDataRegistryProxy_ColdCacheBuildsOneRegistry(t *testing.T) {
+	srv := withTempServer(t)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "initStandaloneQRDBNode")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
+
+	race := func(t *testing.T, p *qrdbDataRegistryProxy) []qrdbservice.Registry {
+		t.Helper()
+		const callers = 16
+		start := make(chan struct{})
+		regs := make([]qrdbservice.Registry, callers)
+		errs := make([]error, callers)
+		var wg sync.WaitGroup
+		for i := 0; i < callers; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				regs[i], errs[i] = p.current()
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		for i := range regs {
+			require.NoError(t, errs[i], "caller %d", i)
+			require.NotNil(t, regs[i], "caller %d", i)
+			require.True(t, regs[i] == regs[0], "caller %d got a different registry", i)
+		}
+		return regs
+	}
+
+	t.Run("RealBuild", func(t *testing.T) {
+		race(t, newQRDBDataRegistryProxy(srv))
+	})
+
+	t.Run("CountedBuild", func(t *testing.T) {
+		var builds atomic.Int32
+		p := newQRDBDataRegistryProxy(srv)
+		p.build = func(s *qrdbserver.Server) qrdbservice.Registry {
+			builds.Add(1)
+			time.Sleep(20 * time.Millisecond)
+			return s.ServiceRegistry()
+		}
+		race(t, p)
+		require.Equal(t, int32(1), builds.Load(), "registries built for one server")
+	})
+}

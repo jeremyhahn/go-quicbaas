@@ -1056,11 +1056,12 @@ var grpcMethodPermissions = map[string]methodPermission{
 	//
 	// Scope: ONLY the families whose servicers buildQRDBRegisterOptions
 	// actually wires — barrier, ceremony, credential, user, user-auth-factor,
-	// timeseries — plus Health (public, above) and Status. Every other
-	// qrdb.v1 method (KV, lease, lock, index, vector, ...) dispatches to
-	// codes.Unimplemented server-side and stays default-denied here; the
-	// quicbaas-namespaced services are the canonical broker surface for
-	// those capabilities.
+	// timeseries — plus Health (public, above) and Status. The KV, MVCC,
+	// batch, transaction, collection and index methods dispatch through the
+	// node's registry, and time-series through its scoped registry. Every
+	// other qrdb.v1 method (lease, lock, watch, vector, ...) is refused
+	// server-side and stays default-denied here; the quicbaas-namespaced
+	// services are the canonical broker surface for those capabilities.
 	//
 	// These mappings apply POST-unseal. While the daemon is sealed the authz
 	// gate is not in force and the sealed-window allowlist governs instead.
@@ -1158,6 +1159,43 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/qrdb.v1.QRDBService/ListUsers":               {"users", "list"},
 	"/qrdb.v1.QRDBService/EnableUser":              {"users", "enable"},
 	"/qrdb.v1.QRDBService/DisableUser":             {"users", "disable"},
+
+	// ---- qrdb.v1.QRDBService: data services (registry-backed) ----
+	// Served on the Unix socket through the data-registry proxy. Each
+	// entry is the permission qrdb declares in the method's
+	// (qrdb.v1.permission) proto option.
+	"/qrdb.v1.QRDBService/Put":               {"kv", "put"},
+	"/qrdb.v1.QRDBService/PutIfAbsent":       {"kv", "put"},
+	"/qrdb.v1.QRDBService/CompareAndSwap":    {"kv", "put"},
+	"/qrdb.v1.QRDBService/Get":               {"kv", "get"},
+	"/qrdb.v1.QRDBService/Delete":            {"kv", "delete"},
+	"/qrdb.v1.QRDBService/CompareAndDelete":  {"kv", "delete"},
+	"/qrdb.v1.QRDBService/List":              {"kv", "list"},
+	"/qrdb.v1.QRDBService/Scan":              {"kv", "range"},
+	"/qrdb.v1.QRDBService/PutWithLease":      {"mvcc", "put_with_lease"},
+	"/qrdb.v1.QRDBService/GetRevision":       {"mvcc", "get_revision"},
+	"/qrdb.v1.QRDBService/GetAtRevision":     {"mvcc", "get_at_revision"},
+	"/qrdb.v1.QRDBService/Range":             {"mvcc", "range"},
+	"/qrdb.v1.QRDBService/Compact":           {"mvcc", "compact"},
+	"/qrdb.v1.QRDBService/CurrentRevision":   {"mvcc", "current_revision"},
+	"/qrdb.v1.QRDBService/RestoreToRevision": {"mvcc", "restore"},
+	"/qrdb.v1.QRDBService/Transaction":       {"transaction", "execute"},
+	"/qrdb.v1.QRDBService/Batch":             {"batch", "execute"},
+	"/qrdb.v1.QRDBService/BatchImport":       {"batch", "execute"},
+	"/qrdb.v1.QRDBService/IndexCreate":       {"index", "create"},
+	"/qrdb.v1.QRDBService/IndexDrop":         {"index", "drop"},
+	"/qrdb.v1.QRDBService/IndexQuery":        {"index", "query"},
+	"/qrdb.v1.QRDBService/IndexScan":         {"index", "scan"},
+	"/qrdb.v1.QRDBService/IndexList":         {"index", "list"},
+	"/qrdb.v1.QRDBService/CreateCollection":  {"collections", "create"},
+	"/qrdb.v1.QRDBService/GetCollectionInfo": {"collections", "read"},
+	"/qrdb.v1.QRDBService/ListCollections":   {"collections", "list"},
+	"/qrdb.v1.QRDBService/DropCollection":    {"collections", "drop"},
+	"/qrdb.v1.QRDBService/InsertDocument":    {"collections", "insert"},
+	"/qrdb.v1.QRDBService/GetDocument":       {"collections", "read"},
+	"/qrdb.v1.QRDBService/UpdateDocument":    {"collections", "update"},
+	"/qrdb.v1.QRDBService/DeleteDocument":    {"collections", "delete"},
+	"/qrdb.v1.QRDBService/ListDocuments":     {"collections", "list"},
 
 	// ---- qrdb.v1.UserAuthFactorService (user-login factor surface) ----
 	// Registered as a separate proto service by qrdbsdk.RegisterGRPCService

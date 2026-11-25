@@ -16,10 +16,13 @@ package quicbaas
 
 import (
 	"context"
+	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"google.golang.org/grpc/metadata"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -156,6 +159,22 @@ type QRDBEmbeddingModelInfo = qrdbtransport.EmbeddingModelInfo
 
 // QRDBIndexClient is a re-export of the qrdb IndexClient interface.
 type QRDBIndexClient = qrdbtransport.IndexClient
+
+// QRDBDataService re-exports go-qrdb's data services: KV, batch,
+// transaction, MVCC, collection and index. Each accessor returns the go-qrdb
+// client itself (by alias), carried on the transport the QuicBaaS client was
+// built with; go-quicbaas wraps none of them. The go-qrdb SDK client
+// (*QRDBClient) satisfies it.
+type QRDBDataService interface {
+	KV() QRDBKVClient
+	Batch() QRDBBatchClient
+	Transaction() QRDBTransactionClient
+	MVCC() QRDBMVCCClient
+	Collections() QRDBCollectionClient
+	Index() QRDBIndexClient
+}
+
+var _ QRDBDataService = (*QRDBClient)(nil)
 
 // =============================================================================
 // QRDB Seal Store Request/Response Re-exports
@@ -528,9 +547,10 @@ type qrdbState struct {
 	closed atomic.Bool
 }
 
-// errQRDBClientClosed is the error a qrdb accessor returns after Close.
+// errQRDBClientClosed is the error a qrdb accessor returns after Close: an
+// Unavailable error, so callers can retry with a new client.
 func errQRDBClientClosed() error {
-	return sdkerrors.NewConnection("client.Close", "client is closed")
+	return sdkerrors.NewUnavailable("client.Close", "client is closed")
 }
 
 // qrdbClient returns the lazily-initialized QRDB SDK client. The transport is
@@ -547,6 +567,22 @@ func (c *client) qrdbClient() (*QRDBClient, error) {
 		return nil, errQRDBClientClosed()
 	}
 	return c.qrdb.client, c.qrdb.err
+}
+
+// closeQRDB closes the qrdb sub-client this client built, and makes any later
+// qrdbClient call fail, so Close and a first QRDBData call cannot race into a
+// client that is never closed. The embedded sub-client's transport only marks
+// itself closed; the servicers and node the caller passed in stay open. It
+// also marks the client closed for the embedded time-series readers.
+func (c *client) closeQRDB() error {
+	c.qrdb.closed.Store(true)
+	c.qrdb.once.Do(func() {
+		c.qrdb.err = errQRDBClientClosed()
+	})
+	if c.qrdb.client == nil {
+		return nil
+	}
+	return c.qrdb.client.Close()
 }
 
 // buildQRDBClient constructs the qrdb transport and client from the
@@ -855,4 +891,515 @@ func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
 		return &qrdbBearerEmbeddingClient{inner: ec, bearer: "Bearer " + c.opts.authToken}, nil
 	}
 	return ec, nil
+}
+
+// QRDBData returns go-qrdb's data services through a go-qrdb SDK client.
+//
+// Embedded: when the client carries QRDBEmbeddedServicers.Data, it serves
+// the calls, so every data service reaches the node; otherwise this client's
+// own go-qrdb client does. With the CLI's embedded wiring, an embedded write
+// and a network read of the same key meet in one keyspace. The node's KV, batch, transaction, MVCC
+// and index services on the default database are the system tenant's: they
+// do not resolve the context's tenant, so a call whose context binds another
+// tenant (go-qrdb's ContextWithTenant, this SDK's transport.ContextWithTenant,
+// or the tenant of the authenticated identity go-qrdb's WithIdentity carries)
+// is refused rather than served from the system keyspace, as is a context
+// naming two different tenants. Collections resolve (tenant, database)
+// through the registry and pass through, with a tenant bound by
+// transport.ContextWithTenant or carried by the authenticated identity bound
+// as go-qrdb's binding.
+//
+// gRPC and Unix: a client configured with WithAuthToken sends the token as
+// "authorization: Bearer <token>" metadata on every data call. REST, QUIC
+// and MCP: go-qrdb's transports carry no bearer, so a client with an auth
+// token gets an Unimplemented error rather than anonymous data calls. MCP: a
+// client configured with WithMCPAuthToken or WithMCPCredentials gets the same
+// Unimplemented error, since go-qrdb's MCP client carries neither credential.
+//
+// The qrdb connection this opens is released by the parent client's Close;
+// after Close, QRDBData returns an error. A caller-supplied node client
+// (QRDBEmbeddedServicers.Data) stays the caller's and is not closed.
+func (c *client) QRDBData() (QRDBDataService, error) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, sdkerrors.NewUnavailable("QRDBData", "the client is closed")
+	}
+	if s := c.opts.embeddedQRDB; s != nil {
+		data := s.Data
+		if data == nil {
+			qrdb, err := c.qrdbClient()
+			if err != nil {
+				return nil, err
+			}
+			data = qrdb
+		}
+		return &preparedQRDBData{inner: data, prepare: refuseTenantBoundQRDBCall, prepareCollections: scopeQRDBCollectionsTenant}, nil
+	}
+	if c.opts.authToken != "" {
+		switch c.opts.transportType {
+		case TransportREST, TransportQUIC, TransportMCP:
+			return nil, sdkerrors.NewUnimplemented("QRDBData",
+				"go-qrdb's REST, QUIC and MCP transports cannot carry the client's bearer token; use the gRPC transport for authenticated data calls")
+		}
+	}
+	if c.opts.transportType == TransportMCP &&
+		(c.opts.mcpAuthToken != "" || c.opts.mcpUsername != "" || c.opts.mcpPassword != "") {
+		return nil, sdkerrors.NewUnimplemented("QRDBData",
+			"go-qrdb's MCP transport cannot carry the client's MCP credentials; use the gRPC transport for authenticated data calls")
+	}
+	qrdb, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	if c.opts.authToken == "" {
+		return qrdb, nil
+	}
+	bearer := withQRDBBearer(c.opts.authToken)
+	return &preparedQRDBData{inner: qrdb, prepare: bearer, prepareCollections: bearer}, nil
+}
+
+// qrdbCallTenant reads the tenant a data call's context binds, through
+// go-qrdb's ContextWithTenant, this SDK's transport.ContextWithTenant, or the
+// tenant of the authenticated identity go-qrdb's WithIdentity carries (the
+// same sources pkg/tenantctx.FromContext reads on the server). bound is false
+// when none is set. Two sources that name different tenants are refused as
+// Forbidden rather than one silently winning; otherwise the first set source
+// wins, in the order go-qrdb binding, SDK binding, identity. An authenticated
+// identity with no tenant and no explicit binding is refused as Forbidden;
+// only a context with no identity is the host process.
+func qrdbCallTenant(ctx context.Context) (id string, bound bool, err error) {
+	qrdbID, qrdbBound := qrdbsdk.TenantFromContext(ctx)
+	if !qrdbBound {
+		qrdbID = ""
+	}
+	sdkID := qbtransport.TenantFromContext(ctx)
+	identityID := ""
+	if identity := qrdbsdk.IdentityFromContext(ctx); identity != nil {
+		identityID = identity.TenantID
+	}
+	sources := [...]struct{ id, from string }{
+		{qrdbID, "go-qrdb binding"},
+		{sdkID, "QuicBaaS SDK binding"},
+		{identityID, "authenticated identity"},
+	}
+	first := -1
+	for i, s := range sources {
+		if s.id == "" {
+			continue
+		}
+		if first < 0 {
+			first = i
+			continue
+		}
+		if s.id != sources[first].id {
+			return "", false, sdkerrors.NewForbidden("QRDBData",
+				"the call's context binds conflicting tenants "+sources[first].id+" ("+sources[first].from+") and "+s.id+" ("+s.from+")")
+		}
+	}
+	if first < 0 {
+		if qrdbsdk.IdentityFromContext(ctx) != nil {
+			return "", false, sdkerrors.NewForbidden("QRDBData",
+				"the call's authenticated identity carries no tenant")
+		}
+		return "", false, nil
+	}
+	return sources[first].id, true, nil
+}
+
+// scopeQRDBCollectionsTenant binds the tenant qrdbCallTenant resolves (from
+// this SDK's transport.ContextWithTenant or the authenticated identity, when
+// go-qrdb's ContextWithTenant is not already set) into go-qrdb's
+// ContextWithTenant, so the embedded node's collection registry resolves the
+// caller's tenant rather than the system tenant. A context binding
+// conflicting tenants is refused.
+func scopeQRDBCollectionsTenant(ctx context.Context) (context.Context, error) {
+	id, bound, err := qrdbCallTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !bound {
+		return ctx, nil
+	}
+	if _, ok := qrdbsdk.TenantFromContext(ctx); ok {
+		return ctx, nil
+	}
+	return qrdbsdk.ContextWithTenant(ctx, id), nil
+}
+
+// refuseTenantBoundQRDBCall refuses a data call whose context binds a tenant
+// other than the system tenant, through go-qrdb's ContextWithTenant, this
+// SDK's transport.ContextWithTenant or the authenticated identity's tenant
+// (go-qrdb's WithIdentity): the embedded node's default-database KV,
+// batch, transaction, MVCC and index services serve the system keyspace
+// whatever the context names, so serving the call would let one tenant read
+// and write another's (and the system's) data. Conflicting bindings are
+// refused too.
+func refuseTenantBoundQRDBCall(ctx context.Context) (context.Context, error) {
+	id, bound, err := qrdbCallTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if bound && id != qrdbsdk.SystemTenantID {
+		return nil, sdkerrors.NewForbidden("QRDBData",
+			"the embedded node's default-database data services serve the system tenant only; refusing a call bound to tenant "+id)
+	}
+	return ctx, nil
+}
+
+// withQRDBBearer returns a prepare hook that adds the client's bearer token
+// to a call's outgoing gRPC metadata, the per-call seam go-qrdb's gRPC
+// transport forwards.
+func withQRDBBearer(token string) func(context.Context) (context.Context, error) {
+	return func(ctx context.Context) (context.Context, error) {
+		return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token), nil
+	}
+}
+
+// preparedQRDBData runs prepare before every KV, batch, transaction, MVCC and
+// index call, and prepareCollections (when set) before every collection call.
+// A prepare error is returned in place of the call.
+type preparedQRDBData struct {
+	inner              QRDBDataService
+	prepare            func(context.Context) (context.Context, error)
+	prepareCollections func(context.Context) (context.Context, error)
+}
+
+var _ QRDBDataService = (*preparedQRDBData)(nil)
+
+func (d *preparedQRDBData) KV() QRDBKVClient {
+	inner := d.inner.KV()
+	kv := preparedKV{inner: inner, prepare: d.prepare}
+	if g, ok := inner.(qrdbtransport.GuardedKVClient); ok {
+		return preparedGuardedKV{preparedKV: kv, guarded: g}
+	}
+	return kv
+}
+
+func (d *preparedQRDBData) Batch() QRDBBatchClient {
+	return preparedBatch{inner: d.inner.Batch(), prepare: d.prepare}
+}
+
+func (d *preparedQRDBData) Transaction() QRDBTransactionClient {
+	return preparedTransaction{inner: d.inner.Transaction(), prepare: d.prepare}
+}
+
+func (d *preparedQRDBData) MVCC() QRDBMVCCClient {
+	return preparedMVCC{inner: d.inner.MVCC(), prepare: d.prepare}
+}
+
+func (d *preparedQRDBData) Collections() QRDBCollectionClient {
+	if d.prepareCollections == nil {
+		return d.inner.Collections()
+	}
+	return preparedCollections{inner: d.inner.Collections(), prepare: d.prepareCollections}
+}
+
+func (d *preparedQRDBData) Index() QRDBIndexClient {
+	return preparedIndex{inner: d.inner.Index(), prepare: d.prepare}
+}
+
+type preparedKV struct {
+	inner   QRDBKVClient
+	prepare func(context.Context) (context.Context, error)
+}
+
+func (k preparedKV) Put(ctx context.Context, key string, value []byte, opts ...qrdbtransport.WriteOption) error {
+	ctx, err := k.prepare(ctx)
+	if err != nil {
+		return err
+	}
+	return k.inner.Put(ctx, key, value, opts...)
+}
+
+func (k preparedKV) Get(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) ([]byte, error) {
+	ctx, err := k.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return k.inner.Get(ctx, key, opts...)
+}
+
+func (k preparedKV) Delete(ctx context.Context, key string, opts ...qrdbtransport.WriteOption) error {
+	ctx, err := k.prepare(ctx)
+	if err != nil {
+		return err
+	}
+	return k.inner.Delete(ctx, key, opts...)
+}
+
+func (k preparedKV) List(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) ([]string, error) {
+	ctx, err := k.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return k.inner.List(ctx, prefix, opts...)
+}
+
+func (k preparedKV) Scan(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) (map[string][]byte, error) {
+	ctx, err := k.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return k.inner.Scan(ctx, prefix, opts...)
+}
+
+func (k preparedKV) Exists(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) (bool, error) {
+	ctx, err := k.prepare(ctx)
+	if err != nil {
+		return false, err
+	}
+	return k.inner.Exists(ctx, key, opts...)
+}
+
+// preparedGuardedKV is preparedKV over an inner client that has go-qrdb's
+// guarded writes: it keeps PutIfAbsent, CompareAndDelete and CompareAndSwap,
+// each prepared like the plain KV calls. QRDBData's KV returns it only when
+// the inner client is a GuardedKVClient, so callers that detect the
+// capability by type assertion see exactly what the inner client offers.
+type preparedGuardedKV struct {
+	preparedKV
+	guarded qrdbtransport.GuardedKVClient
+}
+
+func (k preparedGuardedKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	ctx, err := k.prepare(ctx)
+	if err != nil {
+		return false, err
+	}
+	return k.guarded.PutIfAbsent(ctx, key, value)
+}
+
+func (k preparedGuardedKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	ctx, err := k.prepare(ctx)
+	if err != nil {
+		return false, err
+	}
+	return k.guarded.CompareAndDelete(ctx, key, expected)
+}
+
+func (k preparedGuardedKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	ctx, err := k.prepare(ctx)
+	if err != nil {
+		return false, err
+	}
+	return k.guarded.CompareAndSwap(ctx, key, expected, next)
+}
+
+type preparedBatch struct {
+	inner   QRDBBatchClient
+	prepare func(context.Context) (context.Context, error)
+}
+
+func (b preparedBatch) ExecuteBatch(ctx context.Context, ops []qrdbtransport.Op, opts ...qrdbtransport.WriteOption) (*qrdbtransport.BatchResponse, error) {
+	ctx, err := b.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return b.inner.ExecuteBatch(ctx, ops, opts...)
+}
+
+func (b preparedBatch) ImportFile(ctx context.Context, filename string, data io.Reader, opts qrdbtransport.ImportOptions) (*qrdbtransport.ImportResult, error) {
+	ctx, err := b.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return b.inner.ImportFile(ctx, filename, data, opts)
+}
+
+type preparedTransaction struct {
+	inner   QRDBTransactionClient
+	prepare func(context.Context) (context.Context, error)
+}
+
+func (t preparedTransaction) ExecuteTransaction(ctx context.Context, req *qrdbtransport.TransactionRequest, opts ...qrdbtransport.WriteOption) (*qrdbtransport.TransactionResponse, error) {
+	ctx, err := t.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return t.inner.ExecuteTransaction(ctx, req, opts...)
+}
+
+type preparedMVCC struct {
+	inner   QRDBMVCCClient
+	prepare func(context.Context) (context.Context, error)
+}
+
+func (m preparedMVCC) PutWithLease(ctx context.Context, key string, value []byte, leaseID int64, opts ...qrdbtransport.WriteOption) (*qrdbtransport.MVCCKeyValue, error) {
+	ctx, err := m.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return m.inner.PutWithLease(ctx, key, value, leaseID, opts...)
+}
+
+func (m preparedMVCC) GetRevision(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) (*qrdbtransport.MVCCKeyValue, error) {
+	ctx, err := m.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return m.inner.GetRevision(ctx, key, opts...)
+}
+
+func (m preparedMVCC) GetAtRevision(ctx context.Context, key string, revision int64, opts ...qrdbtransport.ReadOption) (*qrdbtransport.MVCCKeyValue, error) {
+	ctx, err := m.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return m.inner.GetAtRevision(ctx, key, revision, opts...)
+}
+
+func (m preparedMVCC) Range(ctx context.Context, start, end []byte, rangeOpts qrdbtransport.RangeOptions, opts ...qrdbtransport.ReadOption) (*qrdbtransport.RangeResponse, error) {
+	ctx, err := m.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return m.inner.Range(ctx, start, end, rangeOpts, opts...)
+}
+
+func (m preparedMVCC) Compact(ctx context.Context, revision int64) error {
+	ctx, err := m.prepare(ctx)
+	if err != nil {
+		return err
+	}
+	return m.inner.Compact(ctx, revision)
+}
+
+func (m preparedMVCC) CurrentRevision(ctx context.Context) (int64, error) {
+	ctx, err := m.prepare(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return m.inner.CurrentRevision(ctx)
+}
+
+func (m preparedMVCC) RestoreToRevision(ctx context.Context, req *qrdbtransport.RestoreRevisionRequest) (*qrdbtransport.RestoreRevisionResult, error) {
+	ctx, err := m.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return m.inner.RestoreToRevision(ctx, req)
+}
+
+type preparedIndex struct {
+	inner   QRDBIndexClient
+	prepare func(context.Context) (context.Context, error)
+}
+
+func (x preparedIndex) IndexCreate(ctx context.Context, name, fieldName string, config qrdbtransport.IndexConfig) error {
+	ctx, err := x.prepare(ctx)
+	if err != nil {
+		return err
+	}
+	return x.inner.IndexCreate(ctx, name, fieldName, config)
+}
+
+func (x preparedIndex) IndexDrop(ctx context.Context, name string) error {
+	ctx, err := x.prepare(ctx)
+	if err != nil {
+		return err
+	}
+	return x.inner.IndexDrop(ctx, name)
+}
+
+func (x preparedIndex) IndexQuery(ctx context.Context, indexName, value string) (*qrdbtransport.IndexQueryResponse, error) {
+	ctx, err := x.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return x.inner.IndexQuery(ctx, indexName, value)
+}
+
+func (x preparedIndex) IndexScan(ctx context.Context, indexName string, start, end *string) (*qrdbtransport.IndexScanResponse, error) {
+	ctx, err := x.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return x.inner.IndexScan(ctx, indexName, start, end)
+}
+
+func (x preparedIndex) IndexList(ctx context.Context) (*qrdbtransport.IndexListResponse, error) {
+	ctx, err := x.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return x.inner.IndexList(ctx)
+}
+
+type preparedCollections struct {
+	inner   QRDBCollectionClient
+	prepare func(context.Context) (context.Context, error)
+}
+
+func (p preparedCollections) CreateCollection(ctx context.Context, req qrdbtransport.CreateCollectionRequest) (*qrdbtransport.CollectionInfo, error) {
+	ctx, err := p.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return p.inner.CreateCollection(ctx, req)
+}
+
+func (p preparedCollections) GetCollectionInfo(ctx context.Context, database, name string) (*qrdbtransport.CollectionInfo, error) {
+	ctx, err := p.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return p.inner.GetCollectionInfo(ctx, database, name)
+}
+
+func (p preparedCollections) ListCollections(ctx context.Context, database string) (*qrdbtransport.ListCollectionsResponse, error) {
+	ctx, err := p.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return p.inner.ListCollections(ctx, database)
+}
+
+func (p preparedCollections) DropCollection(ctx context.Context, database, name string) error {
+	ctx, err := p.prepare(ctx)
+	if err != nil {
+		return err
+	}
+	return p.inner.DropCollection(ctx, database, name)
+}
+
+func (p preparedCollections) InsertDocument(ctx context.Context, req qrdbtransport.InsertDocumentRequest) (*qrdbtransport.InsertDocumentResponse, error) {
+	ctx, err := p.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return p.inner.InsertDocument(ctx, req)
+}
+
+func (p preparedCollections) GetDocument(ctx context.Context, database, collection string, id uint64) (*qrdbtransport.DocumentResponse, error) {
+	ctx, err := p.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return p.inner.GetDocument(ctx, database, collection, id)
+}
+
+func (p preparedCollections) UpdateDocument(ctx context.Context, req qrdbtransport.UpdateDocumentRequest) error {
+	ctx, err := p.prepare(ctx)
+	if err != nil {
+		return err
+	}
+	return p.inner.UpdateDocument(ctx, req)
+}
+
+func (p preparedCollections) DeleteDocument(ctx context.Context, database, collection string, id uint64) error {
+	ctx, err := p.prepare(ctx)
+	if err != nil {
+		return err
+	}
+	return p.inner.DeleteDocument(ctx, database, collection, id)
+}
+
+func (p preparedCollections) ListDocuments(ctx context.Context, req qrdbtransport.ListDocumentsRequest) (*qrdbtransport.ListDocumentsResponse, error) {
+	ctx, err := p.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return p.inner.ListDocuments(ctx, req)
 }

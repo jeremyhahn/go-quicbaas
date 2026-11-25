@@ -76,7 +76,56 @@ func qrdbWiredMethod(name string) bool {
 		strings.HasPrefix(name, "TS") {
 		return true
 	}
-	return qrdbUserSurfaceMethods[name] || name == "Health" || name == "Status"
+	return qrdbUserSurfaceMethods[name] || qrdbDataSurfaceMethods[name] ||
+		name == "Health" || name == "Status"
+}
+
+// qrdbDataSurfaceMethods is the registry-dispatched QRDBService data
+// surface the server serves on the Unix socket through its data-registry
+// proxy: KV, MVCC, transaction, batch, index and collection calls.
+// Time-series calls are mapped by their own table. Watch, lease, lock and
+// vector calls are not part of it: they stay default-denied.
+var qrdbDataSurfaceMethods = map[string]bool{
+	// KV
+	"Put": true, "PutIfAbsent": true, "CompareAndSwap": true, "Get": true,
+	"Delete": true, "CompareAndDelete": true, "List": true, "Scan": true,
+	// MVCC
+	"PutWithLease": true, "GetRevision": true, "GetAtRevision": true,
+	"Range": true, "Compact": true, "CurrentRevision": true,
+	"RestoreToRevision": true,
+	// Transaction, batch
+	"Transaction": true, "Batch": true, "BatchImport": true,
+	// Index
+	"IndexCreate": true, "IndexDrop": true, "IndexQuery": true,
+	"IndexScan": true, "IndexList": true,
+	// Collections
+	"CreateCollection": true, "GetCollectionInfo": true,
+	"ListCollections": true, "DropCollection": true, "InsertDocument": true,
+	"GetDocument": true, "UpdateDocument": true, "DeleteDocument": true,
+	"ListDocuments": true,
+}
+
+// TestQRDBGRPCPermissions_DataMethodsMatchQRDBProto pins every mapped data
+// method to the permission qrdb itself declares in the method's
+// (qrdb.v1.permission) proto option.
+func TestQRDBGRPCPermissions_DataMethodsMatchQRDBProto(t *testing.T) {
+	require.Len(t, qrdbDataSurfaceMethods, 32)
+	sd := qrdbServiceDescriptor(t, "qrdb.v1.QRDBService")
+	for name := range qrdbDataSurfaceMethods {
+		md := sd.Methods().ByName(protoreflect.Name(name))
+		if !assert.NotNil(t, md, "QRDBService has no method %s", name) {
+			continue
+		}
+		want, ok := protoPermissionOption(t, md)
+		if !assert.True(t, ok, "%s: qrdb.v1.permission option missing", name) {
+			continue
+		}
+		res, act, mapped := grpcResourceAndAction("/qrdb.v1.QRDBService/" + name)
+		if !assert.True(t, mapped, "%s must be mapped", name) {
+			continue
+		}
+		assert.Equal(t, want, res+":"+act, name)
+	}
 }
 
 // qrdbServiceDescriptor resolves a qrdb.v1 service descriptor from the global
@@ -327,6 +376,9 @@ func TestUnaryAuthorizationInterceptor_QRDBAdmitDeny(t *testing.T) {
 		{"authfactor_login", "/qrdb.v1.UserAuthFactorService/Login", "user_authfactors:login", "user_authfactors:list"},
 		{"authfactor_add", "/qrdb.v1.UserAuthFactorService/Add", "user_authfactors:add", "user_authfactors:login"},
 		{"admin_status", "/qrdb.v1.QRDBService/Status", "admin:status", "admin:health"},
+		{"kv_put", "/qrdb.v1.QRDBService/Put", "kv:put", "kv:get"},
+		{"kv_get", "/qrdb.v1.QRDBService/Get", "kv:get", "kv:put"},
+		{"collection_insert", "/qrdb.v1.QRDBService/InsertDocument", "collections:insert", "collections:read"},
 		{"ts_write", "/qrdb.v1.QRDBService/TSWrite", "timeseries:write", "timeseries:query"},
 		{"ts_query", "/qrdb.v1.QRDBService/TSQuery", "timeseries:query", "timeseries:write"},
 		{"ts_get_retention", "/qrdb.v1.QRDBService/TSGetRetention", "timeseries:get_retention", "timeseries:set_retention"},
@@ -539,17 +591,24 @@ func TestQRDBIdentityGatedMethods_FailClosedWithoutAuthenticator(t *testing.T) {
 }
 
 // TestQRDBUnwiredSurface_DefaultDenied asserts representative qrdb.v1 methods
-// from UNWIRED families (KV, lease, lock, vector) stay default-denied even for
-// a caller with a valid token: the broker's canonical surface for those
-// capabilities is the quicbaas.* service namespace.
+// from UNWIRED families (lease, lock, watch, vector, and the
+// admin and SQL surface) stay default-denied even for a caller with a valid
+// token: the broker's canonical surface for those capabilities is the
+// quicbaas.* service namespace.
 func TestQRDBUnwiredSurface_DefaultDenied(t *testing.T) {
 	for _, method := range []string{
-		"/qrdb.v1.QRDBService/Put",
-		"/qrdb.v1.QRDBService/Get",
-		"/qrdb.v1.QRDBService/LeaseGrant",
-		"/qrdb.v1.QRDBService/LockAcquire",
-		"/qrdb.v1.QRDBService/VectorUpsert",
+		"/qrdb.v1.QRDBService/DatabaseCreate",
+		"/qrdb.v1.QRDBService/TenantCreate",
+		"/qrdb.v1.QRDBService/BackupCreate",
+		"/qrdb.v1.QRDBService/Peers",
+		"/qrdb.v1.QRDBService/CreateRole",
+		"/qrdb.v1.QRDBService/SQLQuery",
 		"/qrdb.v1.QRDBService/Watch",
+		"/qrdb.v1.QRDBService/LeaseGrant",
+		"/qrdb.v1.QRDBService/LeaseKeepAlive",
+		"/qrdb.v1.QRDBService/LockAcquire",
+		"/qrdb.v1.QRDBService/LockRelease",
+		"/qrdb.v1.QRDBService/VectorUpsert",
 	} {
 		_, _, mapped := grpcResourceAndAction(method)
 		assert.False(t, mapped, method)

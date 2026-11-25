@@ -21,6 +21,8 @@ import (
 
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -355,6 +357,91 @@ func buildEmbeddedQRDBClient(t *testing.T, servicers QRDBEmbeddedServicers) *cli
 	return &client{
 		opts:    opts,
 		address: "embedded://local",
+	}
+}
+
+// isQRDBClosed reports whether err is go-qrdb's closed-client or
+// closed-transport error.
+func isQRDBClosed(err error) bool {
+	var closedTransport *qrdbtransport.ClosedError
+	var closedClient *qrdbsdk.ClientClosedError
+	return errors.As(err, &closedTransport) || errors.As(err, &closedClient)
+}
+
+// TestQRDBEmbedded_CloseReleasesQRDBSubClient pins that the parent client's
+// Close closes the qrdb sub-client QRDBData built: a held data service stops
+// serving and QRDBData refuses to build a new one.
+func TestQRDBEmbedded_CloseReleasesQRDBSubClient(t *testing.T) {
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{KV: &recordingKVService{}, Admin: stubAdminService{}})
+	data, err := c.QRDBData()
+	if err != nil {
+		t.Fatalf("QRDBData(): %v", err)
+	}
+	if err := data.KV().Put(context.Background(), "row1652/close", []byte("v")); err != nil {
+		t.Fatalf("KV().Put before Close: %v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := data.KV().Put(context.Background(), "row1652/close", []byte("w")); !isQRDBClosed(err) {
+		t.Errorf("KV().Put after Close: err %v, want go-qrdb's closed error", err)
+	}
+	if got, err := c.QRDBData(); err == nil {
+		t.Errorf("QRDBData() after Close = %T, want an error", got)
+	}
+}
+
+// TestQRDBEmbedded_CloseBeforeQRDBData pins that a Close before the first
+// QRDBData call leaves no sub-client to leak: QRDBData then fails as
+// Unavailable and builds nothing.
+func TestQRDBEmbedded_CloseBeforeQRDBData(t *testing.T) {
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{KV: &recordingKVService{}, Admin: stubAdminService{}})
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if data, err := c.QRDBData(); !sdkerrors.IsUnavailable(err) || data != nil {
+		t.Errorf("QRDBData() after Close = %v, %v, want a nil service and Unavailable", data, err)
+	}
+	if _, err := c.qrdbClient(); !sdkerrors.IsUnavailable(err) {
+		t.Errorf("qrdbClient() after Close: err %v, want Unavailable", err)
+	}
+	if c.qrdb.client != nil {
+		t.Error("Close before first use left a built qrdb sub-client")
+	}
+}
+
+// TestQRDBEmbedded_CloseLeavesCallerNodeOpen pins that Close never closes
+// what the caller passed in: the node client given as
+// QRDBEmbeddedServicers.Data, and the servicers behind it, still serve.
+func TestQRDBEmbedded_CloseLeavesCallerNodeOpen(t *testing.T) {
+	kv := &recordingKVService{}
+	tr, err := qrdbembedded.New(kv, stubAdminService{})
+	if err != nil {
+		t.Fatalf("embedded.New: %v", err)
+	}
+	node, err := qrdbsdk.NewClient(tr)
+	if err != nil {
+		t.Fatalf("qrdbsdk.NewClient: %v", err)
+	}
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{KV: kv, Admin: stubAdminService{}, Data: node})
+	data, err := c.QRDBData()
+	if err != nil {
+		t.Fatalf("QRDBData(): %v", err)
+	}
+	if err := data.KV().Put(context.Background(), "row1652/node", []byte("v")); err != nil {
+		t.Fatalf("KV().Put before Close: %v", err)
+	}
+	if _, err := c.qrdbClient(); err != nil {
+		t.Fatalf("qrdbClient(): %v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := node.KV().Put(context.Background(), "row1652/node", []byte("w")); err != nil {
+		t.Fatalf("caller's node KV().Put after Close: %v", err)
+	}
+	if got, err := kv.get("row1652/node"); err != nil || string(got) != "w" {
+		t.Errorf("caller's servicer holds %q (err %v) after Close, want %q", got, err, "w")
 	}
 }
 

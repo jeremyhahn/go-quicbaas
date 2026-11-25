@@ -169,6 +169,11 @@ type Client interface {
 	// Uses the QRDB transport layer.
 	DataStore() (QRDBKVStore, error)
 
+	// QRDBData returns go-qrdb's data services (KV, batch, transaction,
+	// MVCC, collection and index) as go-qrdb's own clients, carried on the
+	// transport this client was built with.
+	QRDBData() (QRDBDataService, error)
+
 	// Connection management
 	Transport() Transport
 	Close() error
@@ -2053,26 +2058,11 @@ func (c *client) Close() error {
 	}
 	c.closed = true
 
-	var transportErr error
+	var terr error
 	if c.transport != nil {
-		transportErr = c.transport.Close()
+		terr = c.transport.Close()
 	}
-
-	// Close the lazily built go-qrdb sub-client (gRPC/Unix time series,
-	// SealStore, TenantMgmt). Running the sync.Once here waits for an
-	// initialization in progress and makes any later qrdbClient() call
-	// fail instead of dialing a new connection after Close.
-	c.qrdb.closed.Store(true)
-	c.qrdb.once.Do(func() {
-		c.qrdb.err = errQRDBClientClosed()
-	})
-	var qrdbErr error
-	// The embedded qrdb transport's Close only marks it closed; it never
-	// closes the caller-owned servicers, so closing it here is safe.
-	if c.qrdb.client != nil {
-		qrdbErr = c.qrdb.client.Close()
-	}
-	return stderrors.Join(transportErr, qrdbErr)
+	return stderrors.Join(terr, c.closeQRDB())
 }
 
 // KV returns the KV client.

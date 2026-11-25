@@ -15,6 +15,7 @@ package main
 
 import (
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
@@ -76,6 +77,22 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 		Admin: admin,
 	}
 
+	// QRDBData(): KV, batch, transaction, MVCC and index resolve through
+	// the server's data registry for the default database, the keyspace the
+	// network data RPCs use; collections resolve through the node's own
+	// client. A node client without a data client would split the keyspace
+	// again, so that is a wiring error. The data client's embedded transport
+	// holds no resources (Close only marks it closed), so nothing closes it.
+	// The nil check keeps a nil *Client out of the interface, where it
+	// would not compare equal to nil.
+	if nc := es.server.GetQRDBNodeClient(); nc != nil {
+		dc, err := es.server.QRDBDataClient()
+		if err != nil {
+			return quicbaas.QRDBEmbeddedServicers{}, &EmbeddedQRDBWiringError{Stage: "qrdb data client", Cause: err}
+		}
+		servicers.Data = &nodeDataService{data: dc, collections: nc}
+	}
+
 	// Wire the user store and the unified-login UserAuthFactor service
 	// INSTANCE from the node. Enrollment of user-login factors
 	// (Security().Auth().Factors().Add) resolves the caller's subject to a
@@ -132,6 +149,40 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 
 	return servicers, nil
 }
+
+// nodeDataService is QRDBData() on the embedded node: KV, batch,
+// transaction, MVCC and index resolve through the server's data
+// registry for the default database, the keyspace the network data
+// RPCs use; collections take an explicit database and resolve through
+// the node's own client.
+type nodeDataService struct {
+	data        *qrdbsdk.Client
+	collections *qrdbsdk.Client
+}
+
+var _ quicbaas.QRDBDataService = (*nodeDataService)(nil)
+
+// KV returns the data client's KV client.
+func (d *nodeDataService) KV() quicbaas.QRDBKVClient { return d.data.KV() }
+
+// Batch returns the data client's batch client.
+func (d *nodeDataService) Batch() quicbaas.QRDBBatchClient { return d.data.Batch() }
+
+// Transaction returns the data client's transaction client.
+func (d *nodeDataService) Transaction() quicbaas.QRDBTransactionClient {
+	return d.data.Transaction()
+}
+
+// MVCC returns the data client's MVCC client.
+func (d *nodeDataService) MVCC() quicbaas.QRDBMVCCClient { return d.data.MVCC() }
+
+// Collections returns the node client's collection client.
+func (d *nodeDataService) Collections() quicbaas.QRDBCollectionClient {
+	return d.collections.Collections()
+}
+
+// Index returns the data client's index client.
+func (d *nodeDataService) Index() quicbaas.QRDBIndexClient { return d.data.Index() }
 
 // embeddedQRDBOption returns the SDK option that wires the in-process qrdb
 // sub-client. Returns a wrapped error when buildEmbeddedQRDBServicers

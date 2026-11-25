@@ -37,6 +37,7 @@ import (
 	xkmscaprovider "github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
@@ -2428,6 +2429,18 @@ func (s *Server) grpcServerInterceptors() ([]ggrpc.UnaryServerInterceptor, []ggr
 		streamInterceptors = append(streamInterceptors, streamAuthz)
 		s.logger.Info("gRPC platform-token validator authorization installed (RequireAuthz=true)")
 	}
+
+	// go-qrdb reads an absent tenant as the system tenant; the registry-backed
+	// data calls need an authenticated tenant, so refuse them without one.
+	unaryInterceptors = append(unaryInterceptors, grpcapi.UnaryQRDBDataTenantInterceptor())
+	streamInterceptors = append(streamInterceptors, grpcapi.StreamQRDBDataTenantInterceptor())
+
+	// Resolve the qrdb database a call targets from its x-qrdb-database
+	// metadata, as qrdb's own server does. Without it the data services
+	// fall back to the system database whatever the client selected.
+	unaryInterceptors = append(unaryInterceptors, qrdbgrpc.DatabaseScopeUnaryInterceptor)
+	streamInterceptors = append(streamInterceptors, qrdbgrpc.DatabaseScopeStreamInterceptor)
+
 	return unaryInterceptors, streamInterceptors, nil
 }
 
