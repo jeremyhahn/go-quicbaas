@@ -161,7 +161,7 @@ func runIAMTenantCreateCommand(cmd *cobra.Command, args []string) error {
 	default:
 		fmt.Println("Tenant created successfully:")
 		fmt.Printf("  ID: %s\n", tenant.ID)
-		fmt.Printf("  Name: %s\n", tenant.Name)
+		fmt.Printf("  Name: %s\n", tenantShownName(tenant))
 		if tenantMaxUsers > 0 {
 			fmt.Printf("  Max Users: %d\n", tenantMaxUsers)
 		}
@@ -430,7 +430,7 @@ func runIAMTenantGetCommand(cmd *cobra.Command, args []string) error {
 	default:
 		fmt.Println("Tenant Details:")
 		fmt.Printf("  ID: %s\n", tenant.ID)
-		fmt.Printf("  Name: %s\n", tenant.Name)
+		fmt.Printf("  Name: %s\n", tenantShownName(tenant))
 		fmt.Printf("  Max Users: %d\n", maxUsers)
 		fmt.Printf("  MFA Required: %v\n", mfaRequired)
 		fmt.Printf("  Created: %s\n", tenant.CreatedAt.Format("2006-01-02 15:04:05"))
@@ -441,6 +441,16 @@ func runIAMTenantGetCommand(cmd *cobra.Command, args []string) error {
 }
 
 // newIAMTenantUpdateCommand creates the tenant update command.
+// tenantShownName is the name the CLI shows for a tenant. The server keeps
+// Tenant.Name immutable and stores `--name` (create and update) as the display
+// name, so the display name is shown, falling back to Name when it is unset.
+func tenantShownName(tenant *iam.Tenant) string {
+	if tenant.DisplayName != "" {
+		return tenant.DisplayName
+	}
+	return tenant.Name
+}
+
 func newIAMTenantUpdateCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -540,7 +550,7 @@ func runIAMTenantUpdateCommand(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("Tenant updated successfully:")
 	fmt.Printf("  ID: %s\n", tenant.ID)
-	fmt.Printf("  Name: %s\n", tenant.Name)
+	fmt.Printf("  Name: %s\n", tenantShownName(tenant))
 	fmt.Printf("  Max Users: %d\n", maxUsers)
 	fmt.Printf("  MFA Required: %v\n", mfaRequired)
 
@@ -683,7 +693,7 @@ func runIAMTenantListCommand(cmd *cobra.Command, args []string) error {
 			}
 			fmt.Printf("%-30s %-40s %-10s %-12v %s\n",
 				tenant.ID,
-				tenant.Name,
+				tenantShownName(&tenant),
 				maxUsers,
 				mfaRequired,
 				tenant.CreatedAt.Format("2006-01-02 15:04"))
