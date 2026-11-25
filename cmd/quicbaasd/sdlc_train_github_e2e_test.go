@@ -279,13 +279,19 @@ func (r *githubTrainRig) approveAll(t *testing.T, cars ...githubitest.PullReques
 	}
 }
 
-// awaitSettled waits until every car's train entry is landed or ejected
-// and returns the entries by pull request. Adopting a pull request no train
+// awaitSettled waits until every car's train entry is landed or ejected,
+// or the car's entry is gone and its pull request closed (a car that
+// completed between two polls, see settleTrainCars), and returns the
+// entries by pull request. Adopting a pull request no train
 // opened must not start a worker attempt: the only worker spawned is car A's,
 // and a second one fails the wait at once (#2221).
 func (r *githubTrainRig) awaitSettled(t *testing.T, cars ...githubitest.PullRequest) map[int]*sdlc.TrainEntry {
 	t.Helper()
 	settled := map[int]*sdlc.TrainEntry{}
+	numbers := make([]int, 0, len(cars))
+	for _, car := range cars {
+		numbers = append(numbers, car.Number)
+	}
 	pollGitHub(t, "every car lands or is ejected", func(ctx context.Context) (bool, error) {
 		if spawned := r.backend.spawnCount(); spawned > 1 {
 			t.Fatalf("%d worker sessions spawned; adopting a pull request no train opened must not start a worker attempt", spawned)
@@ -294,17 +300,10 @@ func (r *githubTrainRig) awaitSettled(t *testing.T, cars ...githubitest.PullRequ
 		if err != nil {
 			return false, err
 		}
-		for _, entry := range entries {
-			if entry.State == sdlc.TrainEntryLanded || entry.State == sdlc.TrainEntryEjected {
-				settled[entry.PullRequest] = entry
-			}
-		}
-		for _, car := range cars {
-			if settled[car.Number] == nil {
-				return false, nil
-			}
-		}
-		return true, nil
+		return settleTrainCars(settled, numbers, entries, func(pr int) (bool, error) {
+			got, err := r.scratch.GetPullRequest(ctx, pr)
+			return err == nil && got.State == "closed", err
+		})
 	})
 	return settled
 }
@@ -403,8 +402,12 @@ func TestGitHubTrain_TwoApprovedCarsOneAdoptedLandAsOneSquash(t *testing.T) {
 	for _, car := range []githubitest.PullRequest{carA, carB} {
 		entry := settled[car.Number]
 		require.Equal(t, sdlc.TrainEntryLanded, entry.State, "car #%d", car.Number)
-		require.Equal(t, train.Number, entry.TrainPullRequest, "car #%d rode the one train", car.Number)
-		require.Equal(t, train.MergeCommitSHA, entry.MergeSHA, "car #%d landed in the squash commit", car.Number)
+		if entry.MergeSHA != "" {
+			// Seen landed; a car settled from its closed pull request is
+			// covered by the train-level assertions.
+			require.Equal(t, train.Number, entry.TrainPullRequest, "car #%d rode the one train", car.Number)
+			require.Equal(t, train.MergeCommitSHA, entry.MergeSHA, "car #%d landed in the squash commit", car.Number)
+		}
 		landed, err := rig.scratch.GetPullRequest(ctx, car.Number)
 		require.NoError(t, err)
 		require.Equal(t, "closed", landed.State, "car #%d is closed once it lands", car.Number)
@@ -441,7 +444,13 @@ func TestGitHubTrain_ACarThatBreaksQueueCIIsEjectedAndTheRestLand(t *testing.T) 
 	for _, car := range []githubitest.PullRequest{carA, carC} {
 		entry := settled[car.Number]
 		require.Equal(t, sdlc.TrainEntryLanded, entry.State, "car #%d lands", car.Number)
-		require.NotEmpty(t, entry.MergeSHA)
+		if entry.MergeSHA == "" {
+			// Settled from its closed pull request: its entry completed
+			// between polls.
+			got, err := rig.scratch.GetPullRequest(context.Background(), car.Number)
+			require.NoError(t, err)
+			require.Equal(t, "closed", got.State, "car #%d is closed once it lands", car.Number)
+		}
 	}
 	rig.requireOnBase(t, map[string]bool{"WORK.md": true, "car-c.txt": true, githubitest.BreakCIFile: false})
 	rig.awaitBranchesGone(t, carA.Head.Ref, carC.Head.Ref)
