@@ -162,8 +162,12 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A create that names roles or attributes also needs roles:assign in the
+	// target tenant, mirroring go-qrdb's native
+	// AuthorizeRoleAssignmentWriteOnCreate; an unwired authorizer is
+	// unavailable (503), as main's create check answers it.
 	if (len(req.Roles) > 0 || len(req.Attributes) > 0) &&
-		!h.authorizeUserWrite(w, r, tenantID, roleAssignmentResource, roleAssignmentAction) {
+		!h.server.authorizePermissionInTenant(w, r, tenantID, roleAssignmentResource, roleAssignmentAction) {
 		return
 	}
 
