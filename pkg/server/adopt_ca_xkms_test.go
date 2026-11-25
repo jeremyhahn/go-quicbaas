@@ -87,12 +87,12 @@ func TestXKMSModuleService_NilUntilCASettled(t *testing.T) {
 	srv := &Server{config: &config.Config{}}
 	_, err := xkmssdk.Get()
 	require.NoError(t, err, "the XKMS service is initialized")
-	require.Nil(t, srv.xkmsModuleService(), "no service before the CA has settled")
+	require.Nil(t, srv.xkmsServiceForModule(), "no service before the CA has settled")
 
 	srv.adoptCA(newRealSoftwareCA(t))
 	srv.caSettled.Store(true)
 
-	svc := srv.xkmsModuleService()
+	svc := srv.xkmsServiceForModule()
 	require.NotNil(t, svc, "the service resolves once the CA has settled")
 	require.NotNil(t, svc.CA())
 }
@@ -106,7 +106,7 @@ func TestXKMSModule_SignsAfterLateCAAdoption(t *testing.T) {
 
 	srv := &Server{config: &config.Config{}}
 	module, err := xkmssdk.NewServiceModule(
-		srv.xkmsModuleService,
+		srv.xkmsServiceForModule,
 		xkmssdk.WithServiceModuleQRDBClient(srv.GetQRDBNodeClient),
 		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
 	)

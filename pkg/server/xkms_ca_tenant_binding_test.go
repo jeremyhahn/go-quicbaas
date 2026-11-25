@@ -121,7 +121,7 @@ func TestKeystoreCA_TenantIssuesThenRevokes(t *testing.T) {
 
 	srv := &Server{config: &config.Config{}}
 	module, err := xkmssdk.NewServiceModule(
-		srv.xkmsModuleService,
+		srv.xkmsServiceForModule,
 		xkmssdk.WithServiceModuleQRDBClient(srv.GetQRDBNodeClient),
 		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
 	)
@@ -257,7 +257,7 @@ func newKeystoreHarness(t *testing.T, srv *Server) capturedGRPCServices {
 	initOIDCSigningDefault(t)
 	t.Cleanup(dbxkms.Reset)
 	module, err := xkmssdk.NewServiceModule(
-		srv.xkmsModuleService,
+		srv.xkmsServiceForModule,
 		xkmssdk.WithServiceModuleQRDBClient(srv.GetQRDBNodeClient),
 		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
 	)

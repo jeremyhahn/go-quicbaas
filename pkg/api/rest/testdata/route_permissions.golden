@@ -529,7 +529,7 @@ POST /api/v1/tenants/{tenant_id}/providers/ permission tenants:create
 POST /api/v1/tenants/{tenant_id}/provision permission tenants:create
 POST /api/v1/tenants/{tenant_id}/roles/ permission tenants:create
 POST /api/v1/tenants/{tenant_id}/roles/reconcile permission tenants:create
-POST /api/v1/tenants/{tenant_id}/users/ permission tenants:create
+POST /api/v1/tenants/{tenant_id}/users/ permission users:create
 POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent permission tenants:create
 POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion permission tenants:create
 POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export permission tenants:create

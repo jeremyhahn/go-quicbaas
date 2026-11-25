@@ -28,7 +28,6 @@ import (
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
-	xkmslib "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
@@ -637,23 +636,6 @@ func (s *Server) newQRDBAuditSink() qrdbsdk.NodeAuditLogger {
 	return qrdbsdk.NewAuditRingBuffer(defaultQRDBAuditRingCapacity)
 }
 
-// xkmsModuleService resolves the XKMSService the xkms service module serves.
-// It returns nil until startup's CA step has settled: the module memoizes
-// its keystore on the first RPC and installs the CA only if the service has
-// one at that moment, so a caller arriving before adoptCA would pin a
-// CA-less keystore for the life of the process. A nil result makes the
-// module answer Unavailable, telling an early caller to retry.
-func (s *Server) xkmsModuleService() *xkmslib.XKMSService {
-	if !s.caSettled.Load() {
-		return nil
-	}
-	svc, err := xkmssdk.Get()
-	if err != nil {
-		return nil
-	}
-	return svc
-}
-
 func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, sealEnabled bool) ([]qrdbsdk.ServerOption, error) {
 	// The ONE audit plane (P5.2): every capability module (quicbaas's own
 	// and go-xkms's) and, over the site-by-site migration, quicbaas's own
@@ -712,7 +694,7 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 	s.warnSelfServiceRegistrationPosture()
 
 	xkmsModule, err := xkmssdk.NewServiceModule(
-		s.xkmsModuleService,
+		s.xkmsServiceForModule,
 		// go-xkms v0.7.1-alpha: without these Host self-build options the
 		// module registered zero HTTP routes (RegisterHTTP returned
 		// immediately for lack of a REST resolver -- there is no SDK

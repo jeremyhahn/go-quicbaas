@@ -67,12 +67,11 @@ func TestBuildPolicyRequest_Basic(t *testing.T) {
 	assert.Equal(t, "test-policy", req.Name)
 	assert.True(t, req.Enabled)
 	assert.Equal(t, "Test policy description", req.Description)
-	assert.Len(t, req.Rules, 1)
-	assert.Equal(t, "rule1", req.Rules[0].Name)
-	assert.Equal(t, iam.EffectAllow, req.Rules[0].Effect)
+	assert.Empty(t, req.Rules)
+	assert.Equal(t, rawYAML, req.SpecYAML)
 }
 
-func TestBuildPolicyRequest_DenyEffect(t *testing.T) {
+func TestBuildPolicyRequest_DenyRuleNotParsed(t *testing.T) {
 	policyData := map[string]interface{}{
 		"spec": map[string]interface{}{
 			"rules": []interface{}{
@@ -86,8 +85,7 @@ func TestBuildPolicyRequest_DenyEffect(t *testing.T) {
 
 	req := buildPolicyRequest(policyData, "deny-policy", []byte{})
 
-	assert.Len(t, req.Rules, 1)
-	assert.Equal(t, iam.EffectDeny, req.Rules[0].Effect)
+	assert.Empty(t, req.Rules)
 }
 
 func TestBuildPolicyRequest_EmptySpec(t *testing.T) {
@@ -137,6 +135,33 @@ func TestBuildPolicyRequest_InvalidRuleItem(t *testing.T) {
 	req := buildPolicyRequest(policyData, "invalid-item", []byte{})
 
 	assert.Len(t, req.Rules, 0)
+}
+
+// TestBuildPolicyRequest_SpecYAMLOnly_NoRules checks that the CLI sends the
+// policy as spec_yaml only: the gRPC and MCP transports refuse structured
+// rules rather than drop them, so the request must never carry Rules.
+func TestBuildPolicyRequest_SpecYAMLOnly_NoRules(t *testing.T) {
+	policyData := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"name":        "spec-only",
+			"description": "Spec YAML only",
+		},
+		"spec": map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{"name": "allow-read", "effect": "allow"},
+				map[string]interface{}{"name": "deny-write", "effect": "deny"},
+			},
+		},
+	}
+	rawYAML := []byte("apiVersion: abac.quicbaas.io/v1\nkind: Policy\nmetadata:\n  name: spec-only\n")
+
+	req := buildPolicyRequest(policyData, "spec-only", rawYAML)
+
+	assert.Empty(t, req.Rules)
+	assert.Equal(t, rawYAML, req.SpecYAML)
+	assert.Equal(t, "spec-only", req.Name)
+	assert.Equal(t, "Spec YAML only", req.Description)
+	assert.True(t, req.Enabled)
 }
 
 // =============================================================================

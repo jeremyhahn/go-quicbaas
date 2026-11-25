@@ -53,6 +53,9 @@ type callerTenantTCGCA struct {
 	tcg provider.TCGCA
 }
 
+// Unwrap returns the node CA the wrapper was built around.
+func (c callerTenantCA) Unwrap() provider.CA { return c.CA }
+
 var (
 	_ provider.CA    = callerTenantCA{}
 	_ provider.TCGCA = callerTenantTCGCA{}

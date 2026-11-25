@@ -526,8 +526,7 @@ func (d *Daemon) sendHeartbeat(ctx context.Context) {
 		// exit so systemd restarts the unit from a fresh process state.
 		// All other errors are transient; the next tick retries.
 		if errors.Is(err, ErrNodeReRegisterFailed) {
-			d.recordRunErr(err)
-			d.signalReregisterFailure()
+			d.signalReregisterFailure(err)
 		}
 	}
 }
@@ -548,11 +547,20 @@ func (d *Daemon) dialAddr() string {
 // (Stop's own stopOnce stays intact). State transitions to "failed"
 // for diagnostic visibility — operators see the daemon entered the
 // terminal state from the run-error path, not a clean stop.
-func (d *Daemon) signalReregisterFailure() {
+func (d *Daemon) signalReregisterFailure(err error) {
+	signalled := false
 	d.failOnce.Do(func() {
+		// The failed state goes in before the run error (#2327): a
+		// reader that sees RunError() non-nil must read State()=="failed".
 		d.state.Store(int32(stateFailed))
+		d.recordRunErr(err)
 		close(d.stopCh)
+		signalled = true
 	})
+	if !signalled {
+		// Stop already closed stopCh; keep the error visible in RunError.
+		d.recordRunErr(err)
+	}
 }
 
 func (d *Daemon) recordRunErr(err error) {

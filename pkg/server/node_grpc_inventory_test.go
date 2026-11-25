@@ -92,17 +92,16 @@ func newInventoryFacade() *inventoryFacade {
 // fails if one of them gets mounted, so the entry is dropped with the change.
 var unixOnlyServices = map[string]string{
 	// IAMService is mounted (its six annotated RPCs carry their permissions,
-	// the four invite RPCs are public and the rest stay default-denied). The
-	// RPCs below carry no (qrdb.v1.permission) option in
-	// api/proto/iam/iam.proto (PEPService, MFAService and AuditService
-	// none): the node default-denies them and the
-	// QUIC projection assertion refuses them. The Unix listener has no
-	// permission for them either (pkg/api/grpc/authz_mapping.go leaves them
-	// unmapped, so it denies them too): annotating them is an owner
-	// authorization-policy decision, not a copy of an existing grant.
-	"quicbaas.iam.v1.PEPService":   "unannotated",
-	"quicbaas.iam.v1.MFAService":   "unannotated",
-	"quicbaas.iam.v1.AuditService": "unannotated",
+	// the four invite RPCs are public and the rest stay default-denied), and
+	// so is PEPService (Check and CheckBatch carry permissions:resolve, and
+	// Subscribe stays default-denied). The RPCs of MFAService carry no
+	// (qrdb.v1.permission) option in api/proto/iam/iam.proto: the node
+	// default-denies them and the QUIC projection assertion refuses them.
+	// The Unix listener has no permission for them either
+	// (pkg/api/grpc/authz_mapping.go leaves them unmapped, so it denies them
+	// too): annotating them is an owner authorization-policy decision, not a
+	// copy of an existing grant.
+	"quicbaas.iam.v1.MFAService": "unannotated",
 	// qrdb-proxy planes: go-qrdb's own server owns the canonical surface
 	// (pkg/apimodule TestModule_RegisterGRPC_ExcludesProxyPlanes).
 	"quicbaas.barrier.v1.Barrier":      "qrdb proxy plane",
@@ -110,10 +109,10 @@ var unixOnlyServices = map[string]string{
 	"quicbaas.tenant.v1.TenantBarrier": "qrdb proxy plane",
 	// VectorDB and VectorAdmin are mounted: go-qrdb registers no
 	// quicbaas.vector.v1 name.
-	// KeyManagement and DEKManagement are mounted: the pinned go-xkms serves
-	// no DEK surface and no quicbaas.kms.v1 name. AttestationService is
-	// mounted: the pinned go-xkms serves no Verifier RPCs. Crypto,
-	// CertificateService, TrustService and PIVService are mounted for
+	// KeyManagement, DEKManagement and Crypto are mounted: the pinned
+	// go-xkms serves no DEK surface and no quicbaas.kms.v1 name.
+	// AttestationService is mounted: the pinned go-xkms serves no Verifier
+	// RPCs. CertificateService, TrustService and PIVService are mounted for
 	// Unix-socket peers only (pkg/apimodule
 	// TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly).
 	// The node serves the go-xkms CA verbs on xkms.v1.KeystoreService (#1330).

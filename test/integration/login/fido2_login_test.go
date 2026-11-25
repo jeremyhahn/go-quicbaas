@@ -27,8 +27,12 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	webauthnclient "github.com/jeremyhahn/go-xkms/pkg/webauthn/client"
+
+	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/fido2"
 
 	"github.com/stretchr/testify/require"
 )
@@ -43,11 +47,15 @@ import (
 // with a REAL credential id was byte-identical to finishing with a bogus one
 // ("factor not found").
 //
-// The registration here runs through the canonical xkms-native REST mount
-// (/api/v1/iam/{tenant}/webauthn/registration/*) — the single tenant-scoped
-// ceremony surface (the legacy /api/v1/tenants mount was deleted). The
+// The passkey here is provisioned by the administrator through
+// AdminFactors().Enroll, whose FIDO2 enrolment writes the qrdb factor
+// through. The anonymous public ceremony at the xkms-native REST mount
+// (/api/v1/iam/{tenant}/webauthn/registration/*) refuses an existing account
+// by design: the account holder signs in to add a passkey, or an
+// administrator provisions one. The round trip asserts that refusal. The
 // authenticator is go-xkms's headless CTAP2 software adapter, so the ceremony
-// is a real cryptographic exchange, not a fixture.
+// is a real cryptographic exchange, not a fixture. The login hint is the
+// admin's email, the subject login key.
 //
 // A regression in the write-through fails TestFIDO2_RegisterThenUnifiedLogin at
 // the finish step with "factor not found".
@@ -94,48 +102,47 @@ func postForSession(
 	return respBody, resp.Header.Get(xkmsSessionHeader), resp.StatusCode, nil
 }
 
-// registerPasskey drives a full WebAuthn registration ceremony for the given
-// subject against the canonical mount and returns the base64url credential id
-// the authenticator minted — the value the unified login submits as its
-// lookup key.
-func registerPasskey(
+// enrollAdminPasskey provisions a passkey for the seeded admin the way the
+// product does for an existing account: an administrator enrols it through
+// AdminFactors().Enroll. It returns the base64url credential id the
+// authenticator minted, the value the unified login submits as its lookup key.
+func enrollAdminPasskey(
 	ctx context.Context,
-	c *restCeremonyClient,
+	t *testing.T,
+	c quicbaas.Client,
 	adapter *webauthnclient.SoftwareAdapter,
-	subject string,
-) (string, error) {
-	beginBody, _ := json.Marshal(map[string]string{"email": subject})
-	optionsJSON, sessionID, status, err := postForSession(ctx, c,
-		webAuthnRegistrationPath(systemTenantID, "begin"), beginBody, nil)
-	if err != nil {
-		return "", err
-	}
-	if status != http.StatusOK {
-		return "", fmt.Errorf("registration/begin returned %d: %s", status, string(optionsJSON))
-	}
-	if sessionID == "" {
-		return "", fmt.Errorf("registration/begin returned no %s header", xkmsSessionHeader)
-	}
+) string {
+	t.Helper()
 
-	attestation, err := adapter.MakeCredential(ctx, &webauthnclient.CeremonyOptions{
-		OptionsJSON: optionsJSON,
-		Origin:      adminFactorOrigin,
+	h := &recordingPasskey{softwarePasskey: &softwarePasskey{adapter: adapter}}
+	results, err := c.Security().Auth().AdminFactors().Enroll(ctx, &quicbaas.AdminFactorEnrollRequest{
+		Factors:        []string{"fido2"},
+		Subject:        adminSubject,
+		TenantID:       systemTenantID,
+		RelyingPartyID: adminFactorRPID,
+		FIDO2Handler:   h,
 	})
-	if err != nil {
-		return "", fmt.Errorf("software authenticator MakeCredential: %w", err)
-	}
+	require.NoError(t, err, "administrator passkey enrolment must succeed")
+	require.Len(t, results, 1, "one enrolment")
+	require.Equal(t, qrdbsdk.FactorFIDO2, results[0].Factor, "enrolled factor")
+	return h.credentialID
+}
 
-	respBody, _, status, err := postForSession(ctx, c,
-		webAuthnRegistrationPath(systemTenantID, "finish"), attestation,
-		map[string]string{xkmsSessionHeader: sessionID})
-	if err != nil {
-		return "", err
-	}
-	if status != http.StatusOK {
-		return "", fmt.Errorf("registration/finish returned %d: %s", status, string(respBody))
-	}
+// recordingPasskey wraps the software passkey and records the base64url id of
+// the credential the authenticator minted, the same encoding
+// credentialIDFromWebAuthnDocument reads from an assertion.
+type recordingPasskey struct {
+	*softwarePasskey
+	credentialID string
+}
 
-	return credentialIDFromWebAuthnDocument(attestation)
+func (p *recordingPasskey) RegisterWebAuthn(opts fido2.WebAuthnRegistrationOptions) (*fido2.WebAuthnAttestation, error) {
+	att, err := p.softwarePasskey.RegisterWebAuthn(opts)
+	if err != nil {
+		return nil, err
+	}
+	p.credentialID = base64.RawURLEncoding.EncodeToString(att.CredentialID)
+	return att, nil
 }
 
 // credentialIDFromWebAuthnDocument recovers the base64url credential id from a
@@ -190,30 +197,44 @@ func assertWithSoftwareAuthenticator(
 	return []byte(credentialID), assertion, meta, nil
 }
 
-// TestFIDO2_RegisterThenUnifiedLogin is the headline round trip. It registers a
-// passkey through the XKMSWebAuthnManager mount and then completes a unified
-// FIDO2 login with that exact credential, proving the registration wrote a
-// login-resolvable qrdb auth factor. The issued bearer must encode the
-// registrant's identity and be accepted by the live /oauth2/userinfo endpoint.
+// TestFIDO2_RegisterThenUnifiedLogin is the headline round trip. The
+// administrator provisions the admin's passkey through AdminFactors().Enroll,
+// whose FIDO2 enrolment writes a login-resolvable qrdb auth factor, and a
+// unified FIDO2 login then completes with that exact credential, hinted by
+// the admin's email. The anonymous public registration ceremony refuses the
+// same existing account by design. The issued bearer must encode the admin's
+// identity and be accepted by the live /oauth2/userinfo endpoint.
 func TestFIDO2_RegisterThenUnifiedLogin(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-
-	adapter := webauthnclient.NewSoftwareAdapter()
-	regClient := newRESTCeremonyClient(t, mtlsTLSConfig(t))
-
-	credentialID, err := registerPasskey(ctx, regClient, adapter, adminSubject)
-	require.NoError(t, err, "WebAuthn registration through the manager mount must succeed")
-	require.NotEmpty(t, credentialID, "registration must mint a credential id")
 
 	c, cerr := newLoginClient(t, transportREST, mtlsTLSConfig(t))
 	require.NoError(t, cerr, "build login client")
 	defer c.Close()
 
+	adapter := webauthnclient.NewSoftwareAdapter()
+	credentialID := enrollAdminPasskey(ctx, t, c, adapter)
+	require.NotEmpty(t, credentialID, "enrolment must mint a credential id")
+
+	admin := resolveEnrolledAdmin(ctx, t, c, transportREST)
+	require.NotEmpty(t, admin.Email, "the enrolled admin must carry an email login key")
+
+	// The anonymous public ceremony never enrols a credential for an existing
+	// account: the holder signs in, or an administrator provisions it.
+	regClient := newRESTCeremonyClient(t, mtlsTLSConfig(t))
+	beginBody, err := json.Marshal(map[string]string{"email": admin.Email})
+	require.NoError(t, err, "encode registration begin")
+	refusal, _, status, err := postForSession(ctx, regClient,
+		webAuthnRegistrationPath(systemTenantID, "begin"), beginBody, nil)
+	require.NoError(t, err, "anonymous registration/begin")
+	require.Equal(t, http.StatusForbidden, status,
+		"the anonymous ceremony must refuse an existing account: %s", string(refusal))
+	require.Contains(t, string(refusal), "registration_refused")
+
 	auth := c.Security().Auth()
 	begin, berr := auth.BeginLogin(ctx, qrdbtransport.BeginLoginRequest{
 		Type:     qrdbtransport.FactorTypeFIDO2,
-		Hint:     adminSubject,
+		Hint:     admin.Email,
 		TenantID: systemTenantID,
 	})
 	require.NoError(t, berr, "tenant-scoped fido2 begin must succeed")
@@ -292,33 +313,32 @@ func TestFIDO2_UnknownCredentialFailsClosed(t *testing.T) {
 }
 
 // TestFIDO2_ReRegistrationIsIdempotent proves the write-through's idempotency
-// contract at the wire: re-running the registration ceremony for an already
-// enrolled authenticator must NOT error out with a duplicate-credential
-// failure, and the resulting passkey must still complete a login.
+// contract at the wire: repeated administrator enrolment of the same
+// authenticator must NOT fail with a duplicate-credential error, and the
+// passkey must still complete a login.
 func TestFIDO2_ReRegistrationIsIdempotent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	adapter := webauthnclient.NewSoftwareAdapter()
-	regClient := newRESTCeremonyClient(t, mtlsTLSConfig(t))
-
-	first, err := registerPasskey(ctx, regClient, adapter, adminSubject)
-	require.NoError(t, err, "first registration must succeed")
-
-	second, err := registerPasskey(ctx, regClient, adapter, adminSubject)
-	require.NoError(t, err,
-		"re-running the registration ceremony must not fail with a duplicate-credential error")
-	require.NotEmpty(t, second)
-
-	// Each ceremony mints a distinct credential; both must be usable.
 	c, cerr := newLoginClient(t, transportREST, mtlsTLSConfig(t))
 	require.NoError(t, cerr, "build login client")
 	defer c.Close()
 
+	adapter := webauthnclient.NewSoftwareAdapter()
+	first := enrollAdminPasskey(ctx, t, c, adapter)
+	second := enrollAdminPasskey(ctx, t, c, adapter)
+	require.NotEmpty(t, first)
+	require.NotEmpty(t, second)
+	require.NotEqual(t, first, second, "each enrolment mints a distinct credential")
+
+	// Each enrolment mints a distinct credential; both must be usable.
+	admin := resolveEnrolledAdmin(ctx, t, c, transportREST)
+	require.NotEmpty(t, admin.Email, "the enrolled admin must carry an email login key")
+
 	auth := c.Security().Auth()
 	begin, berr := auth.BeginLogin(ctx, qrdbtransport.BeginLoginRequest{
 		Type:     qrdbtransport.FactorTypeFIDO2,
-		Hint:     adminSubject,
+		Hint:     admin.Email,
 		TenantID: systemTenantID,
 	})
 	require.NoError(t, berr)

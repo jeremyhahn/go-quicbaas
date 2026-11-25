@@ -199,18 +199,18 @@ func TestGetUserByEmail_ResolvesThroughTheCanonicalIndex(t *testing.T) {
 	// Seeded straight into qrdb — never through this adapter, so no broker-side
 	// index could have been written for it.
 	svc.seed(&qrdbsdk.User{
-		Username: "burnin-operator@automatethethings.com",
-		Email:    "burnin-operator@automatethethings.com",
+		Username: "burnin-operator@example.com",
+		Email:    "burnin-operator@example.com",
 		Name:     "Burn-in Operator",
 		TenantID: testTenant,
 		RoleIDs:  []string{"role-operator"},
 	})
 
-	got, err := store.GetUserByEmail(ctx, testTenant, "burnin-operator@automatethethings.com")
+	got, err := store.GetUserByEmail(ctx, testTenant, "burnin-operator@example.com")
 	if err != nil {
 		t.Fatalf("a record present in qrdb must resolve by its canonical email: %v", err)
 	}
-	if got.Email != "burnin-operator@automatethethings.com" {
+	if got.Email != "burnin-operator@example.com" {
 		t.Fatalf("Email = %q", got.Email)
 	}
 	if len(got.Roles) != 1 || got.Roles[0] != "role-operator" {

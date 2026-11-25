@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net"
@@ -33,7 +34,7 @@ import (
 	ggrpc "google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
-	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
+	xkmscaprovider "github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -265,6 +266,8 @@ func (s *Server) resolveCAStoreType() (xkmssdk.StoreType, error) {
 }
 
 func (s *Server) initializeCA() error {
+	// Release the go-xkms module's resolver on every return (xkmsServiceForModule).
+	defer s.caSettled.Store(true)
 	// Build the unified secret resolver registry FIRST, before any of the
 	// CA-specific early returns below. The secrets manager is a core,
 	// always-on service: kms:// / credential:// URIs must resolve in EVERY
@@ -809,29 +812,15 @@ func (s *Server) initializeCA() error {
 // adoptCA makes ca the node's certificate authority. The CA adapter built
 // by NewServer takes it under its lock, so certificate logins already being
 // served (the unified listeners start before initializeCA) see either no CA
-// and fail closed, or this one.
+// and fail closed, or this one. It also hands the CA to the composed XKMS
+// service through bindCAToXKMSService, and wireTrustedCA hands the QuicBaaS
+// facade the same CA.
 func (s *Server) adoptCA(ca xkmssdk.TrustedCA) {
 	s.xkmsCA = ca
-	// The KeystoreService installs its CA servicer from the global XKMS
-	// service, so the adopted CA must be set there too. Issuance over the
-	// go-xkms KeystoreService is bound to the caller's tenant (see
-	// callerTenantCA). The configured SPIFFE trust domain is set on the service
-	// and the wrapper, so a tenant's certificate carries its SPIFFE SAN there too.
-	if svc, err := xkmssdk.Get(); err == nil && svc != nil {
-		if p, ok := ca.(provider.CA); ok {
-			td := ""
-			if s.config != nil {
-				td = s.config.IAM.SPIFFETrustDomain
-			}
-			svc.SetSPIFFETrustDomain(td)
-			svc.SetCA(withCallerTenant(p, ca, td))
-		} else {
-			slog.Debug("adopted CA does not implement provider.CA; the XKMS service keeps its CA")
-		}
-	}
 	if s.caAdapter != nil {
 		s.caAdapter.SetCA(ca)
 	}
+	s.bindCAToXKMSService()
 	s.wireTrustedCA()
 }
 
@@ -855,6 +844,39 @@ func (s *Server) wireTrustedCA() {
 	}); ok {
 		setter.SetTrustedCA(ca)
 	}
+}
+
+// bindCAToXKMSService hands the node's adopted CA to the composed XKMS
+// service, so the canonical KeystoreService CA RPCs the go-xkms module serves
+// on the node (SignCSR, which PIV enrollment over gRPC uses) sign with the
+// same CA as the quicbaas CA adapter. It is a no-op until both the CA is
+// adopted and the XKMS service resolves, and it is called from both places,
+// whichever comes last. The configured SPIFFE trust domain is set on the
+// service, and the CA is wrapped by withCallerTenant: issuance is bound to the
+// authenticated caller's tenant, TCG issuance is refused to all but the system
+// tenant, and a tenant's certificate carries its SPIFFE SAN under the
+// configured trust domain.
+func (s *Server) bindCAToXKMSService() {
+	if s.xkmsCA == nil {
+		return
+	}
+	pc, ok := s.xkmsCA.(xkmscaprovider.CA)
+	if !ok {
+		if s.logger != nil {
+			s.logger.Warn("adopted CA does not implement the XKMS CA provider; canonical KeystoreService CA RPCs stay unconfigured")
+		}
+		return
+	}
+	x, err := xkmssdk.Get()
+	if err != nil || x == nil {
+		return
+	}
+	trustDomain := ""
+	if s.config != nil {
+		trustDomain = s.config.IAM.SPIFFETrustDomain
+	}
+	x.SetSPIFFETrustDomain(trustDomain)
+	x.SetCA(withCallerTenant(pc, s.xkmsCA, trustDomain))
 }
 
 // issueTLSCertFromExternalCA configures TLS using the externally injected CA.
@@ -1242,6 +1264,9 @@ func (s *Server) startKMS() error {
 		Logger:              logAdapter,
 		EnabledBackends:     s.config.KMS.EnabledBackends,
 		HealthCheckInterval: 30,
+		KeyNameStoreFor: kmsKeyOwnerStores(keyStorage, func() (xkmssdk.StorageBackend, error) {
+			return s.kmsReplicatedKeyOwnerStore(keyStorage)
+		}),
 	})
 	if err != nil {
 		return api.NewOperationFailedError("create backend factory", err)
@@ -1277,6 +1302,57 @@ func (s *Server) startKMS() error {
 	}).Info("KMS manager initialized with backend registry")
 
 	return nil
+}
+
+// kmsKeyOwnerStores returns the chooser that picks each registered KMS
+// backend's XKMS ownership proofs and key-name markers store from where that
+// backend's key material lives: the node-local store for backends whose key
+// material is on this node, the replicated store for backends every node
+// shares. So the node-local CA software backend never writes to the
+// replicated store when the primary backend is shared. The replicated store
+// is opened on first use and reused after that; a failed open is returned and
+// not cached, so the next call opens again. The backend factory calls the
+// chooser under its own lock.
+func kmsKeyOwnerStores(local xkmssdk.StorageBackend, replicated func() (xkmssdk.StorageBackend, error)) func(backendName string) (xkmssdk.StorageBackend, error) {
+	var shared xkmssdk.StorageBackend
+	return func(backendName string) (xkmssdk.StorageBackend, error) {
+		switch backendName {
+		case "software", "tpm2", "quantum":
+			return local, nil
+		}
+		if shared != nil {
+			return shared, nil
+		}
+		store, err := replicated()
+		if err != nil {
+			return nil, err
+		}
+		if store == nil {
+			return nil, fmt.Errorf("replicated KMS key owner store for backend %q is nil", backendName)
+		}
+		shared = store
+		return shared, nil
+	}
+}
+
+// kmsReplicatedKeyOwnerStore opens the key owner store on the replicated
+// cluster shard. startKMS runs before the sharded client exists, so it builds
+// one from the running qrdb node; with neither it returns local.
+func (s *Server) kmsReplicatedKeyOwnerStore(local xkmssdk.StorageBackend) (xkmssdk.StorageBackend, error) {
+	client := s.qrdbClient
+	if client == nil {
+		node := s.getQRDBNode()
+		if node == nil {
+			s.logger.Warn("No qrdb node: KMS key ownership proofs stay on this node")
+			return local, nil
+		}
+		client = newNodeBackedShardedClient(node)
+	}
+	shardClient, err := client.ForShard(clusterCAShardID)
+	if err != nil {
+		return nil, err
+	}
+	return xkmssdk.NewStoragePrefixBackend(xkmssdk.NewQRDBStorageBackend(shardClient.KV()), "kms-key-owners/")
 }
 
 // startSecrets initializes the secrets manager unconditionally when the
@@ -2263,6 +2339,8 @@ func (s *Server) startService() error {
 	// dbxkms.Initialize has run, which happens independently of node
 	// construction ordering.
 	if xkmsService, getErr := xkmssdk.Get(); getErr == nil {
+		// The CA may have been adopted before the XKMS service resolved.
+		s.bindCAToXKMSService()
 		if client := s.GetQRDBNodeClient(); client != nil {
 			xkmsService.SetUserClients(client.Users(), client.Roles())
 			// UserAuthFactors returns nil when the transport predates the

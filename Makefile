@@ -1319,7 +1319,7 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 # a pass that compiled it could not run it. Drive it by hand against a served
 # model:
 #
-#   OPENVINO_BASE_URL=http://gpu-host:9000 OPENVINO_MODEL=qwen3-8b \
+#   OPENVINO_BASE_URL=http://gpu-01:9000 OPENVINO_MODEL=qwen3-8b \
 #     go test -tags openvino_live -run TestOpenVINOBackend_Live ./pkg/orchestration/
 TAG_GATE_EXEMPT := linux darwin windows unix ignore integration coverage production \
 	pkcs11 swtpm \
@@ -1349,7 +1349,7 @@ IAM_TEST_TAGS := $(TEST_TAGS)
 # TEST_CHECKS are the repository validations every unit-test pass runs first.
 # Both `test` and `coverage` (the CI test stage) list this one variable, so
 # CI cannot drop a check that `make test` runs.
-TEST_CHECKS := check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets check-ci-image-cache
+TEST_CHECKS := check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets check-ci-image-cache check-feature-map
 
 .PHONY: test
 test: $(TEST_CHECKS) ## Run unit tests (excludes integration tests)
@@ -1419,6 +1419,16 @@ check-package-targets: ## Fail if a per-package make target does not reach its n
 	@echo "$(BLUE)Checking per-package make targets resolve nested packages...$(NC)"
 	@TEST_TAGS='$(TEST_TAGS)' IAM_TEST_TAGS='$(IAM_TEST_TAGS)' MAKE='$(MAKE)' sh scripts/resolve-package_test.sh
 	@MAKE='$(MAKE)' sh scripts/package-targets-exit_test.sh
+
+.PHONY: check-feature-map
+# testing-guidelines section 4: every integration test belongs to a feature
+# of the mapping table, every feature has an integration target, and the
+# scripts that name what a diff touched read that table.
+check-feature-map: ## Fail if an integration test belongs to no feature or a feature has no integration target
+	@echo "$(BLUE)Checking the feature mapping table...$(NC)"
+	@MAKE='$(MAKE)' sh scripts/check-feature-map.sh
+	@MAKE='$(MAKE)' sh scripts/touched-features_test.sh
+	@MAKE='$(MAKE)' sh scripts/touched-packages_test.sh
 
 .PHONY: check-ci-image-cache
 # scripts/ci-image-cache_test.sh drives scripts/ci-image-cache.sh against stub
@@ -1771,6 +1781,123 @@ integration-test-orchestration-gpu: ## Run GPU-accelerated orchestration integra
 	fi; \
 	echo "$(GREEN)Model $$MODEL available$(NC)"
 	@GOFLAGS=-mod=mod $(GOTEST) -v -tags 'integration,rag,gpu' -timeout 10m ./test/integration/orchestration_gpu/...
+
+# ==============================================================================
+# Feature mapping table
+# ==============================================================================
+# The one list of features (testing-guidelines section 4). Each feature in
+# INTEGRATION_FEATURES has an integration target, integration-test-<feature>
+# (a recipe below, or the integration-test-% pattern rule for a directory
+# test/integration/<feature>/), and FEATURE_PATHS_<feature> lists the paths
+# it owns. A separately run suite outside test/integration/ is a feature too
+# (sdk-go and sdk-js, the SDK suites under sdk/*/test/integration/). So is an
+# integration-tagged test inside a package that has its own target
+# (quicbaasd, forge-gitea, merge-result, storage-file). A path is a shell
+# pattern matched against a repository-relative file name; a path ending in /
+# owns everything under it; a path with no / names a file at the repository
+# root only (so *.md is the root's markdown, not an embedded prompt under
+# pkg/).
+#
+# scripts/touched-features.sh and scripts/touched-packages.sh read this table
+# through `make print-feature-map`; scripts/check-feature-map.sh (make
+# check-feature-map, in TEST_CHECKS) fails when an integration test (a test
+# file under any test/integration/ directory, or a *_test.go anywhere whose
+# //go:build line requires the integration tag) belongs to no feature and is
+# not in INTEGRATION_UNTARGETED_PATHS, a feature has no integration target,
+# or a path matches no tracked file. A change to a path no row owns runs
+# every feature.
+INTEGRATION_FEATURES := account agent agents api attestation auth backup batch \
+	cache-redis cli cluster containerruntime dataplane dek durability embedded \
+	fleet-enrollment fleet-runtime forge-gitea iam init kms lifecycle login mcp merge-result messaging \
+	observability orchestration orchestration-gpu orchestrator parameter_store \
+	placement project quicbaasd raft rag registry routing scheduler sdk-go sdk-js seal \
+	seal-hardware secrets secrets-resolver server session-attach signalbridge \
+	standalone storage storage-file tenantbarrier timeseries transactions transport vector \
+	workerimage
+FEATURE_PATHS_account           := test/integration/cli/account_test.go
+FEATURE_PATHS_agent             := test/integration/agent/
+FEATURE_PATHS_agents            := test/integration/agents/
+FEATURE_PATHS_api               := test/integration/api/
+FEATURE_PATHS_attestation       := test/integration/cli/attestation_verifier_test.go
+FEATURE_PATHS_auth              := test/integration/auth/
+FEATURE_PATHS_backup            := test/integration/backup/
+FEATURE_PATHS_batch             := test/integration/batch/
+FEATURE_PATHS_cache-redis       := test/integration/cache/
+FEATURE_PATHS_cli               := test/integration/cli/
+FEATURE_PATHS_cluster           := test/integration/cluster/
+FEATURE_PATHS_containerruntime  := test/integration/containerruntime/ pkg/containerruntime/
+FEATURE_PATHS_dataplane         := test/integration/dataplane/
+FEATURE_PATHS_dek               := test/integration/dek/
+FEATURE_PATHS_durability        := test/integration/durability/
+FEATURE_PATHS_embedded          := test/integration/embedded/
+FEATURE_PATHS_fleet-enrollment  := test/integration/fleet_enrollment/
+FEATURE_PATHS_fleet-runtime     := test/integration/fleet_runtime/
+FEATURE_PATHS_forge-gitea       := pkg/sdlc/forge_gitea_live_test.go
+FEATURE_PATHS_iam               := test/integration/iam/
+FEATURE_PATHS_init              := test/integration/init/
+FEATURE_PATHS_kms               := test/integration/kms/
+FEATURE_PATHS_lifecycle         := test/integration/lifecycle/
+FEATURE_PATHS_login             := test/integration/login/
+FEATURE_PATHS_mcp               := test/integration/mcp/
+FEATURE_PATHS_merge-result      := pkg/sdlc/merge_result_snapshot_integration_test.go
+FEATURE_PATHS_messaging         := test/integration/messaging/
+FEATURE_PATHS_observability     := test/integration/observability/
+FEATURE_PATHS_orchestration     := test/integration/orchestration/
+FEATURE_PATHS_orchestration-gpu := test/integration/orchestration_gpu/
+FEATURE_PATHS_orchestrator      := test/integration/orchestrator/ test/integration/cli/orchestrator_inference*
+FEATURE_PATHS_parameter_store   := test/integration/parameter_store/
+FEATURE_PATHS_placement         := test/integration/placement/ pkg/scheduler/placement/
+FEATURE_PATHS_project           := test/integration/project/
+FEATURE_PATHS_quicbaasd         := cmd/quicbaasd/sdlc_loop_e2e_test.go cmd/quicbaasd/sdlc_webhook_e2e_test.go
+FEATURE_PATHS_raft              := test/integration/raft/
+FEATURE_PATHS_rag               := test/integration/rag/
+FEATURE_PATHS_registry          := test/integration/cli/registry_test.go pkg/registry/ sdk/go/client/registry/
+FEATURE_PATHS_routing           := test/integration/routing/
+FEATURE_PATHS_scheduler         := test/integration/scheduler/
+FEATURE_PATHS_sdk-go            := sdk/go/test/integration/
+FEATURE_PATHS_sdk-js            := sdk/javascript/test/integration/
+FEATURE_PATHS_seal              := test/integration/seal/
+FEATURE_PATHS_seal-hardware     := test/integration/seal/
+FEATURE_PATHS_secrets           := test/integration/secrets/
+FEATURE_PATHS_secrets-resolver  := test/integration/secrets-resolver/
+FEATURE_PATHS_server            := test/integration/server/
+FEATURE_PATHS_session-attach    := test/integration/session_attach/
+FEATURE_PATHS_signalbridge      := test/integration/signalbridge/ pkg/signalbridge/
+FEATURE_PATHS_standalone        := test/integration/standalone/
+FEATURE_PATHS_storage           := test/integration/storage/
+FEATURE_PATHS_storage-file      := pkg/storage/file/integration_test.go
+FEATURE_PATHS_tenantbarrier     := test/integration/tenantbarrier/
+FEATURE_PATHS_timeseries        := test/integration/timeseries/
+FEATURE_PATHS_transactions      := test/integration/transactions/
+FEATURE_PATHS_transport         := test/integration/transport/
+FEATURE_PATHS_vector            := test/integration/vector/
+FEATURE_PATHS_workerimage       := test/integration/workerimage/
+# Support code every feature uses: a change here runs every feature, and its
+# own tests belong to every feature (they run in `make integration-test`).
+INTEGRATION_SHARED_PATHS := test/integration/helpers/ test/integration/certfixture/ test/integration/authzfake/
+# Integration-tagged tests that no integration-test-<feature> target runs:
+# the pkg/ and cmd/ ones run only in `make test-integration-tagged`, which
+# also runs the live forge suite and so is no feature's target, and
+# test/benchmark/ holds benchmarks only. They belong to no feature, so a
+# change to one runs every feature; check-feature-map.sh accepts them.
+INTEGRATION_UNTARGETED_PATHS := cmd/quicbaas/main_integration_test.go \
+	pkg/api/grpc/client_integration_test.go \
+	pkg/backup/compression_integration_test.go \
+	pkg/backup/encryption_integration_test.go \
+	pkg/backup/manager_integration_test.go \
+	pkg/backup/storage_integration_test.go \
+	pkg/cache/manager_integration_test.go \
+	pkg/server/embedded_integration_test.go \
+	pkg/server/server_integration_test.go \
+	pkg/storage/memory/memory_integration_test.go \
+	pkg/watch/manager_integration_test.go \
+	test/benchmark/grpc_bench_test.go
+# Documentation: a change confined to these paths runs no feature.
+INTEGRATION_DOC_PATHS := docs/ changelog.d/ *.md
+
+.PHONY: print-feature-map
+print-feature-map: ## Print the feature mapping table: one "<feature> <path>..." line per feature
+	@$(foreach f,$(INTEGRATION_FEATURES),echo '$(f) $(strip $(FEATURE_PATHS_$(f)))';)
 
 # ==============================================================================
 # Dynamic Integration Test Targets
@@ -4766,7 +4893,7 @@ integration-test-fleet-enrollment: ## Run the fleet enrollment E2E (register -> 
 	@echo "$(GREEN)Fleet enrollment E2E passed$(NC)"
 
 .PHONY: integration-test-init
-integration-test-init: build-daemon ## Run canonical init/start/transport matrix (15 software-only cells + negative)
+integration-test-init: build-daemon ## Run canonical init/start/transport matrix (13 software-only cells + negative)
 	@echo "$(BLUE)Running canonical init matrix integration tests...$(NC)"
 	@INTEGRATION_TEST=1 QUICBAASD_BINARY="$(abspath $(BIN_DIR)/$(APP_NAME)d)" \
 		go test -v -tags integration -timeout 5m -count 1 ./test/integration/init/...
@@ -4942,7 +5069,8 @@ integration-test-orchestration: ## Run orchestrator E2E integration tests in Doc
 	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/orchestration/..." OLLAMA_CPU=$${OLLAMA_CPU:-1}
 
 .PHONY: integration-test-orchestrator
-integration-test-orchestrator: ## Run multi-protocol CLI orchestrator inference tests (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
+integration-test-orchestrator: ## Run the orchestrator integration suite and the multi-protocol CLI orchestrator inference tests (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
+	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/orchestrator/..."
 	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="-run TestOrchestratorInference ./test/integration/cli/..." OLLAMA_CPU=$${OLLAMA_CPU:-1}
 
 .PHONY: integration-test-agents
@@ -5543,6 +5671,7 @@ verify-integration-teardown: ## Fail if the integration stack can outlive a run 
 	@echo "$(BLUE)verify-integration-teardown: checking the stack comes down on the early-exit path...$(NC)"
 	@$(GOCMD) run ./scripts/verifyteardown
 
+# GOMODAUTH_TOKEN_FILE must be set: the decoy token file's path relative to the gate's throwaway HOME, e.g. `.gate/tokens.env`.
 .PHONY: verify-gomodauth
 verify-gomodauth: ## Fail if a Docker test build receives module credentials, or the staged secret file is not empty and 0600
 	@echo "$(BLUE)verify-gomodauth: checking module credentials are staged on any host and cleared after the build...$(NC)"

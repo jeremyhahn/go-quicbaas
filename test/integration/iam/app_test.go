@@ -34,8 +34,8 @@ func TestAppRegistration(t *testing.T) {
 	// so the app calls go as the system admin acting in the URL's tenant.
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := sharedTenantForTests(t, cluster, "app")
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	// Register application
 	t.Run("Register", func(t *testing.T) {
@@ -159,8 +159,8 @@ func TestAppSecretRotation(t *testing.T) {
 	// so the app calls go as the system admin acting in the URL's tenant.
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := sharedTenantForTests(t, cluster, "app")
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	// Register application
 	appReq := map[string]interface{}{
@@ -192,8 +192,8 @@ func TestAppClientValidation(t *testing.T) {
 	// validate-client names no tenant and goes as the system admin.
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := sharedTenantForTests(t, cluster, "app")
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	// Register valid application
 	appReq := map[string]interface{}{
@@ -274,8 +274,8 @@ func TestAppRedirectURIValidation(t *testing.T) {
 	// so the app calls go as the system admin acting in the URL's tenant.
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := sharedTenantForTests(t, cluster, "app")
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	tests := []struct {
 		name         string
@@ -349,8 +349,8 @@ func TestAppGrantTypes(t *testing.T) {
 	// so the app calls go as the system admin acting in the URL's tenant.
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := sharedTenantForTests(t, cluster, "app")
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	tests := []struct {
 		name            string
@@ -430,8 +430,8 @@ func TestAppResourcePrefix(t *testing.T) {
 	// so the app calls go as the system admin acting in the URL's tenant.
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := sharedTenantForTests(t, cluster, "app")
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	// Create app with resource prefix
 	appReq := map[string]interface{}{
@@ -455,8 +455,8 @@ func TestAppDeletion(t *testing.T) {
 	// so the app calls go as the system admin acting in the URL's tenant.
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := sharedTenantForTests(t, cluster, "app")
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	// Create application
 	appReq := map[string]interface{}{

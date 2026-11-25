@@ -290,12 +290,9 @@ type Server struct {
 	// never wired serves no certificate operation, so swapping its CA would
 	// report a success that changes nothing.
 	caWired atomic.Bool
-
-	// caSettled is set once startup's initializeCA has returned without
-	// error, so the platform CA (if any) is already adopted onto the XKMS
-	// service. The XKMS service module resolves no service until then: its
-	// keystore is memoized on the first RPC, and one memoized before the CA
-	// is adopted would serve no CA for the life of the process.
+	// caSettled is set once initializeCA has returned. Until then the go-xkms
+	// module's resolver yields no XKMS service, so the module cannot build
+	// and cache its KeystoreService before the node's CA is bound.
 	caSettled atomic.Bool
 
 	// xkmsKeyStorage is the file-backed XKMS key store created by
@@ -1074,7 +1071,6 @@ func (s *Server) initialize() error {
 	if err := initializeCAFn(s); err != nil {
 		return err
 	}
-	s.caSettled.Store(true)
 
 	// Resolve the late-bound ceremony CA now that the platform CA exists. The
 	// embedded qrdb node was constructed with this wrapper (see

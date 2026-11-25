@@ -127,7 +127,7 @@ func TestOrchestratorInferenceValidation(t *testing.T) {
 //
 // Transport coverage: all 6 transports.
 func TestOrchestratorInference_RejectsSessionBackend(t *testing.T) {
-	RunForAllTransports(t, "RejectsSessionBackend", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "RejectsSessionBackend", "infer-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := CommandDef{
 			Name: "inference rejects session backend",
 			Args: []string{
@@ -161,17 +161,17 @@ func TestOrchestratorInference_RejectsSessionBackend(t *testing.T) {
 // TestOrchestratorInferenceErrors tests the complete set of error scenarios
 // for the inference command that do not require a live server.
 func TestOrchestratorInferenceErrors(t *testing.T) {
-	RunForAllTransports(t, "MissingBackend", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "MissingBackend", "infer-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(OrchestratorInferenceMissingBackendCommand())
 	})
 
-	RunForAllTransports(t, "MissingPrompt", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "MissingPrompt", "infer-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(OrchestratorInferenceMissingPromptCommand())
 	})
 
 	// An unregistered backend must produce a non-zero exit and a meaningful
 	// error message (not a generic 500).
-	RunForAllTransports(t, "UnregisteredBackend", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "UnregisteredBackend", "infer-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := CommandDef{
 			Name: "inference unregistered backend",
 			Args: []string{
