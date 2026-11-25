@@ -93,6 +93,67 @@ func TestGRPC_UpdateUserRolesWithRolesAssignSucceeds(t *testing.T) {
 	assert.Equal(t, []string{"admin"}, stored.Roles)
 }
 
+// TestGRPC_UpdateUserAttributesWithoutRolesAssignIsDenied pins that an
+// attributes-only update by a users:update holder is refused before any write:
+// attributes are authorization data and need roles:assign.
+func TestGRPC_UpdateUserAttributesWithoutRolesAssignIsDenied(t *testing.T) {
+	srv, mem := newRealIAMGRPCStack(t)
+	id, userID := seedUpdateUserAuthz(t, srv, mem)
+	authz := &grantSetAuthorizer{token: updateUserAuthzToken, granted: map[string]bool{"users:update": true}}
+	srv.SetRoleAuthorizer(authz)
+
+	_, err := srv.UpdateUser(updateUserAuthzContext("acme"), &iampb.UpdateUserRequest{
+		TenantId: "acme", UserId: id, Name: "Ada Two", Attributes: map[string]string{"department": "finance"},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.Equal(t, []string{"roles:assign"}, authz.asked)
+
+	stored, err := mem.GetUser(context.Background(), "acme", userID)
+	require.NoError(t, err)
+	assert.NotContains(t, stored.Attributes, "department", "a denied update wrote the attributes")
+	assert.Equal(t, "Ada One", stored.Name, "a denied update wrote the profile")
+}
+
+// TestGRPC_UpdateUserAttributesWithRolesAssignSucceeds pins that a caller
+// holding roles:assign can write attributes.
+func TestGRPC_UpdateUserAttributesWithRolesAssignSucceeds(t *testing.T) {
+	srv, mem := newRealIAMGRPCStack(t)
+	id, userID := seedUpdateUserAuthz(t, srv, mem)
+	authz := &grantSetAuthorizer{token: updateUserAuthzToken, granted: map[string]bool{"users:update": true, "roles:assign": true}}
+	srv.SetRoleAuthorizer(authz)
+
+	resp, err := srv.UpdateUser(updateUserAuthzContext("acme"), &iampb.UpdateUserRequest{
+		TenantId: "acme", UserId: id, Attributes: map[string]string{"department": "finance"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"roles:assign"}, authz.asked)
+	assert.Equal(t, "finance", resp.GetAttributes()["department"])
+
+	stored, err := mem.GetUser(context.Background(), "acme", userID)
+	require.NoError(t, err)
+	assert.Equal(t, "finance", stored.Attributes["department"])
+}
+
+// TestGRPC_UpdateUserReturnsThePersistedRoles pins that replacing viewer with
+// admin answers with admin: the response is read after the role sync, not
+// before it.
+func TestGRPC_UpdateUserReturnsThePersistedRoles(t *testing.T) {
+	srv, mem := newRealIAMGRPCStack(t)
+	id, userID := seedUpdateUserAuthz(t, srv, mem)
+	srv.SetRoleAuthorizer(&grantSetAuthorizer{token: updateUserAuthzToken, granted: map[string]bool{"users:update": true, "roles:assign": true}})
+
+	resp, err := srv.UpdateUser(updateUserAuthzContext("acme"), &iampb.UpdateUserRequest{
+		TenantId: "acme", UserId: id, Roles: []string{"admin"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"admin"}, resp.GetRoles(), "UpdateUser answered with the pre-sync roles")
+
+	stored, err := mem.GetUser(context.Background(), "acme", userID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"admin"}, stored.Roles)
+}
+
 func TestGRPC_UpdateUserRolesWithoutAuthorizerIsRefused(t *testing.T) {
 	srv, mem := newRealIAMGRPCStack(t)
 	id, userID := seedUpdateUserAuthz(t, srv, mem)

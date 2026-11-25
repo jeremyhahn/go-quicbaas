@@ -170,6 +170,23 @@ func TestUserGRPCUpdateWithRolesRequiresRolesAssign(t *testing.T) {
 		assert.Equal(t, []string{"users:update"}, authz.asked)
 	})
 
+	t.Run("users:update only, attributes only", func(t *testing.T) {
+		authz, called, err := run(t, []string{"users:update"},
+			&iampb.UpdateUserRequest{Attributes: map[string]string{"department": "finance"}})
+		require.Error(t, err)
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+		assert.False(t, called, "handler must not run: attribute writes need roles:assign")
+		assert.Equal(t, []string{"users:update", "roles:assign"}, authz.asked)
+	})
+
+	t.Run("users:update and roles:assign, attributes only", func(t *testing.T) {
+		authz, called, err := run(t, []string{"users:update", "roles:assign"},
+			&iampb.UpdateUserRequest{Attributes: map[string]string{"department": "finance"}})
+		require.NoError(t, err)
+		assert.True(t, called)
+		assert.Equal(t, []string{"users:update", "roles:assign"}, authz.asked)
+	})
+
 	t.Run("users:update and roles:assign, roles named", func(t *testing.T) {
 		authz, called, err := run(t, []string{"users:update", "roles:assign"},
 			&iampb.UpdateUserRequest{Roles: []string{"admin"}})
