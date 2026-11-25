@@ -37,7 +37,7 @@ import (
 
 const (
 	burninTenant   = "burnin"
-	burninOperator = "burnin-operator@automatethethings.com"
+	burninOperator = "burnin-operator@example.com"
 	operatorRoleID = "a55d3b7d-6148-8c4e-b352-509ff32e00ab"
 	adminRoleID    = "cf874202-130a-8c77-9645-e8170b65568e"
 )
@@ -843,7 +843,7 @@ func TestCeremonyLoginResolvesASubjectKeyedByEmail(t *testing.T) {
 	ctx := context.Background()
 
 	user := createRESTUser(t, storage, identityStore, burninTenant,
-		"burnin_operator", "burnin-operator@automatethethings.com", []string{adminRoleID, operatorRoleID})
+		"burnin_operator", "burnin-operator@example.com", []string{adminRoleID, operatorRoleID})
 
 	// What the ceremony hands the bridge: the EMAIL it keyed the credential by.
 	token, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
@@ -879,7 +879,7 @@ func TestCeremonyLoginStillResolvesANonEmailSubject(t *testing.T) {
 	ctx := context.Background()
 
 	user := createRESTUser(t, storage, identityStore, burninTenant,
-		"burnin_operator", "burnin-operator@automatethethings.com", []string{operatorRoleID})
+		"burnin_operator", "burnin-operator@example.com", []string{operatorRoleID})
 
 	if _, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
 		Subject:  user.Name,

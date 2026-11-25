@@ -230,7 +230,7 @@ func TestPEPServiceAdapter_CheckBatch_AllDenied(t *testing.T) {
 	}
 	srv := newTestPEPServer(t, svc)
 
-	resp, err := srv.CheckBatch(context.Background(), &iampb.CheckBatchRequest{
+	resp, err := srv.CheckBatch(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckBatchRequest{
 		Subject:   &iampb.Subject{Id: "user1"},
 		Action:    "delete",
 		Resources: []string{"doc:1", "doc:2"},

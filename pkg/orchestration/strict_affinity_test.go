@@ -50,7 +50,7 @@ func TestSpawnSession_StrictAffinityMissRefusesTheLocalBackend(t *testing.T) {
 	ctx := ContextWithTenant(context.Background(), "tenant-1")
 
 	_, err := svc.SpawnSession(ctx, &SpawnSessionRequest{
-		Backend: "opencode", HostAffinity: "gpu-host", HostAffinityStrict: true,
+		Backend: "opencode", HostAffinity: "gpu-01", HostAffinityStrict: true,
 	})
 	var refusal *NoMatchingFleetNodeError
 	if !errors.As(err, &refusal) || refusal.Constraint != "host_affinity" || !errors.Is(err, ErrNoMatchingFleetNode) {
@@ -65,12 +65,12 @@ func TestSpawnSession_StrictAffinityMissRefusesTheLocalBackend(t *testing.T) {
 // resolver recorded why nothing matched, that more specific refusal is the
 // one returned.
 func TestSpawnSession_StrictAffinityMissKeepsTheResolversAccount(t *testing.T) {
-	recorded := &NoMatchingFleetNodeError{Constraint: "host_affinity", Detail: "gpu-host is offline"}
+	recorded := &NoMatchingFleetNodeError{Constraint: "host_affinity", Detail: "gpu-01 is offline"}
 	svc, localSpawns := newStrictAffinityService(t, recorded)
 	ctx := WithResolveErrorHolder(ContextWithTenant(context.Background(), "tenant-1"), NewResolveErrorHolder())
 
 	_, err := svc.SpawnSession(ctx, &SpawnSessionRequest{
-		Backend: "opencode", HostAffinity: "gpu-host", HostAffinityStrict: true,
+		Backend: "opencode", HostAffinity: "gpu-01", HostAffinityStrict: true,
 	})
 	if !errors.Is(err, recorded) {
 		t.Fatalf("SpawnSession() error = %v, want the resolver's recorded refusal", err)
@@ -86,7 +86,7 @@ func TestSpawnSession_SoftAffinityStillFallsThrough(t *testing.T) {
 	svc, localSpawns := newStrictAffinityService(t, nil)
 	ctx := ContextWithTenant(context.Background(), "tenant-1")
 
-	if _, err := svc.SpawnSession(ctx, &SpawnSessionRequest{Backend: "opencode", HostAffinity: "gpu-host"}); err != nil {
+	if _, err := svc.SpawnSession(ctx, &SpawnSessionRequest{Backend: "opencode", HostAffinity: "gpu-01"}); err != nil {
 		t.Fatalf("SpawnSession() error = %v", err)
 	}
 	if localSpawns.Load() != 1 {

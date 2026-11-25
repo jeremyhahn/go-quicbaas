@@ -136,10 +136,11 @@ Recovery is layered so that each failure heals at the lowest layer that can:
    sees a 404, and it avoids a re-enrollment herd that would invalidate
    in-flight tokens.
 2. **Client-side re-enrollment.** When the server cannot recover and answers
-   404, or answers 403 (a missing grant), the daemon clears its cached
-   credentials, enrolls again, and retries the heartbeat once. After three
-   consecutive re-enrollment failures it exits with `ReregisterFailedError`
-   so the supervisor restarts it.
+   404, answers 403 (a missing grant), or answers 401 again after a token
+   refresh (a certificate bound to no account), the daemon clears its
+   cached credentials, enrolls again, and retries the heartbeat once. After
+   three consecutive re-enrollment failures it exits with
+   `ReregisterFailedError` so the supervisor restarts it.
 3. **Enrollment retry.** A daemon whose control plane is not answering waits,
    with capped exponential backoff, rather than exiting.
 

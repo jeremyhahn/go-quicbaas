@@ -610,3 +610,126 @@ func TestHTTPHeartbeatSender_BodyOmitsEmptyBindAddrValue(t *testing.T) {
 		t.Errorf("body should encode an empty bind_addr; got %s", got)
 	}
 }
+
+// TestHTTPHeartbeatSender_Repeated401ReEnrolls checks that a 401 surviving the token refresh drives one re-enrollment and a successful retry.
+func TestHTTPHeartbeatSender_Repeated401ReEnrolls(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) <= 2 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	rereg := &staticReregisterer{errs: []error{nil}}
+	tokens := &staticToken{tokens: []string{"tok-1", "tok-2", "tok-3"}}
+	sender, err := NewHTTPHeartbeatSender(HTTPHeartbeatConfig{
+		ServerAddr:   srv.URL,
+		TenantID:     "tenant-a",
+		HTTPClient:   tlsClientFromServer(srv),
+		Tokens:       tokens,
+		Logger:       &testLogger{t: t},
+		Reregisterer: rereg,
+	})
+	if err != nil {
+		t.Fatalf("NewHTTPHeartbeatSender: %v", err)
+	}
+
+	if err := sender.SendHeartbeat(context.Background(), captureIdentity("agent-1", "tenant-a"), HeartbeatStatus{}); err != nil {
+		t.Fatalf("SendHeartbeat after re-enrollment should succeed: %v", err)
+	}
+	if calls.Load() != 3 {
+		t.Errorf("expected 3 server hits (401, 401, 200), got %d", calls.Load())
+	}
+	if rereg.calls.Load() != 1 {
+		t.Errorf("expected exactly 1 re-register, got %d", rereg.calls.Load())
+	}
+	if got := atomic.LoadInt32(&tokens.invalidated); got != 2 {
+		t.Errorf("expected 2 token invalidations, got %d", got)
+	}
+}
+
+// TestHTTPHeartbeatSender_401ClearedByRefreshDoesNotReEnroll checks that a 401 the token refresh clears never re-enrolls.
+func TestHTTPHeartbeatSender_401ClearedByRefreshDoesNotReEnroll(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	rereg := &staticReregisterer{errs: []error{nil}}
+	sender, err := NewHTTPHeartbeatSender(HTTPHeartbeatConfig{
+		ServerAddr:   srv.URL,
+		TenantID:     "tenant-a",
+		HTTPClient:   tlsClientFromServer(srv),
+		Tokens:       &staticToken{tokens: []string{"tok-1", "tok-2"}},
+		Logger:       &testLogger{t: t},
+		Reregisterer: rereg,
+	})
+	if err != nil {
+		t.Fatalf("NewHTTPHeartbeatSender: %v", err)
+	}
+
+	if err := sender.SendHeartbeat(context.Background(), captureIdentity("agent-1", "tenant-a"), HeartbeatStatus{}); err != nil {
+		t.Fatalf("SendHeartbeat after token refresh should succeed: %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("expected 2 server hits (401, 200), got %d", calls.Load())
+	}
+	if rereg.calls.Load() != 0 {
+		t.Errorf("expected no re-register, got %d", rereg.calls.Load())
+	}
+}
+
+// TestHTTPHeartbeatSender_Persistent401AfterReEnrollSurfaces checks that a 401 persisting after re-enrollment surfaces as a 401 HeartbeatSendError.
+func TestHTTPHeartbeatSender_Persistent401AfterReEnrollSurfaces(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	rereg := &staticReregisterer{errs: []error{nil}}
+	sender, err := NewHTTPHeartbeatSender(HTTPHeartbeatConfig{
+		ServerAddr:   srv.URL,
+		TenantID:     "tenant-a",
+		HTTPClient:   tlsClientFromServer(srv),
+		Tokens:       &staticToken{tokens: []string{"tok-1", "tok-2", "tok-3"}},
+		Logger:       &testLogger{t: t},
+		Reregisterer: rereg,
+	})
+	if err != nil {
+		t.Fatalf("NewHTTPHeartbeatSender: %v", err)
+	}
+
+	err = sender.SendHeartbeat(context.Background(), captureIdentity("agent-1", "tenant-a"), HeartbeatStatus{})
+	if err == nil {
+		t.Fatal("expected an error for a 401 that persists after re-enrollment")
+	}
+	var sendErr *HeartbeatSendError
+	if !errors.As(err, &sendErr) {
+		t.Fatalf("expected *HeartbeatSendError, got %T: %v", err, err)
+	}
+	if sendErr.Status != http.StatusUnauthorized {
+		t.Errorf("expected status 401, got %d", sendErr.Status)
+	}
+	if calls.Load() != 3 {
+		t.Errorf("expected 3 server hits, got %d", calls.Load())
+	}
+	if rereg.calls.Load() != 1 {
+		t.Errorf("expected exactly 1 re-register, got %d", rereg.calls.Load())
+	}
+}
