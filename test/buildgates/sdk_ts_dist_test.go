@@ -88,7 +88,7 @@ func recipeCommands(dryRun string) []string {
 // npm first on PATH, and reports its output and whether it passed.
 func runSDKDistGate(t *testing.T, dir string) (string, bool) {
 	t.Helper()
-	recipe := repoMakeDryRun(t, "check-sdk-ts-dist")
+	recipe := repoMakeDryRunStdout(t, "check-sdk-ts-dist")
 	bin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(bin, "npm"), []byte(fakeNPM), 0o755); err != nil { // #nosec G306 -- the fake npm must be executable
 		t.Fatal(err)
@@ -111,6 +111,23 @@ func runSDKDistGate(t *testing.T, dir string) (string, bool) {
 		}
 	}
 	return out.String(), true
+}
+
+// repoMakeDryRunStdout runs `make -n` on target in the repository root, as
+// repoMakeDryRun does, but returns make's stdout only. make's stderr (for
+// example a $(shell ...) warning while the Makefile is parsed) is not part of
+// the recipe, so it must not be run as a recipe command.
+func repoMakeDryRunStdout(t *testing.T, target string) string {
+	t.Helper()
+	cmd := exec.Command("make", "-n", "--no-print-directory", "-C", repoRoot, target)
+	cmd.Env = append(os.Environ(), "GOPROXY=off")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("make -n %s: %v\nstdout:\n%s\nstderr:\n%s", target, err, out, stderr.String())
+	}
+	return string(out)
 }
 
 func TestSDKDistGatePassesWhenDistMatchesTheBuild(t *testing.T) {
