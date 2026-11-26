@@ -84,7 +84,13 @@ var (
 	globalBackupMetricsOnce sync.Once
 )
 
-// NewBackupManager creates a new backup manager.
+// wholeStoreShardID is the shard id a backup uses when the manager has no
+// raft node: the store is the embedded node's keyspace, written as a single
+// shard.
+const wholeStoreShardID uint64 = 0
+
+// NewBackupManager creates a new backup manager. A nil raft is accepted:
+// backups then snapshot the whole store as one shard.
 func NewBackupManager(
 	config *Config,
 	storage interfaces.Storage,
@@ -98,12 +104,10 @@ func NewBackupManager(
 		return nil, &InvalidConfigError{Field: "storage", Message: "storage is required"}
 	}
 	// raft may be nil when the caller has a real qrdb engine node
-	// providing consensus (s.qrdbNode path). Backup snapshots degrade
-	// gracefully: GetNodeHostInfo returns an empty info so no shard
-	// snapshots are captured; GetShardRaftState returns (0, 0) via
-	// the nil-safe guard in createShardSnapshot. A nil raft is therefore
-	// accepted so the backup manager can still manage metadata, scheduling,
-	// and restore without requiring a standalone no-op raft node.
+	// providing consensus (s.qrdbNode path). Its shard topology is not
+	// visible through this interface, so CreateBackup snapshots the whole
+	// store as one shard (wholeStoreShardID) with zero Raft index and
+	// term, and RestoreBackup writes that shard back through storage.
 	if log == nil {
 		return nil, &InvalidConfigError{Field: "logger", Message: "logger is required"}
 	}
@@ -279,27 +283,34 @@ func (m *BackupManager) CreateBackup(ctx context.Context, backupType BackupType)
 		},
 	}
 
-	// Create Raft snapshots for each shard. When raft is nil the engine
-	// is backed by a real qrdb node whose shard topology is not
-	// accessible via this interface; treat it as zero shards so the
-	// backup still persists KV metadata and scheduling state.
-	var nodeInfo *interfaces.NodeHostInfo
-	if m.raft != nil {
-		nodeInfo = m.raft.GetNodeHostInfo(interfaces.NodeHostInfoOption{})
-	}
-	if nodeInfo == nil {
-		nodeInfo = &interfaces.NodeHostInfo{}
-	}
-
-	backup.Metadata.NumShards = len(nodeInfo.ShardInfoList)
-
-	for _, shardInfo := range nodeInfo.ShardInfoList {
-		snapshot, err := m.createShardSnapshot(ctx, shardInfo.ShardID)
+	// With no raft node the store is the embedded node's keyspace: take
+	// one whole-store snapshot as shard wholeStoreShardID. With a raft
+	// node, snapshot each shard it reports; a nil or empty NodeHostInfo
+	// gives zero shards.
+	if m.raft == nil {
+		backup.Metadata.NumShards = 1
+		snapshot, err := m.createShardSnapshot(ctx, wholeStoreShardID)
 		if err != nil {
 			m.metrics.backupErrors.Inc()
-			return nil, api.NewShardOperationError("backup.CreateBackup", dberrors.ErrSnapshot, shardInfo.ShardID, "create snapshot", err)
+			return nil, api.NewShardOperationError("backup.CreateBackup", dberrors.ErrSnapshot, wholeStoreShardID, "create snapshot", err)
 		}
-		backup.Shards[shardInfo.ShardID] = snapshot
+		backup.Shards[wholeStoreShardID] = snapshot
+	} else {
+		nodeInfo := m.raft.GetNodeHostInfo(interfaces.NodeHostInfoOption{})
+		if nodeInfo == nil {
+			nodeInfo = &interfaces.NodeHostInfo{}
+		}
+
+		backup.Metadata.NumShards = len(nodeInfo.ShardInfoList)
+
+		for _, shardInfo := range nodeInfo.ShardInfoList {
+			snapshot, err := m.createShardSnapshot(ctx, shardInfo.ShardID)
+			if err != nil {
+				m.metrics.backupErrors.Inc()
+				return nil, api.NewShardOperationError("backup.CreateBackup", dberrors.ErrSnapshot, shardInfo.ShardID, "create snapshot", err)
+			}
+			backup.Shards[shardInfo.ShardID] = snapshot
+		}
 	}
 
 	// Serialize backup to buffer
