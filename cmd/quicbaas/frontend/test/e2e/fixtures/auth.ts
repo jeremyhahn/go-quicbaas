@@ -5,13 +5,12 @@
  *
  * A freshly-booted hardened daemon enforces default-deny authorization on every
  * /api/v1/orchestrator/* and /api/v1/tenants/* route, and first-boot creates the
- * `admin` user with NO credential bound — it prints a one-time WebAuthn invite
- * URL to its log instead. There is no static bootstrap token and no dev bypass,
- * so the ONLY production-correct way for the harness to obtain an admin bearer
- * token is to walk that invite: activate a passkey via a CDP virtual
- * authenticator, then log in.
+ * `admin` user with only a client certificate, written under the daemon's data
+ * dir. There is no static bootstrap token and no dev bypass, so the harness
+ * earns an admin bearer token the production way: present that certificate
+ * over mTLS to the PIV login route, as the integration suite does.
  *
- * global-setup.ts performs that walk once and persists the result here:
+ * global-setup.ts performs that once and persists the result here:
  *   • ADMIN_STORAGE_STATE — Playwright storageState (localStorage tokens) so
  *     every spec starts already signed in as admin in the browser.
  *   • ADMIN_TOKEN_FILE — the raw admin access/refresh tokens so the REST seeding
@@ -50,32 +49,50 @@ export interface AdminTokens {
 }
 
 /**
- * Read the admin invite token. Prefers the QUICBAAS_ADMIN_INVITE_TOKEN env var
- * (the Makefile greps it from the daemon log and exports it); otherwise parses
- * the daemon log file at QUICBAAS_DAEMON_LOG. Throws when neither yields a token
- * so global-setup fails loudly rather than producing an unauthenticated suite.
+ * Locate the scratch daemon's data dir. Prefers QUICBAAS_E2E_DATA_DIR (set by
+ * test/e2e/run-e2e.sh); otherwise derives it from NODE_EXTRA_CA_CERTS, which
+ * every first-boot runner points at `<data dir>/certs/ca-chain.crt`.
  */
-export function readAdminInviteToken(): string {
-  const fromEnv = process.env['QUICBAAS_ADMIN_INVITE_TOKEN'];
-  if (fromEnv && /^[0-9a-f]{64}$/.test(fromEnv)) return fromEnv;
+function firstBootDataDir(): string {
+  const fromEnv = process.env['QUICBAAS_E2E_DATA_DIR'] ?? '';
+  if (fromEnv !== '') return fromEnv;
+  const caChain = process.env['NODE_EXTRA_CA_CERTS'] ?? '';
+  if (caChain !== '') return dirname(dirname(caChain));
+  throw new Error(
+    'readFirstBootAdminConfig: neither QUICBAAS_E2E_DATA_DIR nor NODE_EXTRA_CA_CERTS is set, ' +
+      "so the daemon's data dir (and the first-boot admin certificate in it) cannot be found.",
+  );
+}
 
-  const logPath = process.env['QUICBAAS_DAEMON_LOG'] ?? '/tmp/quicbaasd-e2e.log';
-  if (!existsSync(logPath)) {
-    throw new Error(
-      `readAdminInviteToken: no QUICBAAS_ADMIN_INVITE_TOKEN and daemon log not found at ${logPath}. ` +
-        `Set QUICBAAS_ADMIN_INVITE_TOKEN or QUICBAAS_DAEMON_LOG.`,
-    );
+/**
+ * Build the mTLS configuration for the first-boot system administrator.
+ *
+ * First boot issues the `admin` user a client certificate, binds its SPKI
+ * thumbprint as an mtls login factor, and writes the bundle to
+ * `<data dir>/admin/admin.{crt,key}` (pkg/server writeAdminBundle). Global setup
+ * presents that certificate to POST /api/v1/iam/login/piv — the same login the
+ * integration suite performs for the system admin. Throws when a file is
+ * missing so global-setup fails loudly rather than producing an
+ * unauthenticated suite.
+ */
+export function readFirstBootAdminConfig(): LiveTenantConfig {
+  const dataDir = firstBootDataDir();
+  const cfg: LiveTenantConfig = {
+    tenant: 'system',
+    email: ADMIN_EMAIL,
+    adminCert: resolve(dataDir, 'admin', 'admin.crt'),
+    adminKey: resolve(dataDir, 'admin', 'admin.key'),
+    ca: resolve(dataDir, 'certs', 'ca-chain.crt'),
+  };
+  for (const path of [cfg.adminCert, cfg.adminKey, cfg.ca]) {
+    if (!existsSync(path)) {
+      throw new Error(
+        `readFirstBootAdminConfig: ${path} not found. ` +
+          `The daemon may not be a fresh first-boot instance on data dir ${dataDir}.`,
+      );
+    }
   }
-  const log = readFileSync(logPath, 'utf8');
-  // The first-boot banner prints exactly one line: …/ui/#/invite/<64-hex>.
-  const m = log.match(/#\/invite\/([0-9a-f]{64})/);
-  if (!m) {
-    throw new Error(
-      `readAdminInviteToken: no '#/invite/<token>' line found in ${logPath}. ` +
-        `The daemon may not be a fresh first-boot instance.`,
-    );
-  }
-  return m[1];
+  return cfg;
 }
 
 /** Read the persisted admin tokens written by global-setup. */
@@ -97,8 +114,7 @@ export function readAdminTokens(): AdminTokens {
  * ALREADY-RUNNING node, instead of walking a fresh daemon's first boot.
  *
  * The first-boot path above can only ever produce the system admin, and only
- * once: the invite it consumes is single-use and gone from a long-lived node's
- * log. A burn-in node, though, is exactly the thing worth driving a browser
+ * on a scratch data dir whose admin bundle the runner can read. A burn-in node, though, is exactly the thing worth driving a browser
  * against, and the interesting principal on it is a tenant user. This config
  * names that user and the admin client certificate used to enrol a passkey for
  * them (see live_tenant.ts) — an operation only an administrator may perform.

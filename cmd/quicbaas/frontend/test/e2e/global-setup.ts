@@ -3,21 +3,21 @@
  *
  * Runs once before the live-daemon Playwright projects and leaves the whole run
  * signed in as one principal. There is no static bootstrap token and no dev
- * bypass, so the session is always earned by a real passkey ceremony; the two
- * supported ways of getting one differ only in how the passkey comes to exist.
+ * bypass, so the session is always earned by a real login ceremony:
  *
  *   FIRST-BOOT ADMIN (default, `make test-e2e`) — a freshly built daemon on a
- *   scratch data dir prints a one-time invite URL. Walk it: activate a passkey
- *   for `admin` through the invite UI, then sign in.
+ *   scratch data dir issues `admin` a client certificate and nothing else.
+ *   Present it over mTLS to POST /api/v1/iam/login/piv, as the integration
+ *   suite does, and hand the returned tokens to the SPA's localStorage.
  *
- *   LIVE TENANT USER (`make test-e2e-live`) — a long-lived node, an account that
- *   already exists, and no invite left to walk. Enrol a passkey for that user
- *   with an admin client certificate (fixtures/live_tenant.ts), then sign in as
- *   them. Selected by QUICBAAS_E2E_TENANT + QUICBAAS_E2E_USER_EMAIL.
+ *   LIVE TENANT USER (`make test-e2e-live`) — a long-lived node and an account
+ *   that already exists. Enrol a passkey for that user with an admin client
+ *   certificate (fixtures/live_tenant.ts) on a CDP virtual authenticator, then
+ *   sign in as them through the unified ceremony (POST
+ *   /api/v1/auth/login/{begin,finish}, type=fido2). Selected by
+ *   QUICBAAS_E2E_TENANT + QUICBAAS_E2E_USER_EMAIL.
  *
- * Both paths attach the same CDP virtual authenticator, finish through the same
- * unified sign-in ceremony (POST /api/v1/auth/login/{begin,finish}, type=fido2),
- * and persist the same two artifacts:
+ * Both paths persist the same two artifacts:
  *   • the browser storageState, so every spec starts signed in;
  *   • the raw tokens, so the REST seeding helpers in fixtures/api.ts can
  *     authenticate their out-of-band calls.
@@ -35,14 +35,14 @@ import {
   ADMIN_EMAIL,
   TOKEN_KEY,
   REFRESH_TOKEN_KEY,
-  readAdminInviteToken,
+  readFirstBootAdminConfig,
   readLiveTenantConfig,
   type AdminTokens,
   type LiveTenantConfig,
 } from './fixtures/auth.ts';
 import { chromiumLaunchOptions, trustCA } from './fixtures/browser.ts';
 import { serverBase } from './fixtures/_http.ts';
-import { ensurePasskey } from './fixtures/live_tenant.ts';
+import { ensurePasskey, mtlsRequest } from './fixtures/live_tenant.ts';
 
 /** The shape context.storageState() returns — Playwright does not export it. */
 type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>;
@@ -83,27 +83,35 @@ async function attachVirtualAuthenticator(cdp: CDPSession): Promise<string> {
 }
 
 /**
- * Walk the first-boot invite: activate a passkey for the admin account through
- * the InviteActivateView UI (POST .../activate/fido2/begin+finish behind it).
+ * Log the first-boot admin in with its client certificate (POST
+ * /api/v1/iam/login/piv over mTLS) and leave the SPA holding the tokens.
  */
-async function activateFirstBootAdmin(page: Page, baseURL: string): Promise<Principal> {
-  const inviteToken = readAdminInviteToken();
+async function loginFirstBootAdmin(page: Page, baseURL: string): Promise<Principal> {
+  const cfg = readFirstBootAdminConfig();
 
-  await page.goto(baseURL, { waitUntil: 'networkidle' });
-  await page.evaluate((tok: string) => {
-    window.location.hash = `#/invite/${tok}`;
-  }, inviteToken);
-  await page.waitForLoadState('networkidle');
-
-  const activateFinish = page.waitForResponse(
-    (r) => r.url().includes('/activate/fido2/finish') && r.request().method() === 'POST',
-  );
-  await page.getByRole('button', { name: /Register Security Key/i }).click();
-  const actResp = await activateFinish;
-  if (actResp.status() < 200 || actResp.status() >= 300) {
-    throw new Error(`admin passkey activation failed: HTTP ${actResp.status()}`);
+  // Present the first-boot admin certificate to the PIV login route, exactly as
+  // the integration suite signs the system admin in: no body, the client
+  // certificate is the credential.
+  const url = `${serverBase()}/api/v1/iam/login/piv`;
+  const resp = await mtlsRequest(url, 'POST', cfg, { Accept: 'application/json' });
+  if (resp.status < 200 || resp.status >= 300) {
+    throw new Error(`admin mTLS login at ${url} failed: HTTP ${resp.status}: ${resp.body}`);
   }
-  await page.getByText(/sign in to your account/i).waitFor({ timeout: 15_000 });
+  const body = JSON.parse(resp.body) as { access_token?: string; refresh_token?: string };
+  if (!body.access_token) {
+    throw new Error(`admin mTLS login at ${url} returned no access_token`);
+  }
+
+  // Hand the tokens to the SPA the way its own login does: localStorage.
+  await page.goto(baseURL, { waitUntil: 'networkidle' });
+  await page.evaluate(
+    ([tk, rk, access, refresh]) => {
+      window.localStorage.setItem(tk, access);
+      if (refresh !== '') window.localStorage.setItem(rk, refresh);
+    },
+    [TOKEN_KEY, REFRESH_TOKEN_KEY, body.access_token, body.refresh_token ?? ''],
+  );
+  await page.reload({ waitUntil: 'networkidle' });
 
   return { email: ADMIN_EMAIL };
 }
@@ -213,17 +221,19 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
   });
 
   try {
-    const cdp = await context.newCDPSession(page);
-    const authenticatorId = await attachVirtualAuthenticator(cdp);
-
-    // --- Step 1: make sure the principal has a passkey this browser can use. ---
-    const principal =
-      live === null
-        ? await activateFirstBootAdmin(page, baseURL)
-        : await enrolLiveTenantUser(page, cdp, authenticatorId, live, baseURL);
-
-    // --- Step 2: sign in with it. ---
-    await signInWithPasskey(page, principal);
+    // --- Steps 1-2: sign the principal in. ---
+    // The first-boot admin holds only a client certificate, so it logs in over
+    // mTLS. A live tenant user gets a passkey this browser can use, then signs
+    // in with it.
+    let principal: Principal;
+    if (live === null) {
+      principal = await loginFirstBootAdmin(page, baseURL);
+    } else {
+      const cdp = await context.newCDPSession(page);
+      const authenticatorId = await attachVirtualAuthenticator(cdp);
+      principal = await enrolLiveTenantUser(page, cdp, authenticatorId, live, baseURL);
+      await signInWithPasskey(page, principal);
+    }
 
     // --- Step 3: harvest the tokens the SPA persisted to localStorage. ---
     const tokens = await page.evaluate(

@@ -55,7 +55,7 @@ interface VirtualCredential {
 }
 
 /** Minimal view of an mTLS response: everything this module reads. */
-interface MTLSResponse {
+export interface MTLSResponse {
   status: number;
   sessionID: string;
   body: string;
@@ -84,7 +84,7 @@ function base64ToBase64URL(s: string): string {
  * Rejects on transport failure — including a certificate that does not verify,
  * which is a real finding here and not something to route around.
  */
-function mtlsRequest(
+export function mtlsRequest(
   url: string,
   method: string,
   cfg: LiveTenantConfig,
