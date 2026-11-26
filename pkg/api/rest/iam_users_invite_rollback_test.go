@@ -95,6 +95,7 @@ func TestCreateUser_InviteFailureRollsBackTheUser(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/",
 		strings.NewReader(`{"email":"bob@acme.com","username":"bob","name":"Bob","roles":["role-member"]}`))
 	req = req.WithContext(callerRouteContext(req.Context(), rctx))
+	req = withRoleAssignCallerIn(server, req, "acme")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -159,6 +160,7 @@ func TestCreateUser_AttachFailureRollsBackTheUser(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/",
 		strings.NewReader(`{"email":"carol@acme.com","username":"carol","name":"Carol","roles":["role-member"]}`))
 	req = req.WithContext(callerRouteContext(req.Context(), rctx))
+	req = withRoleAssignCallerIn(server, req, "acme")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -275,6 +277,7 @@ func TestCreateUser_RollbackSurvivesRequestCancellation(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/",
 		strings.NewReader(`{"email":"dave@acme.com","username":"dave","name":"Dave","roles":["role-member"]}`))
 	req = req.WithContext(callerRouteContext(reqCtx, rctx))
+	req = withRoleAssignCallerIn(server, req, "acme")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
