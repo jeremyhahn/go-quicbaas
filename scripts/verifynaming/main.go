@@ -66,7 +66,7 @@ const allowedInflection = "fab" + "ricat"
 var sealIdentifiers = regexp.MustCompile(`SealClient\b|SealManager\b|SealService\b|SealView\b|SealMode\b`)
 
 // sealScanRoots are the trees rule 2 reads.
-var sealScanRoots = []string{"pkg", "cmd", "sdk"}
+var sealScanRoots = []string{"pkg", "cmd", "internal", "sdk"}
 
 // sealScanExtensions are the file kinds that can carry an identifier.
 var sealScanExtensions = map[string]bool{
