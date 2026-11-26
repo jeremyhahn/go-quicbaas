@@ -33,7 +33,7 @@ import (
 // invite-URL branch, the invite-expiry cap (> 168h is clamped), and the default
 // auth-methods branch (omitted -> ["webauthn"]).
 func TestCreateUser_ForwardedHostAndCappedExpiry(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -45,6 +45,7 @@ func TestCreateUser_ForwardedHostAndCappedExpiry(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-Host", "public.example.com")
+	req = withRoleAssignCaller(server, req)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
 	w := httptest.NewRecorder()
 
