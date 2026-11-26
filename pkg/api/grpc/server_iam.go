@@ -25,6 +25,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -158,12 +159,35 @@ func (s *IAMServer) SetRoleAuthorizer(authorizer GRPCValidatorAuthorizer) {
 // the legacy interceptor does for the same request (grpcRequestPermissions),
 // so a caller holding only users:update cannot grant itself roles on a
 // listener whose interceptor checks only the method annotation.
-func (s *IAMServer) requireRoleAssign(ctx context.Context) error {
+//
+// The grant is bound to the call: it is decided in tenantID, and the
+// principal the bearer token resolves to must be the authenticated caller
+// already on ctx (the one requireCallerTenant checked) in that same tenant.
+// Otherwise a caller authenticated as one principal (for example by its
+// certificate) could borrow another principal's or another tenant's
+// roles:assign by attaching that principal's token. A call with no bearer
+// token, or no authenticated caller on ctx, is refused.
+func (s *IAMServer) requireRoleAssign(ctx context.Context, tenantID string) error {
 	if s.roleAuthorizer == nil {
 		return status.Error(codes.PermissionDenied, "role assignment requires roles:assign and no authorizer is configured")
 	}
-	if _, err := s.roleAuthorizer.Authorize(ctx, bearerFromContext(ctx), "roles:assign", "", "", ""); err != nil {
+	token := bearerFromContext(ctx)
+	if token == "" {
+		return status.Error(codes.Unauthenticated, "role assignment requires a bearer token carrying roles:assign")
+	}
+	granted, err := s.roleAuthorizer.Authorize(ctx, token, "roles:assign", "", "", "")
+	if err != nil {
 		return validatorGRPCStatus(err)
+	}
+	caller, ok := auth.SubjectFromContext(ctx)
+	if !ok || !caller.Authenticated || caller.ID == "" || granted == nil {
+		return status.Error(codes.PermissionDenied, "role assignment requires the authenticated caller to hold roles:assign")
+	}
+	if granted.Subject != caller.ID || (granted.UserID != 0 && caller.UserID != 0 && granted.UserID != caller.UserID) {
+		return status.Error(codes.PermissionDenied, "role assignment requires the authenticated caller to hold roles:assign: the bearer token names another principal")
+	}
+	if tenantID == "" || granted.TenantID != tenantID || (caller.TenantID != "" && caller.TenantID != tenantID) {
+		return status.Error(codes.PermissionDenied, "role assignment requires roles:assign in the target tenant")
 	}
 	return nil
 }
@@ -470,7 +494,7 @@ func (s *IAMServer) UpdateUser(ctx context.Context, req *iampb.UpdateUserRequest
 	// Attributes are authorization data: writing them needs roles:assign
 	// exactly as naming roles does, checked before any write.
 	if len(req.GetRoles()) > 0 || len(req.GetAttributes()) > 0 {
-		if err := s.requireRoleAssign(ctx); err != nil {
+		if err := s.requireRoleAssign(ctx, req.TenantId); err != nil {
 			return nil, err
 		}
 	}

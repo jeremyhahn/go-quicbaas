@@ -48,7 +48,7 @@ func newCountingIAMGRPCStack(t *testing.T) (*IAMServer, *iam.MemoryStorage, *cou
 	t.Helper()
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
 	require.NoError(t, err)
-	ctx := callerContext("acme")
+	ctx := updateUserAuthzContext("acme")
 
 	mem := iam.NewMemoryStorage()
 	tenants := iam.NewDefaultTenantManager(mem)
@@ -91,7 +91,7 @@ func newCountingIAMGRPCStack(t *testing.T) (*IAMServer, *iam.MemoryStorage, *cou
 // with [viewer, admin] returns and stores exactly [viewer, admin].
 func TestGRPC_UpdateUserReplacesRolesExactly(t *testing.T) {
 	srv, mem, _, userID := newCountingIAMGRPCStack(t)
-	ctx := callerContext("acme")
+	ctx := updateUserAuthzContext("acme")
 
 	got, err := srv.UpdateUser(ctx, &iampb.UpdateUserRequest{
 		TenantId: "acme",
@@ -110,7 +110,7 @@ func TestGRPC_UpdateUserReplacesRolesExactly(t *testing.T) {
 // request naming a nonexistent role fails before any write.
 func TestGRPC_UpdateUserNonexistentRoleLeavesRolesAndWritesNothing(t *testing.T) {
 	srv, mem, counting, userID := newCountingIAMGRPCStack(t)
-	ctx := callerContext("acme")
+	ctx := updateUserAuthzContext("acme")
 
 	_, err := srv.UpdateUser(ctx, &iampb.UpdateUserRequest{
 		TenantId: "acme",
@@ -129,7 +129,7 @@ func TestGRPC_UpdateUserNonexistentRoleLeavesRolesAndWritesNothing(t *testing.T)
 // roles leaves the stored roles as they are.
 func TestGRPC_UpdateUserWithoutRolesLeavesRoles(t *testing.T) {
 	srv, mem, _, userID := newCountingIAMGRPCStack(t)
-	ctx := callerContext("acme")
+	ctx := updateUserAuthzContext("acme")
 
 	got, err := srv.UpdateUser(ctx, &iampb.UpdateUserRequest{
 		TenantId: "acme",
@@ -151,7 +151,7 @@ func TestGRPC_UpdateUserWithoutRolesLeavesRoles(t *testing.T) {
 // two concurrent replacements interleave and leave a union neither requested.
 func TestGRPC_UpdateUserReplacesRolesInOneWrite(t *testing.T) {
 	srv, mem, counting, userID := newCountingIAMGRPCStack(t)
-	ctx := callerContext("acme")
+	ctx := updateUserAuthzContext("acme")
 
 	// Swap viewer for auditor: the old path revoked one role and assigned
 	// another, three writes in all.

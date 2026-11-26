@@ -675,7 +675,7 @@ func TestIAMServer_UpdateUser_Success(t *testing.T) {
 		Return(&iam.User{ID: 30001, TenantID: "t1", Email: "updated@test.com"}, nil)
 	srv.SetRoleAuthorizer(allowAllRoleAuthorizer{})
 
-	resp, err := srv.UpdateUser(callerContext("t1"), &iampb.UpdateUserRequest{
+	resp, err := srv.UpdateUser(updateUserAuthzContext("t1"), &iampb.UpdateUserRequest{
 		TenantId:   "t1",
 		UserId:     "30001",
 		Email:      "updated@test.com",

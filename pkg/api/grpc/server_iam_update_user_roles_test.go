@@ -18,7 +18,7 @@ import (
 // then fail.
 func TestGRPC_UpdateUserWithANonexistentRoleKeepsTheOldRole(t *testing.T) {
 	srv, mem := newRealIAMGRPCStack(t)
-	ctx := callerContext("acme")
+	ctx := updateUserAuthzContext("acme")
 
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{UserStorage: mem, RoleStorage: mem})
 	_, err := store.CreateRole(ctx, "acme", iam.CreateRoleOptions{

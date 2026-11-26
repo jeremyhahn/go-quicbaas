@@ -57,6 +57,10 @@ type grantSetAuthorizer struct {
 	token   string
 	granted map[string]bool
 	asked   []string
+	// subject and tenantID are the principal the token resolves to; empty
+	// unless a test needs the granted identity bound to the caller.
+	subject  string
+	tenantID string
 }
 
 func (g *grantSetAuthorizer) Authorize(_ context.Context, token, requiredPerm, _, _, _ string) (*platformtoken.AuthorizedContext, error) {
@@ -67,7 +71,7 @@ func (g *grantSetAuthorizer) Authorize(_ context.Context, token, requiredPerm, _
 	if !g.granted[requiredPerm] {
 		return nil, &platformtoken.ScopeDeniedError{Required: requiredPerm}
 	}
-	return &platformtoken.AuthorizedContext{}, nil
+	return &platformtoken.AuthorizedContext{Subject: g.subject, TenantID: g.tenantID}, nil
 }
 
 // TestUserGRPCCreateWithRolesRequiresRolesAssign pins go-qrdb's native
