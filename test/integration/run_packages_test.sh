@@ -4,8 +4,8 @@
 # line, a failed package with a healthy cluster lets the rest run, a failed
 # package with a dead cluster stops the suite, exit 124 reads as timeout,
 # --filter splits go test flags from packages, and a probe that never answers
-# is cut off at HEALTH_PROBE_TIMEOUT, and the iam package alone gets its own
-# go test -timeout.
+# is cut off at HEALTH_PROBE_TIMEOUT, and the iam, cli and cluster packages get
+# their own go test -timeout.
 #
 # Run by `make check-workspace-script`.
 set -eu
@@ -165,7 +165,12 @@ run_filter "./test/integration/cli" || fail "cli limit: exit $?, want 0"
 grep -q -- ' -timeout 30m .*\./test/integration/cli$' "$tmp/ran.args" ||
 	fail "cli limit: ran '$(cat "$tmp/ran.args")', want -timeout 30m"
 
-# (xii) Every other package keeps PACKAGE_TIMEOUT (10m).
+# (xii) The cluster package runs with its own limit, CLUSTER_PACKAGE_TIMEOUT (30m).
+run_filter "./test/integration/cluster" || fail "cluster limit: exit $?, want 0"
+grep -q -- ' -timeout 30m .*\./test/integration/cluster$' "$tmp/ran.args" ||
+	fail "cluster limit: ran '$(cat "$tmp/ran.args")', want -timeout 30m"
+
+# (xiii) Every other package keeps PACKAGE_TIMEOUT (10m).
 run_filter "./test/integration/login" || fail "other limit: exit $?, want 0"
 grep -q -- ' -timeout 10m .*\./test/integration/login$' "$tmp/ran.args" ||
 	fail "other limit: ran '$(cat "$tmp/ran.args")', want -timeout 10m"
