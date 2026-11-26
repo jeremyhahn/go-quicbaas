@@ -79,16 +79,20 @@ var unmappedToolGroups = []unmappedToolGroup{
 		},
 	},
 	{
-		// The consent, export-request and deletion-request tools take their
-		// REST route's grant (authz_qrdb.go). By owner ruling, irreversible
-		// erasure processing and export generation are refused on every
-		// transport; gRPC leaves GenerateExport and ProcessDeletion unmapped.
+		// The consent and deletion-request tools take their REST route's
+		// grant (authz_qrdb.go). By owner ruling, irreversible erasure
+		// processing and export generation are refused on every transport;
+		// gRPC leaves GenerateExport, ProcessDeletion and RequestExport
+		// unmapped. The export-request tool stays dead with them: the request
+		// starts export generation in the background with no further check.
 		reason: "owner ruling: irreversible erasure processing and export generation are " +
-			"refused on every transport",
+			"refused on every transport; an export request starts export generation in the " +
+			"background with no further check",
 		resolution: "a new owner ruling",
 		tools: []string{
 			"quicbaas_iam_gdpr_deletion_process",
 			"quicbaas_iam_gdpr_export_generate",
+			"quicbaas_iam_gdpr_export_request",
 		},
 	},
 	{

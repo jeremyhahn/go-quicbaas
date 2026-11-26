@@ -312,6 +312,8 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// grant; every other IAMService method stays unmapped and default-denied.
 	// GenerateExport and ProcessDeletion stay unmapped by owner ruling: export
 	// generation and erasure processing are refused on every transport.
+	// RequestExport stays unmapped with them: the request starts export
+	// generation in the background with no further check.
 	// The delegated-admin assignment verbs, CheckAdminPermission,
 	// EndImpersonation, GetActiveImpersonations, GetExportStatus,
 	// CancelDeletion and GetDeletionStatus stay unmapped as well: each handler
@@ -415,9 +417,6 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/GetConsent": {"tenants", "read"},
 	// Mirrors REST GET .../users/{user_id}/gdpr/consents (tenants:read).
 	"/quicbaas.iam.v1.IAMService/ListUserConsents": {"tenants", "read"},
-
-	// Mirrors REST POST .../users/{user_id}/gdpr/export (tenants:create).
-	"/quicbaas.iam.v1.IAMService/RequestExport": {"tenants", "create"},
 
 	// Mirrors REST POST .../users/{user_id}/gdpr/deletion (tenants:create).
 	"/quicbaas.iam.v1.IAMService/RequestDeletion": {"tenants", "create"},

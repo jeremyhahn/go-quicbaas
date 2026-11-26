@@ -811,7 +811,6 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_iam_gdpr_consent_withdraw":     {"tenants", "create"},
 	"quicbaas_iam_gdpr_consent_get":          {"tenants", "read"},
 	"quicbaas_iam_gdpr_consent_list":         {"tenants", "read"},
-	"quicbaas_iam_gdpr_export_request":       {"tenants", "create"},
 	"quicbaas_iam_gdpr_deletion_request":     {"tenants", "create"},
 	"quicbaas_iam_policy_create":             {"tenants", "create"},
 	"quicbaas_iam_policy_get":                {"tenants", "read"},

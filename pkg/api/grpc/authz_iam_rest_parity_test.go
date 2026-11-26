@@ -73,8 +73,10 @@ var iamRESTParityGrants = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/GetConsent": {"tenants", "read"},
 	// GET .../users/{user_id}/gdpr/consents
 	"/quicbaas.iam.v1.IAMService/ListUserConsents": {"tenants", "read"},
-	// POST .../users/{user_id}/gdpr/export
-	"/quicbaas.iam.v1.IAMService/RequestExport": {"tenants", "create"},
+	// POST .../users/{user_id}/gdpr/export takes tenants:create on REST, but
+	// RequestExport is a deliberate exception: it stays unmapped on gRPC
+	// because the request starts export generation in the background with
+	// no further check (TestIAMGRPCErasureVerbsStayUnmapped).
 	// POST .../users/{user_id}/gdpr/deletion
 	"/quicbaas.iam.v1.IAMService/RequestDeletion": {"tenants", "create"},
 	// users:update, as GetUser, ListUsers and DeleteUser take their users
@@ -90,18 +92,42 @@ func TestIAMRESTParityGRPCAuthorization(t *testing.T) {
 	requireGRPCGrantEnforced(t, iamRESTParityGrants)
 }
 
-// TestIAMGRPCErasureVerbsStayUnmapped pins GenerateExport and ProcessDeletion
-// as unmapped and not public, so they stay default-denied on gRPC and the Unix
+// TestIAMGRPCErasureVerbsStayUnmapped pins GenerateExport, ProcessDeletion
+// and RequestExport as unmapped and not public, so they stay default-denied on gRPC and the Unix
 // socket (owner ruling): no REST grant is copied onto them.
 func TestIAMGRPCErasureVerbsStayUnmapped(t *testing.T) {
 	for _, method := range []string{
 		"/quicbaas.iam.v1.IAMService/GenerateExport",
 		"/quicbaas.iam.v1.IAMService/ProcessDeletion",
+		// The request starts export generation in the background with no
+		// further check, so it is refused with GenerateExport.
+		"/quicbaas.iam.v1.IAMService/RequestExport",
 	} {
 		_, mapped := grpcMethodPermissions[method]
 		assert.False(t, mapped, "%s must carry no grant", method)
 		assert.False(t, publicGRPCMethods[method], "%s must not be public", method)
 	}
+}
+
+// TestIAMGRPCRequestExportRefusedForTenantsCreate pins that a caller holding
+// tenants:create, the REST export route's grant, is still refused
+// RequestExport on gRPC before the handler runs: the request would start
+// export generation in the background with no further check.
+func TestIAMGRPCRequestExportRefusedForTenantsCreate(t *testing.T) {
+	const method = "/quicbaas.iam.v1.IAMService/RequestExport"
+	authz := &grantSetAuthorizer{token: "tok", granted: map[string]bool{"tenants:create": true}}
+	called := false
+	handler := func(context.Context, interface{}) (interface{}, error) {
+		called = true
+		return "ok", nil
+	}
+	_, err := UnaryAuthorizationInterceptor(authz)(ctxWithBearer("tok"), nil,
+		&grpc.UnaryServerInfo{FullMethod: method}, handler)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.Equal(t, (&UnmappedMethodError{Method: method}).Error(), status.Convert(err).Message())
+	assert.False(t, called, "handler must not run")
+	assert.Empty(t, authz.asked, "the authorizer must not be asked")
 }
 
 // TestIAMGRPCTenantUncheckedVerbsStayRefused pins the delegated-admin

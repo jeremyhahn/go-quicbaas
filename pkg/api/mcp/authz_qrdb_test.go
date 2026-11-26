@@ -94,6 +94,7 @@ func TestGetToolQRDBPermission_Unmapped(t *testing.T) {
 		"quicbaas_iam_group_create",
 		"quicbaas_iam_gdpr_deletion_process",
 		"quicbaas_iam_gdpr_export_generate",
+		"quicbaas_iam_gdpr_export_request",
 		"quicbaas_iam_federation_beginlogin",
 		"quicbaas_mfa_enroll_begin",
 		"quicbaas_login_begin",

@@ -62,15 +62,18 @@ func TestIAMRESTParityMCPPermissions(t *testing.T) {
 		"quicbaas_iam_gdpr_consent_withdraw":     {"tenants", "create"},
 		"quicbaas_iam_gdpr_consent_get":          {"tenants", "read"},
 		"quicbaas_iam_gdpr_consent_list":         {"tenants", "read"},
-		"quicbaas_iam_gdpr_export_request":       {"tenants", "create"},
-		"quicbaas_iam_gdpr_deletion_request":     {"tenants", "create"},
-		"quicbaas_iam_policy_create":             {"tenants", "create"},
-		"quicbaas_iam_policy_get":                {"tenants", "read"},
-		"quicbaas_iam_policy_list":               {"tenants", "read"},
-		"quicbaas_iam_policy_update":             {"tenants", "create"},
-		"quicbaas_iam_policy_delete":             {"tenants", "delete"},
-		"quicbaas_iam_policy_test":               {"tenants", "create"},
-		"quicbaas_iam_policy_validate":           {"tenants", "create"},
+		// quicbaas_iam_gdpr_export_request is a deliberate exception to REST
+		// parity (POST .../gdpr/export takes tenants:create): the request
+		// starts export generation in the background with no further check,
+		// so it stays dead with export_generate (TestIAMRESTParityMCPStillDead).
+		"quicbaas_iam_gdpr_deletion_request": {"tenants", "create"},
+		"quicbaas_iam_policy_create":         {"tenants", "create"},
+		"quicbaas_iam_policy_get":            {"tenants", "read"},
+		"quicbaas_iam_policy_list":           {"tenants", "read"},
+		"quicbaas_iam_policy_update":         {"tenants", "create"},
+		"quicbaas_iam_policy_delete":         {"tenants", "delete"},
+		"quicbaas_iam_policy_test":           {"tenants", "create"},
+		"quicbaas_iam_policy_validate":       {"tenants", "create"},
 	}
 
 	for tool, expected := range want {
@@ -109,6 +112,8 @@ func TestIAMRESTParityMCPStillDead(t *testing.T) {
 		"quicbaas_iam_federation_handlecallback",
 		"quicbaas_iam_gdpr_deletion_process",
 		"quicbaas_iam_gdpr_export_generate",
+		// Starts export generation in the background with no further check.
+		"quicbaas_iam_gdpr_export_request",
 		"quicbaas_iam_gdpr_export_status",
 		"quicbaas_iam_gdpr_deletion_cancel",
 		"quicbaas_iam_gdpr_deletion_status",
@@ -122,5 +127,35 @@ func TestIAMRESTParityMCPStillDead(t *testing.T) {
 		if publicTools[tool] {
 			t.Errorf("tool %q must not be public", tool)
 		}
+	}
+}
+
+// TestIAMMCPExportRequestRefusedForTenantsCreate pins that the export-request
+// tool carries no permission, neither exact nor by prefix, and is not public,
+// so the default-deny gate refuses it even for a caller holding
+// tenants:create, the REST export route's grant: the request would start
+// export generation in the background with no further check.
+func TestIAMMCPExportRequestRefusedForTenantsCreate(t *testing.T) {
+	const tool = "quicbaas_iam_gdpr_export_request"
+	if resource, action, ok := getToolQRDBPermission(tool); ok {
+		t.Fatalf("tool %q resolves to %s:%s; a tenants:create caller could start export generation",
+			tool, resource, action)
+	}
+	if IsPublicTool(tool) {
+		t.Fatalf("tool %q must not be public", tool)
+	}
+	found := false
+	for _, spec := range ModuleTools() {
+		if spec.Name != tool {
+			continue
+		}
+		found = true
+		if spec.Public || spec.Resource != "" || spec.Action != "" {
+			t.Errorf("served spec for %q must carry no permission and not be public (fail-closed), got public=%v %s:%s",
+				tool, spec.Public, spec.Resource, spec.Action)
+		}
+	}
+	if !found {
+		t.Errorf("tool %q not enumerated by ModuleTools", tool)
 	}
 }
