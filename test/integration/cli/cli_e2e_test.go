@@ -1050,6 +1050,7 @@ func TestCLIIAMUserOperations(t *testing.T) {
 	output, err := runCommandAs(ctx, admin, binary, "iam", "user", "create", email,
 		"--tenant", tenantID,
 		"--name", "Test User",
+		"--role", fixtureRoleID(tenantID),
 		"--address", serverAddr,
 		"--transport", "rest")
 	require.NoError(t, err, "IAM user create should succeed: %s", output)

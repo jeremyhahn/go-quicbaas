@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // =============================================================================
@@ -186,6 +188,13 @@ func IAMTenantListJSONCommand() CommandDef {
 // IAM User Commands
 // =============================================================================
 
+// fixtureRoleID is the role a fixture user is created with: the tenant's
+// built-in Auditor role, under the identifier go-qrdb seeds it with. A user
+// create must name at least one role.
+func fixtureRoleID(tenantID string) string {
+	return qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameAuditor)
+}
+
 // IAMUserCreateCommand returns a command to create an IAM user within a tenant.
 // IAM operations are supported via gRPC, REST, Unix, and MCP transports.
 // QuicBaaS is passwordless: the new user is created in the pending state and
@@ -193,7 +202,7 @@ func IAMTenantListJSONCommand() CommandDef {
 func IAMUserCreateCommand(tenantID, email, name string) CommandDef {
 	return CommandDef{
 		Name:           fmt.Sprintf("iam user create %s", email),
-		Args:           []string{"iam", "user", "create", email, "--tenant", tenantID, "--name", name},
+		Args:           []string{"iam", "user", "create", email, "--tenant", tenantID, "--name", name, "--role", fixtureRoleID(tenantID)},
 		ExpectSuccess:  true,
 		ExpectOutput:   []string{email},
 		Timeout:        10 * time.Second,

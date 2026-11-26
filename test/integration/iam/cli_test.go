@@ -1603,7 +1603,8 @@ func TestCLIUserCreateMultiProtocol(t *testing.T) {
 				email := fmt.Sprintf("user-%s-%d@test.local", proto.name, time.Now().UnixNano())
 				output, err := cli.run("iam", "user", "create", email,
 					"--tenant", tenantID,
-					"--name", fmt.Sprintf("Test User %s", proto.name))
+					"--name", fmt.Sprintf("Test User %s", proto.name),
+					"--role", fixtureRoleID(tenantID))
 				require.NoError(t, err, "user create via %s should succeed", proto.name)
 				assert.NotEmpty(t, output)
 				t.Logf("[%s] Created user: %s", proto.name, output)
@@ -1628,7 +1629,8 @@ func TestCLIUserCreateMultiProtocol(t *testing.T) {
 					email2 := fmt.Sprintf("user-attr2-%s-%d@test.local", proto.name, time.Now().UnixNano())
 					output, err = cli.run("iam", "user", "create", email2,
 						"--tenant", tenantID,
-						"--name", fmt.Sprintf("Attributed User Retry %s", proto.name))
+						"--name", fmt.Sprintf("Attributed User Retry %s", proto.name),
+						"--role", fixtureRoleID(tenantID))
 				} else if err != nil && strings.Contains(err.Error(), "already_exists") {
 					// User was created but role assignment failed - this is still a success
 					t.Log("User created successfully (role assignment may have failed separately)")
@@ -1652,7 +1654,8 @@ func TestCLIUserCreate(t *testing.T) {
 		email := fmt.Sprintf("user-%d@test.local", time.Now().UnixNano())
 		output, err := cli.run("iam", "user", "create", email,
 			"--tenant", tenantID,
-			"--name", "Test User")
+			"--name", "Test User",
+			"--role", fixtureRoleID(tenantID))
 		require.NoError(t, err, "user create should succeed")
 		assert.NotEmpty(t, output)
 		t.Logf("Created user: %s", output)
@@ -1673,7 +1676,8 @@ func TestCLIUserCreate(t *testing.T) {
 			email2 := fmt.Sprintf("user-attr2-%d@test.local", time.Now().UnixNano())
 			output, err = cli.run("iam", "user", "create", email2,
 				"--tenant", tenantID,
-				"--name", "Attributed User Retry")
+				"--name", "Attributed User Retry",
+				"--role", fixtureRoleID(tenantID))
 		} else if err != nil && strings.Contains(err.Error(), "already_exists") {
 			// User was created but role assignment failed - this is still a success for the test
 			t.Log("User created successfully (role assignment may have failed separately)")
@@ -1701,7 +1705,8 @@ func TestCLIUserCRUDMultiProtocol(t *testing.T) {
 			// Create
 			createOutput, createErr := cli.run("iam", "user", "create", email,
 				"--tenant", tenantID,
-				"--name", fmt.Sprintf("CRUD Test User %s", proto.name))
+				"--name", fmt.Sprintf("CRUD Test User %s", proto.name),
+				"--role", fixtureRoleID(tenantID))
 			require.NoError(t, createErr, "user create via %s should succeed", proto.name)
 			t.Logf("[%s] Created: %s", proto.name, createOutput)
 
@@ -1748,7 +1753,8 @@ func TestCLIUserGet(t *testing.T) {
 	email := fmt.Sprintf("get-user-%d@test.local", time.Now().UnixNano())
 	createOutput, createErr := cli.run("iam", "user", "create", email,
 		"--tenant", tenantID,
-		"--name", "Get Test User")
+		"--name", "Get Test User",
+		"--role", fixtureRoleID(tenantID))
 	require.NoError(t, createErr, "user create should succeed")
 
 	// Extract user ID from create output
@@ -1813,7 +1819,8 @@ func TestCLIUserUpdate(t *testing.T) {
 	email := fmt.Sprintf("update-user-%d@test.local", time.Now().UnixNano())
 	createOutput, createErr := cli.run("iam", "user", "create", email,
 		"--tenant", tenantID,
-		"--name", "Update Test User")
+		"--name", "Update Test User",
+		"--role", fixtureRoleID(tenantID))
 	require.NoError(t, createErr, "user create should succeed")
 
 	var userID string
@@ -1847,7 +1854,8 @@ func TestCLIUserDelete(t *testing.T) {
 	email := fmt.Sprintf("delete-user-%d@test.local", time.Now().UnixNano())
 	createOutput, createErr := cli.run("iam", "user", "create", email,
 		"--tenant", tenantID,
-		"--name", "Delete Test User")
+		"--name", "Delete Test User",
+		"--role", fixtureRoleID(tenantID))
 	require.NoError(t, createErr, "user create should succeed")
 
 	var userID string
@@ -1881,7 +1889,8 @@ func TestCLIUserRoleManagement(t *testing.T) {
 	email := fmt.Sprintf("role-user-%d@test.local", time.Now().UnixNano())
 	createOutput, createErr := cli.run("iam", "user", "create", email,
 		"--tenant", tenantID,
-		"--name", "Role Test User")
+		"--name", "Role Test User",
+		"--role", fixtureRoleID(tenantID))
 	require.NoError(t, createErr, "user create should succeed")
 
 	var userID string
@@ -2473,7 +2482,8 @@ func TestCLIMFAStatus(t *testing.T) {
 	email := fmt.Sprintf("mfa-user-%d@test.local", time.Now().UnixNano())
 	createOutput, createErr := cli.run("iam", "user", "create", email,
 		"--tenant", tenantID,
-		"--name", "MFA Test User")
+		"--name", "MFA Test User",
+		"--role", fixtureRoleID(tenantID))
 	require.NoError(t, createErr, "user create should succeed")
 
 	var userID string
@@ -2508,7 +2518,8 @@ func TestCLIMFAEnroll(t *testing.T) {
 	email := fmt.Sprintf("mfa-enroll-%d@test.local", time.Now().UnixNano())
 	createOutput, createErr := cli.run("iam", "user", "create", email,
 		"--tenant", tenantID,
-		"--name", "MFA Enroll User")
+		"--name", "MFA Enroll User",
+		"--role", fixtureRoleID(tenantID))
 	require.NoError(t, createErr, "user create should succeed")
 
 	var userID string
@@ -2547,7 +2558,8 @@ func TestCLIMFADisable(t *testing.T) {
 	email := fmt.Sprintf("mfa-disable-%d@test.local", time.Now().UnixNano())
 	createOutput, createErr := cli.run("iam", "user", "create", email,
 		"--tenant", tenantID,
-		"--name", "MFA Disable User")
+		"--name", "MFA Disable User",
+		"--role", fixtureRoleID(tenantID))
 	require.NoError(t, createErr, "user create should succeed")
 
 	var userID string
@@ -2586,7 +2598,8 @@ func TestCLIMFABackupCodes(t *testing.T) {
 	email := fmt.Sprintf("mfa-backup-%d@test.local", time.Now().UnixNano())
 	createOutput, createErr := cli.run("iam", "user", "create", email,
 		"--tenant", tenantID,
-		"--name", "MFA Backup User")
+		"--name", "MFA Backup User",
+		"--role", fixtureRoleID(tenantID))
 	require.NoError(t, createErr, "user create should succeed")
 
 	var userID string
@@ -2692,7 +2705,8 @@ func TestCLIE2ETenantUserWorkflow(t *testing.T) {
 		email1 := fmt.Sprintf("e2e-user1-%d@test.local", time.Now().UnixNano())
 		output1, err := tenantCLI.run("iam", "user", "create", email1,
 			"--tenant", tenantID,
-			"--name", "E2E User 1")
+			"--name", "E2E User 1",
+			"--role", fixtureRoleID(tenantID))
 		require.NoError(t, err, "user create should succeed")
 
 		var result1 struct {
@@ -2708,7 +2722,8 @@ func TestCLIE2ETenantUserWorkflow(t *testing.T) {
 		email2 := fmt.Sprintf("e2e-user2-%d@test.local", time.Now().UnixNano())
 		output2, err := tenantCLI.run("iam", "user", "create", email2,
 			"--tenant", tenantID,
-			"--name", "E2E User 2")
+			"--name", "E2E User 2",
+			"--role", fixtureRoleID(tenantID))
 		require.NoError(t, err, "user create should succeed")
 
 		var result2 struct {
