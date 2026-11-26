@@ -1,16 +1,4 @@
-# QuicBaaS Single-Node Raft Configuration - Docker Compose
-# Single-node Raft cluster for development and testing
-# Provides Raft consensus semantics without multi-node complexity
-# Best for: Testing Raft behavior, development, CI/CD
-#
-# Usage:
-#   docker compose -f configs/docker/docker-compose.raft-single-node.yaml up
-#   docker compose -f configs/docker/docker-compose.raft-single-node.yaml up -d  # detached
-#
-# Access:
-#   REST API: http://localhost:8443
-#   gRPC:     localhost:9443
-#   Raft:     localhost:63000 (internal)
+# QuicBaaS single-node Raft cluster, for testing Raft behavior.
 
 services:
   quicbaas:
@@ -26,8 +14,7 @@ services:
       - quicbaas-data:/data/quicbaas
     environment:
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_STORAGE_BACKEND=raft
       - QUICBAAS_SERVER_GRPC_ENABLED=true

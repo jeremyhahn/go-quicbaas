@@ -1,24 +1,17 @@
-# QuicBaaS CLI Dockerfile
-# Minimal image containing only the CLI tool
+# QuicBaaS CLI image: only the CLI binary.
 
 # Build arguments
 ARG GO_VERSION=1.27
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
-# gms_pure_go is the floor, not a feature: this builder is CGO_ENABLED=0 and
-# dolthub/go-mysql-server's internal/regex has no file satisfying
-# `cgo && !gms_pure_go` without cgo, so the link fails on "build constraints
-# exclude all Go files" (see Dockerfile's identical comment). release.yml
-# never overrides BUILD_TAGS for this image, so this default is load-bearing.
+# gms_pure_go is required: the builder is CGO_ENABLED=0 and go-mysql-server's regex needs cgo otherwise.
 ARG BUILD_TAGS=gms_pure_go
 
 # Stage 1: Build stage
 FROM golang:${GO_VERSION}-alpine AS builder
 
-# Install build dependencies
-# file: used by the "Verify static binary" step below (also in Dockerfile's
-# apk list, just missing here).
+# Build dependencies; `file` is used by the static-binary check below.
 RUN apk add --no-cache git make ca-certificates file
 
 # Set working directory
@@ -28,21 +21,7 @@ WORKDIR /build
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
-# Until 2026-08-14 this stage copied working-tree clones out of a .deps/
-# directory and rewrote a set of relative `replace` directives to point at
-# them (see Dockerfile's identical comment). Both are gone: .deps/ was
-# deleted with the decoupling, and the only replaces left in go.mod are the
-# intra-repo sdk/go one and an armon/go-metrics version pin, neither of which
-# needs rewriting. The COPY of a directory that no longer exists failed the
-# build outright.
-#
-# go.mod pins first-party modules, which this download resolves through the
-# module proxy and the checksum database like any other module. Any fetch
-# credentials arrive as a BuildKit secret, never a build arg, mounted on tmpfs for this
-# RUN alone and never becoming a layer. The mount is optional by design: on
-# GitHub Actions no secret is supplied and these modules resolve from the
-# public proxy once tags are mirrored (§7), so the same Dockerfile builds on
-# both hosts.
+# Modules resolve through the module proxy; the gomodauth secret mount is optional.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
@@ -65,16 +44,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=f
 # Verify static binary
 RUN file quicbaas
 
-# Stage 2: Minimal runtime stage
-#
-# Pinned base plus `apk upgrade`, for the reasons spelled out in the main
-# Dockerfile's runtime stage: the pin makes the image reproducible, and the
-# upgrade is what lets a patched package reach it between base releases.
-# Keep the two files' pins in step — they are the same base.
+# Stage 2: minimal runtime.
 FROM alpine:3.24.1
 
-# Install minimal runtime dependencies, patched (see the main Dockerfile:
-# 3.24.1 ships libcrypto3/libssl3 3.5.7-r0 with CVE-2026-14456).
+# Minimal runtime dependencies, patched.
 RUN apk upgrade --no-cache && \
     apk --no-cache add ca-certificates
 
