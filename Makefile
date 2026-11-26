@@ -932,7 +932,7 @@ AGENT_LDFLAGS := $(LDFLAGS) -s -w -linkmode external -extldflags '-static'
 # container runtime libraries: OpenPGP signature checks in go.podman.io/image
 # instead of gpgme, and no btrfs graph driver in go.podman.io/storage. The
 # agent's cgo build then needs no C library beyond libc. Without them
-# pkg/containerruntime compiles its ErrRuntimeRequiresLinuxCgo stub, which is
+# internal/containerruntime compiles its ErrRuntimeRequiresLinuxCgo stub, which is
 # what quicbaasd (CGO_ENABLED=0) always links.
 CONTAINER_LIB_TAGS := containers_image_openpgp exclude_graphdriver_btrfs
 
@@ -1226,7 +1226,7 @@ TEST_TAGS := !integration $(strip $(BUILD_TAGS)) $(TEST_EXTRA_TAGS)
 # status, so a command that printed a partial list AND THEN failed would slip
 # through; that is not a shape this tool can produce, and the alternative
 # (.SHELLSTATUS through a deferred expansion) buys less than it costs here.
-MINIMAL_OFF_TAGS = $(or $(shell $(GOCMD) run ./scripts/buildtagcover -list-negated -dir pkg -dir cmd),$(error buildtagcover -list-negated produced no tags; refusing to build a minimal pass that turns nothing off))
+MINIMAL_OFF_TAGS = $(or $(shell $(GOCMD) run ./scripts/buildtagcover -list-negated -dir pkg -dir cmd -dir internal),$(error buildtagcover -list-negated produced no tags; refusing to build a minimal pass that turns nothing off))
 MINIMAL_TEST_TAGS = !integration $(filter-out $(MINIMAL_OFF_TAGS),$(strip $(BUILD_TAGS)))
 
 # STANDARD_TEST_TAGS: the `make build-standard` FEATURE SET -- REST on, the AI
@@ -1358,7 +1358,7 @@ ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(TEST_TAGS)$(NC)"
 endif
 	@START_TIME=$$(date +%s); \
-	$(GOTEST) -v -p 2 -tags '$(TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/... ./scripts/... ./test/buildgates/...; \
+	$(GOTEST) -v -p 2 -tags '$(TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/... ./internal/... ./scripts/... ./test/buildgates/...; \
 	TEST_RESULT=$$?; \
 	END_TIME=$$(date +%s); \
 	ELAPSED=$$((END_TIME - START_TIME)); \
@@ -1468,7 +1468,7 @@ check-ci-image-cache: ## Prove ci-image-cache.sh's registry cache path against s
 # pkg/signal carries the only two.
 check-local-keygen: ## Fail if any non-test site creates a key pair or signs a certificate itself
 	@echo "$(BLUE)Checking for local key/certificate generation outside go-xkms...$(NC)"
-	@$(GOCMD) run ./scripts/localkeygen -dir pkg -dir cmd -dir sdk -dir test
+	@$(GOCMD) run ./scripts/localkeygen -dir pkg -dir cmd -dir internal -dir sdk -dir test
 
 .PHONY: check-library-pins
 # QuicBaaS deploys on the exact go-qrdb, go-xkms and go-quicraft releases its
@@ -1506,7 +1506,7 @@ check-library-pins: ## Fail if go-qrdb, go-xkms or go-quicraft is taken from any
 # waiver.
 check-coded-sentinels: ## Fail if errors.Is targets a qrdb-coded sentinel without a stated reason
 	@echo "$(BLUE)Checking errors.Is targets against qrdb-coded sentinels...$(NC)"
-	@$(GOCMD) run ./scripts/codedsentinel -dir pkg -dir cmd -dir sdk
+	@$(GOCMD) run ./scripts/codedsentinel -dir pkg -dir cmd -dir internal -dir sdk
 
 .PHONY: check-nolint
 # nolintlint (.golangci.yml) makes every //nolint name its linter, give a
@@ -1556,7 +1556,7 @@ check-nolint: ## Fail if a //nolint directive is not on scripts/nolint-allowlist
 check-build-tags: ## Fail if any //go:build CONSTRAINT is satisfied by no test pass
 	@echo "$(BLUE)Checking build-constraint coverage of the test gate...$(NC)"
 	@$(GOCMD) run ./scripts/buildtagcover \
-		-dir pkg -dir cmd \
+		-dir pkg -dir cmd -dir internal \
 		-free '$(TAG_GATE_EXEMPT)' \
 		-pass 'maximal:$(TEST_TAGS)' \
 		-pass 'standard:$(STANDARD_TEST_TAGS)' \
@@ -1568,19 +1568,19 @@ check-build-tags: ## Fail if any //go:build CONSTRAINT is satisfied by no test p
 test-minimal: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with every tag that has a !tag side off (compiles the stub/no-op paths)
 	@echo "$(BLUE)Running unit tests with every disabled-side tag off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(MINIMAL_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/... ./internal/...
 
 .PHONY: test-standard
 test-standard: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests in the build-standard configuration (REST on, AI features off)
 	@echo "$(BLUE)Running unit tests in the build-standard configuration...$(NC)"
 	@echo "$(YELLOW)Build tags: $(STANDARD_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(STANDARD_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(STANDARD_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/... ./internal/...
 
 .PHONY: test-lean
 test-lean: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with the transports on and the optional data-model features off
 	@echo "$(BLUE)Running unit tests with the transports on, data-model extras off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(LEAN_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/... ./internal/...
 
 INTEROP_LEGS := oidc http3 grpc mcp
 
@@ -1825,7 +1825,7 @@ FEATURE_PATHS_batch             := test/integration/batch/
 FEATURE_PATHS_cache-redis       := test/integration/cache/
 FEATURE_PATHS_cli               := test/integration/cli/
 FEATURE_PATHS_cluster           := test/integration/cluster/
-FEATURE_PATHS_containerruntime  := test/integration/containerruntime/ pkg/containerruntime/
+FEATURE_PATHS_containerruntime  := test/integration/containerruntime/ internal/containerruntime/
 FEATURE_PATHS_dataplane         := test/integration/dataplane/
 FEATURE_PATHS_dek               := test/integration/dek/
 FEATURE_PATHS_durability        := test/integration/durability/
@@ -2607,7 +2607,7 @@ list-integration-packages: ## (Deprecated) Use list-packages instead
 test-integration-tagged: ## Run integration tests with build tag (in-process)
 	@echo "$(BLUE)Running tagged integration tests...$(NC)"
 	@START_TIME=$$(date +%s); \
-	$(GOTEST) -v -tags integration -timeout=10m ./pkg/... ./cmd/...; \
+	$(GOTEST) -v -tags integration -timeout=10m ./pkg/... ./cmd/... ./internal/...; \
 	TEST_RESULT=$$?; \
 	END_TIME=$$(date +%s); \
 	ELAPSED=$$((END_TIME - START_TIME)); \
@@ -3367,17 +3367,17 @@ test-all: test integration-test e2e-test ## Run all tests (except FIPS - use 'ma
 benchmark: ## Run benchmarks (tunable benchtime via BENCHTIME, default 100ms)
 	@echo "$(BLUE)Running benchmarks...$(NC)"
 	# Serialize package execution to avoid port conflicts; shorten benchtime to avoid timeouts
-	$(GOTEST) -p=1 -count=1 -tags '$(TEST_TAGS)' -benchtime=$(BENCHTIME) -bench=. -benchmem -run=^$$ ./pkg/... ./cmd/...
+	$(GOTEST) -p=1 -count=1 -tags '$(TEST_TAGS)' -benchtime=$(BENCHTIME) -bench=. -benchmem -run=^$$ ./pkg/... ./cmd/... ./internal/...
 
 .PHONY: benchmark-quick
 benchmark-quick: ## Run quick benchmarks (1 iteration per bench)
 	@echo "$(BLUE)Running quick benchmarks...$(NC)"
-	$(GOTEST) -p=1 -count=1 -tags '$(TEST_TAGS)' -benchtime=1x -bench=. -benchmem -run=^$$ ./pkg/... ./cmd/...
+	$(GOTEST) -p=1 -count=1 -tags '$(TEST_TAGS)' -benchtime=1x -bench=. -benchmem -run=^$$ ./pkg/... ./cmd/... ./internal/...
 
 .PHONY: benchmark-full
 benchmark-full: ## Run full-length benchmarks (default Go benchtime)
 	@echo "$(BLUE)Running full-length benchmarks...$(NC)"
-	$(GOTEST) -p=1 -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/... ./cmd/...
+	$(GOTEST) -p=1 -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/... ./cmd/... ./internal/...
 
 .PHONY: benchmark-fips
 benchmark-fips: ## Run benchmarks in FIPS mode
@@ -3542,7 +3542,7 @@ endef
 
 # COVER_PKGS is the package set `coverage` measures; narrow it to one package to
 # exercise the gate (make coverage COVER_PKGS=./pkg/x COVERAGE_THRESHOLD=100).
-COVER_PKGS ?= ./pkg/... ./cmd/...
+COVER_PKGS ?= ./pkg/... ./cmd/... ./internal/...
 
 # RACE_TIMEOUT is the per-package -timeout of every -race pass (`race` and
 # `coverage`). pkg/iam alone takes 655s under contention, past Go's 10m
@@ -3908,7 +3908,7 @@ endif
 	# the package and took the whole target red. A budget exists to catch a
 	# hang, so it belongs well above the honest worst case rather than beside
 	# it. Do not buy headroom by trimming the package set: every package races.
-	CGO_ENABLED=1 $(GOCMD) test -race -p 2 $(BUILD_TAGS_ARG) -timeout=$(RACE_TIMEOUT) ./pkg/... ./cmd/... || \
+	CGO_ENABLED=1 $(GOCMD) test -race -p 2 $(BUILD_TAGS_ARG) -timeout=$(RACE_TIMEOUT) ./pkg/... ./cmd/... ./internal/... || \
 		(echo "$(RED)Race detector found issues$(NC)" && exit 1)
 	@echo "$(GREEN)Race detector tests passed$(NC)"
 
@@ -5988,22 +5988,22 @@ coverage-prompts: ## Generate coverage report for the prompt-set package
 .PHONY: test-containerruntime
 test-containerruntime: ## Run in-process container runtime unit tests (cgo)
 	@echo "$(BLUE)Running container runtime tests...$(NC)"
-	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/containerruntime/...
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./internal/containerruntime/...
 	@echo "$(GREEN)Container runtime unit tests passed$(NC)"
 
 .PHONY: coverage-containerruntime
 coverage-containerruntime: ## Generate coverage report for the in-process container runtime (cgo)
 	@mkdir -p $(COVERAGE_DIR)
 	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
-		-coverprofile=$(COVERAGE_DIR)/coverage-containerruntime.out -covermode=atomic ./pkg/containerruntime/...
+		-coverprofile=$(COVERAGE_DIR)/coverage-containerruntime.out -covermode=atomic ./internal/containerruntime/...
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-containerruntime.out | grep total
 
 .PHONY: bench-containerruntime
 bench-containerruntime: ## Run in-process container runtime benchmarks (cgo)
 	@echo "$(BLUE)Running container runtime benchmarks...$(NC)"
-	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/containerruntime/...
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./internal/containerruntime/...
 
-# Runs pkg/containerruntime end to end in a privileged container against a
+# Runs internal/containerruntime end to end in a privileged container against a
 # local registry: real pulls, storage-unpacked root filesystems and
 # libcontainer containers. The EXIT trap tears the stack down on every path,
 # and the test container's exit code is the target's.
