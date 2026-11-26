@@ -14790,7 +14790,7 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x19PROVIDER_TYPE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12PROVIDER_TYPE_OIDC\x10\x01\x12\x16\n" +
 	"\x12PROVIDER_TYPE_SAML\x10\x02\x12\x18\n" +
-	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\xd51\n" +
+	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\xc11\n" +
 	"\n" +
 	"IAMService\x12a\n" +
 	"\fCreateTenant\x12$.quicbaas.iam.v1.CreateTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\"\x12\xc2\xf3\x18\x0etenants:create\x12Y\n" +
@@ -14860,8 +14860,8 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x0fWithdrawConsent\x12'.quicbaas.iam.v1.WithdrawConsentRequest\x1a(.quicbaas.iam.v1.WithdrawConsentResponse\"\x12\xc2\xf3\x18\x0etenants:create\x12\\\n" +
 	"\n" +
 	"GetConsent\x12\".quicbaas.iam.v1.GetConsentRequest\x1a\x18.quicbaas.iam.v1.Consent\"\x10\xc2\xf3\x18\ftenants:read\x12l\n" +
-	"\x10ListUserConsents\x12(.quicbaas.iam.v1.ListUserConsentsRequest\x1a\x1c.quicbaas.iam.v1.ConsentList\"\x10\xc2\xf3\x18\ftenants:read\x12n\n" +
-	"\rRequestExport\x12%.quicbaas.iam.v1.RequestExportRequest\x1a\".quicbaas.iam.v1.DataExportRequest\"\x12\xc2\xf3\x18\x0etenants:create\x12^\n" +
+	"\x10ListUserConsents\x12(.quicbaas.iam.v1.ListUserConsentsRequest\x1a\x1c.quicbaas.iam.v1.ConsentList\"\x10\xc2\xf3\x18\ftenants:read\x12Z\n" +
+	"\rRequestExport\x12%.quicbaas.iam.v1.RequestExportRequest\x1a\".quicbaas.iam.v1.DataExportRequest\x12^\n" +
 	"\x0fGetExportStatus\x12'.quicbaas.iam.v1.GetExportStatusRequest\x1a\".quicbaas.iam.v1.DataExportRequest\x12Y\n" +
 	"\x0eGenerateExport\x12&.quicbaas.iam.v1.GenerateExportRequest\x1a\x1f.quicbaas.iam.v1.UserDataExport\x12t\n" +
 	"\x0fRequestDeletion\x12'.quicbaas.iam.v1.RequestDeletionRequest\x1a$.quicbaas.iam.v1.DataDeletionRequest\"\x12\xc2\xf3\x18\x0etenants:create\x12a\n" +

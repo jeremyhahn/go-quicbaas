@@ -212,7 +212,7 @@ type IAMServiceClient interface {
 	// ListUserConsents mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consents and takes its tenants:read grant.
 	ListUserConsents(ctx context.Context, in *ListUserConsentsRequest, opts ...grpc.CallOption) (*ConsentList, error)
 	// GDPR Data Export
-	// RequestExport mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export and takes its tenants:create grant.
+	// RequestExport carries no permission option: it starts export generation in the background with no further check, so it stays default-denied.
 	RequestExport(ctx context.Context, in *RequestExportRequest, opts ...grpc.CallOption) (*DataExportRequest, error)
 	// GetExportStatus carries no permission option: its handler looks the export request up by ID with no tenant check, so it stays default-denied.
 	GetExportStatus(ctx context.Context, in *GetExportStatusRequest, opts ...grpc.CallOption) (*DataExportRequest, error)
@@ -975,7 +975,7 @@ type IAMServiceServer interface {
 	// ListUserConsents mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consents and takes its tenants:read grant.
 	ListUserConsents(context.Context, *ListUserConsentsRequest) (*ConsentList, error)
 	// GDPR Data Export
-	// RequestExport mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export and takes its tenants:create grant.
+	// RequestExport carries no permission option: it starts export generation in the background with no further check, so it stays default-denied.
 	RequestExport(context.Context, *RequestExportRequest) (*DataExportRequest, error)
 	// GetExportStatus carries no permission option: its handler looks the export request up by ID with no tenant check, so it stays default-denied.
 	GetExportStatus(context.Context, *GetExportStatusRequest) (*DataExportRequest, error)

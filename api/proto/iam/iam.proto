@@ -218,10 +218,8 @@ service IAMService {
   }
 
   // GDPR Data Export
-  // RequestExport mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export and takes its tenants:create grant.
-  rpc RequestExport(RequestExportRequest) returns (DataExportRequest) {
-      option (qrdb.v1.permission) = "tenants:create";
-  }
+  // RequestExport carries no permission option: it starts export generation in the background with no further check, so it stays default-denied.
+  rpc RequestExport(RequestExportRequest) returns (DataExportRequest);
   // GetExportStatus carries no permission option: its handler looks the export request up by ID with no tenant check, so it stays default-denied.
   rpc GetExportStatus(GetExportStatusRequest) returns (DataExportRequest);
   rpc GenerateExport(GenerateExportRequest) returns (UserDataExport);
