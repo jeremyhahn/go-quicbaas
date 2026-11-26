@@ -1,8 +1,7 @@
 #!/bin/sh
 set -e
 
-# Claude Code agent entrypoint
-# Writes MCP server config and Claude settings from env vars, then execs the agent.
+# Claude Code agent entrypoint: writes the MCP and Claude settings from env vars, then execs the agent.
 
 CONFIG_DIR="${HOME}/.claude"
 MCP_CONFIG="/workspace/.mcp.json"

@@ -1,27 +1,4 @@
-# QuicBaaS Agent Daemon Container
-#
-# Multi-stage production image for the fleet node daemon.
-#
-# Base: Alpine 3.21 (lightweight, secure, ~7MB footprint)
-#
-# Design: The daemon spawns sandboxed sessions via the host's Docker socket
-# mounted at /var/run/docker.sock. This avoids nested container complexity
-# (Docker-in-Docker) and reuses the host's container runtime.
-#
-# For production deployment:
-#   docker run -v /var/run/docker.sock:/var/run/docker.sock \
-#     -v /etc/quicbaas/agent:/etc/quicbaas/agent:ro \
-#     -e QUICBAAS_SERVER=https://quicbaas.example.com:8443 \
-#     -e QUICBAAS_TENANT=acme \
-#     quicbaas-agent:latest
-#
-# The daemon authenticates with an mTLS client certificate issued by the
-# server's CA. Mount agent.crt / agent.key / server-ca.crt into the
-# credentials directory (default /etc/quicbaas/agent) -- there is no
-# bootstrap token.
-#
-# The /var/run/docker.sock mount gives the daemon permission to spawn
-# containers on the host. Restrict this to trusted daemon instances only.
+# QuicBaaS agent daemon container.
 
 # Builder stage: compile the quicbaas binary
 FROM golang:1.27.4-alpine AS builder
@@ -42,9 +19,7 @@ COPY . .
 # Build quicbaas binary (CLI + daemon)
 RUN make build BIN_DIR=/build/bin
 
-# ============================================================================
-# Final image: Alpine + quicbaas binary + minimal tooling
-# ============================================================================
+# Final image: Alpine, the quicbaas binary and minimal tooling.
 FROM alpine:3.21
 
 # Install minimal runtime dependencies
@@ -71,8 +46,7 @@ RUN mkdir -p /var/lib/quicbaas-agent && \
 USER quicbaas-agent
 WORKDIR /var/lib/quicbaas-agent
 
-# Expose the daemon's AgentRuntime gRPC service
-# Default bind address is 127.0.0.1:9091; override with QUICBAAS_BIND_ADDR
+# The daemon's AgentRuntime gRPC service; default bind 127.0.0.1:9091, override with QUICBAAS_BIND_ADDR.
 EXPOSE 9091
 
 # Health check: verify daemon is responding to enrollment ping
@@ -80,47 +54,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD quicbaas --help > /dev/null 2>&1 || exit 1
 
 # Entrypoint: start the daemon.
-#
-# Every flag below exists on `quicbaas fleet serve`; the drift test in
-# cmd/quicbaas checks that against the live cobra command, because a CMD
-# naming a removed flag makes the container exit at startup with
-# "unknown flag".
-#
-# The command runs under /bin/sh for two reasons: JSON-form CMD is passed
-# straight to execve, so a "${VAR}" in it reaches the daemon as that
-# literal string rather than the operator's value; and ${VAR:-default} /
-# ${VAR:+--flag} are shell expansions. `exec` hands PID 1 to the daemon so
-# `docker stop` delivers SIGTERM to it and the graceful session drain runs.
-#
-# Environment variables supply config.
-#
-#   Required:
-#     QUICBAAS_SERVER             https URL of the QuicBaaS server
-#     QUICBAAS_TENANT             tenant this daemon serves
-#
-#   Optional, defaulted (see the expansions below):
-#     QUICBAAS_BIND_ADDR          local listen addr (default 0.0.0.0:9091)
-#     QUICBAAS_BACKENDS           enabled backends (default acp,ollama)
-#     QUICBAAS_SANDBOX_POLICY     required|preferred|opt-in (default required)
-#     QUICBAAS_CONTAINER_RUNTIME  docker|podman|auto|none (default auto)
-#     QUICBAAS_CREDENTIALS_DIR    mTLS material dir (default /etc/quicbaas/agent)
-#     QUICBAAS_WORK_DIR           workspace path (default /var/lib/quicbaas-agent)
-#
-#   Optional, flag omitted entirely when unset:
-#     QUICBAAS_SANDBOX_NETWORK      container network for sandboxed sessions
-#     QUICBAAS_SANDBOX_CAP_ADD      capabilities kept after --cap-drop ALL
-#     QUICBAAS_SANDBOX_PIDS_LIMIT   process+thread bound per sandboxed container
-#     QUICBAAS_SANDBOX_ULIMITS      name=soft[:hard] limits (default memlock 4 GiB)
-#     QUICBAAS_ALLOWED_MOUNT_ROOTS  host dirs a sandboxed spawn may bind-mount
-#     QUICBAAS_AUTO_PULL            pull missing images at startup
-#     QUICBAAS_IMAGE_MAP            backend=image pairs
-#     QUICBAAS_IMAGE_REGISTRY       registry prefix for unqualified images
-#     QUICBAAS_MCP_ENDPOINT         MCP address spawned agents dial
-#     QUICBAAS_HEARTBEAT_INTERVAL   duration (default 30s)
-#
-# Overriding the command therefore takes a shell string, e.g.
-#   docker run quicbaas-agent:latest \
-#     "exec /usr/local/bin/quicbaas fleet list --server $SERVER"
 ENTRYPOINT ["/bin/sh", "-c"]
 CMD ["exec /usr/local/bin/quicbaas fleet serve \
   --server \"${QUICBAAS_SERVER}\" \
