@@ -64,8 +64,7 @@ The pieces are all present and unit-tested:
    ALPN, which a WebSocket upgrade is compatible with; the gRPC listener is not
    a candidate.
 
-Whether that wiring should exist at all is an owner decision, not a
-documentation one.
+Whether that wiring should exist at all is an open decision.
 
 ## Troubleshooting
 
