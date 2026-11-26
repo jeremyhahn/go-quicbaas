@@ -550,7 +550,7 @@ func TestIAMHandler_ListUsers_Success(t *testing.T) {
 // "groups" key in the body is not part of the user schema, so it does not come
 // back on the response.
 func TestIAMHandler_CreateUser_GroupsIsNotAUserField(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -560,6 +560,7 @@ func TestIAMHandler_CreateUser_GroupsIsNotAUserField(t *testing.T) {
 	body := `{"email": "withgroups@example.com", "username": "withgroups", "name": "With Groups", "groups": ["group-ops"], "roles": ["role-member"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req = withRoleAssignCaller(server, req)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
 	w := httptest.NewRecorder()
 
@@ -573,7 +574,7 @@ func TestIAMHandler_CreateUser_GroupsIsNotAUserField(t *testing.T) {
 }
 
 func TestIAMHandler_CreateUser_Success(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -583,6 +584,7 @@ func TestIAMHandler_CreateUser_Success(t *testing.T) {
 	body := `{"email": "newuser@example.com", "username": "newuser", "name": "New User", "roles": ["role-member"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req = withRoleAssignCaller(server, req)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
 	w := httptest.NewRecorder()
 
@@ -598,7 +600,7 @@ func TestIAMHandler_CreateUser_Success(t *testing.T) {
 // the response MUST carry those fields. invite_token, invite_expires_at, and
 // invite_url must be present so the caller can deliver the invite.
 func TestIAMHandler_CreateUser_ResponseShape(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -608,6 +610,7 @@ func TestIAMHandler_CreateUser_ResponseShape(t *testing.T) {
 	body := `{"email": "shape@example.com", "username": "shape-user", "name": "Shape Test User", "roles": ["role-member"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req = withRoleAssignCaller(server, req)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
 	w := httptest.NewRecorder()
 
@@ -919,7 +922,7 @@ func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
 // A user with no roles would authenticate into an authorization vacuum, so
 // the create is refused with 400 and nothing is written (#75).
 func TestIAMHandler_CreateUser_NoRolesRefused(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -935,6 +938,7 @@ func TestIAMHandler_CreateUser_NoRolesRefused(t *testing.T) {
 			body := `{"email": "` + email + `", "username": "noroles` + name + `"` + roles + `}`
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 			req.Header.Set("Content-Type", "application/json")
+			req = withRoleAssignCaller(server, req)
 			req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
 			w := httptest.NewRecorder()
 
