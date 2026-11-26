@@ -312,8 +312,17 @@ func (m *mockJobStorage) SaveExecution(ctx context.Context, exec *JobExecution) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Store a copy
+	// Store a copy, keyed by ID as the store keys it: saving a record whose
+	// ID is already stored for the job replaces it.
 	cp := *exec
+	if cp.ID != 0 {
+		for i, stored := range m.executions {
+			if stored.JobID == cp.JobID && stored.ID == cp.ID {
+				m.executions[i] = &cp
+				return nil
+			}
+		}
+	}
 	m.executions = append(m.executions, &cp)
 	return nil
 }
