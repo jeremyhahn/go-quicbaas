@@ -1,8 +1,7 @@
 #!/bin/sh
 set -e
 
-# Codex agent entrypoint
-# Writes MCP server config and Codex settings from env vars, then execs the agent.
+# Codex agent entrypoint: writes the MCP and Codex settings from env vars, then execs the agent.
 
 CONFIG_DIR="/home/agent/.codex"
 MCP_CONFIG="/workspace/.mcp.json"

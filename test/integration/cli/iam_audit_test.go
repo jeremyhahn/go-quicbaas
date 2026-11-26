@@ -322,6 +322,10 @@ func TestIAMAuditQueryAfterOperations(t *testing.T) {
 		}()
 
 		// Perform IAM operations that should generate audit events
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMAppRegisterCommand(tenantID, UniqueKey("audit-app"))) {
+			return
+		}
 		clientID := extractClientID(t, registerAppJSON(t, runner, tenantID, UniqueKey("audit-app")))
 		runner.RunAndAssert(IAMAppDeleteCommand(tenantID, clientID))
 

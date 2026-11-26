@@ -1,17 +1,5 @@
 #!/usr/bin/env bash
-# Start the in-container hardware crypto emulators for the devcontainer:
-#   * swtpm  — TPM 2.0 simulator on TCP localhost:2321 (ctrl 2322), matching the
-#              CMD in test/integration/docker/swtpm/Dockerfile.
-#   * SoftHSM2 — initialise a default PKCS#11 token (idempotent).
-#
-# This is wired into devcontainer.json postStartCommand so the tpm2 / pkcs11
-# build-tagged tests can run IN the devcontainer without the seal-hardware
-# docker-compose stack. Integration tests that need a pristine token still
-# re-init their own slot via softhsm2-util.
-#
-# The script is intentionally non-fatal: a failure here must not block the
-# devcontainer from starting (e.g. when running on a host without the emulators
-# built in). Each step logs and continues.
+# Start the in-container hardware crypto emulators for the devcontainer.
 set -u
 
 SWTPM_STATE_DIR="${SWTPM_STATE_DIR:-/var/lib/swtpm/tpmstate}"

@@ -1,7 +1,4 @@
-# QuicBaaS Cloud KMS Integration Test Environment
-# Floci (MIT-licensed, tokenless AWS emulator) for AWS KMS and other cloud
-# service emulators. Used for testing cloud KMS providers without actual
-# cloud credentials.
+# QuicBaaS cloud KMS integration environment: Floci for AWS KMS and other cloud emulators.
 
 version: '3.8'
 
@@ -27,8 +24,7 @@ services:
     networks:
       - kms-cloud-network
     healthcheck:
-      # Assert the services this stack uses report "running" rather than just
-      # probing the port, so warm-up cannot be mistaken for readiness.
+      # Check the services report "running", not just an open port.
       test:
         - CMD
         - bash

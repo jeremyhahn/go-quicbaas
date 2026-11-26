@@ -1,5 +1,4 @@
-# Multi-stage build for SWTPM TPM 2.0 simulator
-# Based on Alpine 3.22.1 for minimal image size
+# SWTPM TPM 2.0 simulator on Alpine 3.22.1.
 
 # Build stage
 FROM alpine:3.22.1 AS builder

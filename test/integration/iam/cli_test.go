@@ -2342,6 +2342,7 @@ func TestCLIMFAStatus(t *testing.T) {
 		output, err := cli.run("iam", "mfa", "status",
 			"--tenant", tenantID,
 			"--user", userID)
+		skipIfNoMFAService(t, err, output)
 		require.NoError(t, err, "mfa status should succeed")
 		t.Logf("MFA status: %s", output)
 	})
@@ -2377,6 +2378,7 @@ func TestCLIMFAEnroll(t *testing.T) {
 			"--tenant", tenantID,
 			"--user", userID,
 			"--method", "totp")
+		skipIfNoMFAService(t, err, output)
 		require.NoError(t, err, "mfa enroll should succeed")
 		t.Logf("MFA enrollment: %s", output)
 
@@ -2415,6 +2417,7 @@ func TestCLIMFADisable(t *testing.T) {
 			"--tenant", tenantID,
 			"--user", userID,
 			"--yes")
+		skipIfNoMFAService(t, err, output)
 		// May succeed or fail depending on whether MFA was enabled
 		if err != nil && !strings.Contains(err.Error(), "not enabled") {
 			require.NoError(t, err, "mfa disable should succeed or report not enabled")
@@ -2452,6 +2455,7 @@ func TestCLIMFABackupCodes(t *testing.T) {
 		output, err := cli.run("iam", "mfa", "backup-codes", "status",
 			"--tenant", tenantID,
 			"--user", userID)
+		skipIfNoMFAService(t, err, output)
 		if err != nil && strings.Contains(err.Error(), "unknown command") {
 			t.Log("backup-codes subcommand not implemented")
 			return
@@ -2469,6 +2473,7 @@ func TestCLIMFABackupCodes(t *testing.T) {
 		output, err := cli.run("iam", "mfa", "backup-codes", "generate",
 			"--tenant", tenantID,
 			"--user", userID)
+		skipIfNoMFAService(t, err, output)
 		if err != nil && strings.Contains(err.Error(), "unknown command") {
 			t.Log("backup-codes subcommand not implemented")
 			return
@@ -2481,6 +2486,22 @@ func TestCLIMFABackupCodes(t *testing.T) {
 		require.NoError(t, err, "backup-codes generate should succeed")
 		t.Logf("Generated backup codes: %s", output)
 	})
+}
+
+// skipIfNoMFAService skips the test when the node does not serve the gRPC
+// MFAService: pkg/server registers it only on nodes with an MFA manager, and
+// the integration node has none, so gRPC/unix answer UNIMPLEMENTED. Any other
+// error is left for the caller's assertions.
+func skipIfNoMFAService(t *testing.T, err error, output string) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	text := output + " " + err.Error()
+	if strings.Contains(strings.ToUpper(text), "UNIMPLEMENTED") &&
+		strings.Contains(text, "unknown service quicbaas.iam.v1.MFAService") {
+		t.Skip("node has no MFA manager: quicbaas.iam.v1.MFAService is not registered (UNIMPLEMENTED)")
+	}
 }
 
 // =============================================================================

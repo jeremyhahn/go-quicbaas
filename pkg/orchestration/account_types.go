@@ -85,6 +85,13 @@ const (
 	// either strand recoverable accounts or hide real breakage behind an
 	// automatic retry.
 	AccountStatusLimited AccountStatus = "limited"
+
+	// AccountStatusAwaitingCredential marks an account that exists but has no
+	// credential yet: a default provider account created at install, waiting
+	// for the user to set its credential at first login. It is never
+	// selected. Setting the credential (RotateAccountCredential) makes it
+	// Active.
+	AccountStatusAwaitingCredential AccountStatus = "awaiting_credential"
 )
 
 // AccountCredentialHealth is the operator-facing verdict on how much life an
@@ -687,8 +694,8 @@ func (a Account) MarshalJSON() ([]byte, error) {
 //
 // Active accounts always are. Limited accounts are once their hold has lapsed —
 // that is the lazy return-to-pool: no sweeper marks them available again, the
-// next selection simply stops excluding them. Revoked and Error accounts never
-// are; both need an operator.
+// next selection simply stops excluding them. Revoked, Error and
+// AwaitingCredential accounts never are; each needs an operator or user action.
 func (a *Account) Selectable(now time.Time) bool {
 	if a == nil {
 		return false

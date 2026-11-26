@@ -1,16 +1,5 @@
 #!/usr/bin/env bash
 # Dockerized Playwright e2e entrypoint.
-#
-# Boots quicbaasd in the background, waits for first-boot readiness, then runs
-# the requested Playwright project against it — the same flow as the host
-# `make test-e2e`, but self-contained in one container so the CA cert and the
-# first-boot admin certificate are local to both the daemon and the test runner.
-#
-# Environment (set by the image / compose / Make):
-#   E2E_PROJECT     Playwright project: chromium-no-backend | chromium-acp
-#   E2E_BACKEND     embedded-fleet-node backend: ollama | opencode
-#   E2E_OLLAMA_URL  ollama endpoint for the backend
-#   E2E_EXTRA_ARGS  optional extra args appended to the daemon start command
 set -uo pipefail
 
 RUN_ID_SLUG=${RUN_ID_SLUG:-${RUN_ID:-local}}

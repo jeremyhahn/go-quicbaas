@@ -1,19 +1,8 @@
-# QuicBaaS Development / SDK Single-Node Dockerfile
-# Builds a single-node QuicBaaS server image used by the SDK integration
-# suite (sdk/go/test/integration/docker-compose.yml). The container runs
-# `quicbaasd node` for SDK clients to exercise over REST/gRPC.
-#
-# Build model: first-party dependencies resolve from Gitea as tagged modules,
-# exactly as they do for `go build` on a developer machine and in every other
-# job (dependency-resolution.md §1). go.mod and go.sum are the single source of
-# truth; no sibling checkout, go.work or `workspace` build context is needed,
-# so the image builds on a CI runner whose parent directory holds no siblings.
+# Single-node QuicBaaS server image for the SDK integration suite.
 
 ARG BUILD_TAGS="iam raft rest rag"
 
-# ============================================================================
-# Stage 1: Build binaries inside a Go workspace mirroring the host layout.
-# ============================================================================
+# Stage 1: build the binaries in a Go workspace.
 FROM golang:1.27.4-alpine AS builder
 
 ARG BUILD_TAGS
@@ -30,11 +19,7 @@ WORKDIR /workspace/go-quicbaas
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
-# Gitea credentials arrive as a BuildKit secret, mounted on tmpfs for this RUN
-# alone and sourced rather than exported, so the token reaches neither a layer,
-# image metadata, nor a command line (dependency-resolution.md §6). The mount
-# is optional: on GitHub no secret is supplied and these modules resolve from
-# the public proxy once tags are mirrored.
+# Module credentials arrive as a BuildKit secret on tmpfs, sourced for this run only, so the token reaches no layer or command line.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then set -a; . /run/secrets/gomodauth; set +a; fi; \
@@ -51,9 +36,7 @@ RUN CGO_ENABLED=0 GOOS=linux \
     CGO_ENABLED=0 GOOS=linux \
     go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
 
-# ============================================================================
-# Stage 2: Minimal runtime for the single-node SDK test server.
-# ============================================================================
+# Stage 2: minimal runtime for the single-node SDK test server.
 FROM alpine:latest
 
 LABEL maintainer="Jeremy Hahn"
@@ -79,12 +62,7 @@ COPY --from=builder /workspace/go-quicbaas/bin/quicbaas  /usr/local/bin/quicbaas
 
 RUN chmod +x /usr/local/bin/quicbaasd /usr/local/bin/quicbaas
 
-# Expose ports
-# 8080: HTTP/REST API
-# 9090: Metrics/Prometheus
-# 50051: gRPC API
-# 4433: QUIC
-# 63001-63010: Raft cluster communication
+# Ports: 8080 REST, 9090 metrics, 50051 gRPC, 4433 QUIC, 63001-63010 Raft.
 EXPOSE 8080 9090 50051 4433 63001-63010
 
 VOLUME ["/data", "/var/log/quicbaas"]
@@ -95,6 +73,5 @@ ENV QUICBAAS_LOG_LEVEL=debug \
     QUICBAAS_DATA_DIR=/data \
     CGO_ENABLED=0
 
-# Default to a single-node server; the SDK compose overrides the command
-# with explicit discovery and port flags.
+# A single-node server by default; the SDK compose overrides the command.
 CMD ["/usr/local/bin/quicbaasd", "node"]
