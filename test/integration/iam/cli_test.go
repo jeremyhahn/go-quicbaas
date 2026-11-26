@@ -1805,6 +1805,12 @@ func TestCLIRoleCreate(t *testing.T) {
 
 	t.Run("create-role", func(t *testing.T) {
 		roleID := fmt.Sprintf("role-%d", time.Now().UnixNano())
+		if expectRoleRefusedOnGRPC(t, cli, "iam", "role", "create", roleID,
+			"--tenant", tenantID,
+			"--name", "Test Role",
+			"--description", "Test role description") {
+			return
+		}
 		output, err := cli.run("iam", "role", "create", roleID,
 			"--tenant", tenantID,
 			"--name", "Test Role",
@@ -1824,6 +1830,11 @@ func TestCLIRoleGet(t *testing.T) {
 
 	// Create a role first
 	roleID := fmt.Sprintf("get-role-%d", time.Now().UnixNano())
+	if expectRoleRefusedOnGRPC(t, cli, "iam", "role", "create", roleID,
+		"--tenant", tenantID,
+		"--name", "Get Test Role") {
+		return
+	}
 	_, createErr := cli.run("iam", "role", "create", roleID,
 		"--tenant", tenantID,
 		"--name", "Get Test Role")
@@ -1850,6 +1861,9 @@ func TestCLIRoleList(t *testing.T) {
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
 	t.Run("list-roles", func(t *testing.T) {
+		if expectRoleRefusedOnGRPC(t, cli, "iam", "role", "list", "--tenant", tenantID) {
+			return
+		}
 		output, err := cli.run("iam", "role", "list", "--tenant", tenantID)
 		require.NoError(t, err, "role list should succeed")
 		t.Logf("Listed roles: %s", output)
@@ -1865,6 +1879,11 @@ func TestCLIRoleUpdate(t *testing.T) {
 
 	// Create a role first
 	roleID := fmt.Sprintf("update-role-%d", time.Now().UnixNano())
+	if expectRoleRefusedOnGRPC(t, cli, "iam", "role", "create", roleID,
+		"--tenant", tenantID,
+		"--name", "Update Test Role") {
+		return
+	}
 	_, createErr := cli.run("iam", "role", "create", roleID,
 		"--tenant", tenantID,
 		"--name", "Update Test Role")
@@ -1889,6 +1908,11 @@ func TestCLIRoleDelete(t *testing.T) {
 
 	// Create a role to delete
 	roleID := fmt.Sprintf("delete-role-%d", time.Now().UnixNano())
+	if expectRoleRefusedOnGRPC(t, cli, "iam", "role", "create", roleID,
+		"--tenant", tenantID,
+		"--name", "Delete Test Role") {
+		return
+	}
 	_, createErr := cli.run("iam", "role", "create", roleID,
 		"--tenant", tenantID,
 		"--name", "Delete Test Role")
@@ -2577,6 +2601,13 @@ func TestCLIE2ETenantUserWorkflow(t *testing.T) {
 	// grouping identity offers; quicbaas keeps no groups of its own.
 	roleID := fmt.Sprintf("e2e-role-%d", time.Now().UnixNano())
 	t.Run("e2e-create-role", func(t *testing.T) {
+		// gRPC refuses the unmapped role verbs, so no role exists to bind;
+		// the policy and access-check steps name the role by ID only.
+		if expectRoleRefusedOnGRPC(t, tenantCLI, "iam", "role", "create", roleID,
+			"--tenant", tenantID,
+			"--name", "E2E Test Role") {
+			return
+		}
 		_, err := tenantCLI.run("iam", "role", "create", roleID,
 			"--tenant", tenantID,
 			"--name", "E2E Test Role")
