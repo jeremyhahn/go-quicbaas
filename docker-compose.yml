@@ -1,7 +1,6 @@
 version: '3.8'
 
-# QuicBaaS Development Environment
-# Multi-node Raft cluster for local development
+# QuicBaaS development environment: a multi-node Raft cluster.
 
 services:
   # Node 1 - Primary node
@@ -24,8 +23,7 @@ services:
       - QUICBAAS_LOGGING_FORMAT=console
       - QUICBAAS_STORAGE_DATA_DIR=/data
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_ENABLE_TCP=true
       - QUICBAAS_SERVER_ENABLE_REST=true
@@ -33,8 +31,7 @@ services:
       - QUICBAAS_KMS_ENABLED=true
       - QUICBAAS_KMS_BACKEND=software
       - QUICBAAS_SECRETS_ENABLED=true
-      # Auth configuration - passwordless by default
-      # Use WebAuthn, OIDC, or mTLS for authentication
+      # Passwordless auth: WebAuthn, OIDC or mTLS.
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_JWT_SECRET=test-jwt-secret-for-integration-tests-only
     volumes:
@@ -69,8 +66,7 @@ services:
       - QUICBAAS_LOGGING_FORMAT=console
       - QUICBAAS_STORAGE_DATA_DIR=/data
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_ENABLE_TCP=true
       - QUICBAAS_SERVER_ENABLE_REST=true
@@ -78,8 +74,7 @@ services:
       - QUICBAAS_KMS_ENABLED=true
       - QUICBAAS_KMS_BACKEND=software
       - QUICBAAS_SECRETS_ENABLED=true
-      # Auth configuration - passwordless by default
-      # Use WebAuthn, OIDC, or mTLS for authentication
+      # Passwordless auth: WebAuthn, OIDC or mTLS.
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_JWT_SECRET=test-jwt-secret-for-integration-tests-only
     volumes:
@@ -116,8 +111,7 @@ services:
       - QUICBAAS_LOGGING_FORMAT=console
       - QUICBAAS_STORAGE_DATA_DIR=/data
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_ENABLE_TCP=true
       - QUICBAAS_SERVER_ENABLE_REST=true
@@ -125,8 +119,7 @@ services:
       - QUICBAAS_KMS_ENABLED=true
       - QUICBAAS_KMS_BACKEND=software
       - QUICBAAS_SECRETS_ENABLED=true
-      # Auth configuration - passwordless by default
-      # Use WebAuthn, OIDC, or mTLS for authentication
+      # Passwordless auth: WebAuthn, OIDC or mTLS.
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_JWT_SECRET=test-jwt-secret-for-integration-tests-only
     volumes:

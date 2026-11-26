@@ -1,15 +1,11 @@
-# QuicBaaS Production Dockerfile
-# Multi-stage build for minimal final image with static binary
+# QuicBaaS production image: multi-stage build of a static binary.
 
 # Build arguments
 ARG GO_VERSION=1.27
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
-# gms_pure_go is the floor, not a feature: the builder below is CGO_ENABLED=0
-# and dolthub/go-mysql-server's internal/regex has no file satisfying
-# `cgo && !gms_pure_go` without cgo, so the link fails on "build constraints
-# exclude all Go files". Callers passing BUILD_TAGS must keep it in the list.
+# gms_pure_go is required: the builder is CGO_ENABLED=0 and go-mysql-server's regex needs cgo otherwise.
 ARG BUILD_TAGS=gms_pure_go
 
 # Stage 1: Build stage
@@ -25,25 +21,7 @@ WORKDIR /build
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
-# Until 2026-08-14 this stage copied working-tree clones out of a .deps/
-# directory and rewrote a set of relative `replace` directives to point at
-# them. Both are gone: .deps/ was deleted with the decoupling, and the only
-# replaces left in go.mod are the intra-repo sdk/go one and an
-# armon/go-metrics version pin, neither of which needs rewriting. The COPY of
-# a directory that no longer exists failed the build outright.
-#
-# go.mod pins first-party modules, which this download resolves through the
-# module proxy and the checksum database like any other module.
-#
-# Fetch credentials arrive as a BuildKit secret, never a build arg -- an arg is recorded in
-# image metadata and readable with `docker history`, while a secret is mounted
-# on tmpfs for this RUN alone and never becomes a layer. It is sourced rather
-# than exported so the value never reaches a command line either (`ps` on the
-# build host would show it).
-#
-# The mount is optional by design. On GitHub Actions no secret is supplied and
-# these modules resolve from the public proxy once tags are mirrored (§7), so
-# the same Dockerfile builds on both hosts.
+# Modules resolve through the module proxy; the gomodauth secret mount is optional.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
@@ -70,26 +48,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=f
 # Verify static binaries
 RUN file quicbaasd && file quicbaas
 
-# Stage 2: Runtime stage (minimal)
-#
-# The base is PINNED, and the packages are upgraded on top of it. Those pull in
-# opposite directions on purpose, and the image needs both:
-#
-#   * `alpine:latest` made the shipped image unreproducible — whether a given
-#     build carried a vulnerability depended on when it ran, with no commit
-#     behind the change. Same defect class as installing a scanner at
-#     `@latest`, which ci.yml pins for the same reason.
-#   * A pin alone would freeze the base at whatever packages it shipped with,
-#     so a patched libcrypto3 could never reach the image without a bump here.
-#     `apk upgrade` is what actually closes a CVE between base releases.
-#
-# Bump the pin deliberately; `apk upgrade` covers the interval in between.
+# Stage 2: minimal runtime.
 FROM alpine:3.24.1
 
-# Install runtime dependencies, patched. Measured 2026-08-26: alpine 3.24.1
-# ships libcrypto3/libssl3 3.5.7-r0, which carries CVE-2026-14456 (HIGH,
-# openssl DoS); `apk upgrade` takes them to 3.5.8-r0 and the image scans clean.
-# The daemon runs worker and train containers through the docker CLI and needs git (go-quicbaas#2228).
+# Runtime dependencies, patched.
+# docker CLI and git: the daemon runs worker and train containers (#2228).
 RUN apk upgrade --no-cache && \
     apk --no-cache add ca-certificates tzdata docker-cli git
 
@@ -114,10 +77,7 @@ USER quicbaas
 # Set working directory
 WORKDIR /data
 
-# Expose ports
-# 8080: HTTP/REST API
-# 9090: gRPC API
-# 63001-63010: Raft cluster communication
+# Ports: 8080 REST, 9090 gRPC, 63001-63010 Raft.
 EXPOSE 8080 9090 63001-63010
 
 # Health check using CLI

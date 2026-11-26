@@ -1,19 +1,5 @@
 ##############################################################################
-# Agent Runtime Integration Test Environment
-#
-# Brings up three services on a shared bridge network:
-#
-#   central   — single-node QuicBaaS cluster (enrollment + heartbeat endpoints)
-#   agent     — remote agent daemon under test
-#   ollama    — Ollama model server (model: qwen3:1.7b — fastest for CI)
-#
-# Usage:
-#   make integration-test-agent-runtime
-#
-# Environment variables:
-#   QUICBAAS_IMAGE  — QuicBaaS image tag (default: quicbaas:latest)
-#   OLLAMA_MODEL    — Ollama model to pull/use (default: qwen3:1.7b)
-##############################################################################
+############################################################################## Agent runtime integration test environment.
 
 services:
   central:

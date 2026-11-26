@@ -1,6 +1,4 @@
-# QuicBaaS KMS Test Cluster with Software TPM
-# 3-node Raft cluster with simulated TPM 2.0 backends for KMS testing
-# Each node has its own swtpm instance for hardware key isolation
+# QuicBaaS KMS test cluster: 3 Raft nodes, each with its own swtpm.
 
 version: '3.8'
 
@@ -84,8 +82,7 @@ services:
 
       # HTTP/gRPC configuration
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
@@ -156,8 +153,7 @@ services:
 
       # HTTP/gRPC configuration
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
@@ -230,8 +226,7 @@ services:
 
       # HTTP/gRPC configuration
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051

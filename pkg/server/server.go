@@ -356,6 +356,10 @@ type Server struct {
 	// tenant's barrier is unsealed; the boot migrations register here to
 	// reach the tenants that were sealed at boot.
 	tenantUnsealHooks service.TenantUnsealHooks
+	// tenantCreatedHooks is told by the tenant manager after every tenant it
+	// creates; per-tenant defaults register here to reach tenants created
+	// after startup, whatever their isolation.
+	tenantCreatedHooks tenantCreatedHooks
 	// tenantUnsealRouter is the tenant servicer the embedded node's native transports call, built in unifiedModuleServerOptions.
 	tenantUnsealRouter *tenantUnsealRouter
 
@@ -579,6 +583,11 @@ type Server struct {
 	// bootstrap ceremony stack) while the listeners already run, so it is
 	// read and written atomically. Empty answers not-configured.
 	barrierServicer atomic.Pointer[barrierServicerRef]
+
+	// credentialServicer is the qrdb.v1 credential servicer the credential
+	// proxy serves on a seal-off node, published by startService while the
+	// listeners run, so it is read and written atomically. Empty answers not-configured.
+	credentialServicer atomic.Pointer[credentialServicerRef]
 
 	// tenantSDKClient is the in-process qrdb SDK client whose embedded
 	// transport carries the node's TenantServicer. It backs the per-tenant

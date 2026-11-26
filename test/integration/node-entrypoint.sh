@@ -1,15 +1,5 @@
 #!/bin/sh
 # Integration node entrypoint: derive QUICBAAS_RAFT_MEMBER_IDENTITIES, then exec.
-#
-# go-quicraft admits a Raft member by its identity -- "spki:" plus the hex
-# SHA-256 of the certificate's SubjectPublicKeyInfo, what `qrdbd node-identity
-# --cert` prints. The certs-init service issues the fixture certificates at run
-# time, so the identities cannot be written into the compose file; each node
-# reads its peers' public certificates from the shared certs volume instead.
-# Replica <id> presents /etc/quicbaas/certs/node<id>.crt. The local replica's
-# own identity is derived by the daemon from its certificate and is skipped.
-#
-# An explicitly set QUICBAAS_RAFT_MEMBER_IDENTITIES is left untouched.
 set -eu
 
 CERT_DIR="${QUICBAAS_CERT_DIR:-/etc/quicbaas/certs}"
