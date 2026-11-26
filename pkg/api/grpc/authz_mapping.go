@@ -311,11 +311,12 @@ var grpcMethodPermissions = map[string]methodPermission{
 
 	// ---- quicbaas.iam.v1.AuditService ----
 	// The same permissions REST and MCP require for these verbs (#1751):
-	// GET /api/v1/iam/audit (audit:query), GET /api/v1/iam/audit/{id}
-	// (audit:read) and POST /api/v1/iam/audit (audit_events:record).
+	// GET /api/v1/iam/audit (audit:query) and GET /api/v1/iam/audit/{id}
+	// (audit:read). RecordAuditEvent stays unmapped, so it is
+	// default-denied on the node, as on main: no REST grant is copied
+	// onto it.
 	"/quicbaas.iam.v1.AuditService/QueryAuditEvents": {"audit", "query"},
 	"/quicbaas.iam.v1.AuditService/GetAuditEvent":    {"audit", "read"},
-	"/quicbaas.iam.v1.AuditService/RecordAuditEvent": {"audit_events", "record"},
 
 	// ---- quicbaas.iam.v1.IAMService: built-in role reconciliation ----
 	//
