@@ -14790,7 +14790,7 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x19PROVIDER_TYPE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12PROVIDER_TYPE_OIDC\x10\x01\x12\x16\n" +
 	"\x12PROVIDER_TYPE_SAML\x10\x02\x12\x18\n" +
-	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\xb72\n" +
+	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\xb52\n" +
 	"\n" +
 	"IAMService\x12a\n" +
 	"\fCreateTenant\x12$.quicbaas.iam.v1.CreateTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\"\x12\xc2\xf3\x18\x0etenants:create\x12Y\n" +
@@ -14827,11 +14827,11 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"UpdateRole\x12\".quicbaas.iam.v1.UpdateRoleRequest\x1a\x15.quicbaas.iam.v1.Role\"\x12\xc2\xf3\x18\x0etenants:create\x12i\n" +
 	"\n" +
 	"DeleteRole\x12\".quicbaas.iam.v1.DeleteRoleRequest\x1a#.quicbaas.iam.v1.DeleteRoleResponse\"\x12\xc2\xf3\x18\x0etenants:delete\x12d\n" +
-	"\tListRoles\x12!.quicbaas.iam.v1.ListRolesRequest\x1a\".quicbaas.iam.v1.ListRolesResponse\"\x10\xc2\xf3\x18\ftenants:read\x12i\n" +
+	"\tListRoles\x12!.quicbaas.iam.v1.ListRolesRequest\x1a\".quicbaas.iam.v1.ListRolesResponse\"\x10\xc2\xf3\x18\ftenants:read\x12g\n" +
 	"\n" +
-	"AssignRole\x12\".quicbaas.iam.v1.AssignRoleRequest\x1a#.quicbaas.iam.v1.AssignRoleResponse\"\x12\xc2\xf3\x18\x0etenants:create\x12i\n" +
+	"AssignRole\x12\".quicbaas.iam.v1.AssignRoleRequest\x1a#.quicbaas.iam.v1.AssignRoleResponse\"\x10\xc2\xf3\x18\froles:assign\x12i\n" +
 	"\n" +
-	"RevokeRole\x12\".quicbaas.iam.v1.RevokeRoleRequest\x1a#.quicbaas.iam.v1.RevokeRoleResponse\"\x12\xc2\xf3\x18\x0etenants:delete\x12s\n" +
+	"RevokeRole\x12\".quicbaas.iam.v1.RevokeRoleRequest\x1a#.quicbaas.iam.v1.RevokeRoleResponse\"\x12\xc2\xf3\x18\x0eroles:unassign\x12s\n" +
 	"\x0eReconcileRoles\x12&.quicbaas.iam.v1.ReconcileRolesRequest\x1a'.quicbaas.iam.v1.ReconcileRolesResponse\"\x10\xc2\xf3\x18\froles:create\x12d\n" +
 	"\vRegisterApp\x12#.quicbaas.iam.v1.RegisterAppRequest\x1a\x1c.quicbaas.iam.v1.Application\"\x12\xc2\xf3\x18\x0etenants:create\x12X\n" +
 	"\x06GetApp\x12\x1e.quicbaas.iam.v1.GetAppRequest\x1a\x1c.quicbaas.iam.v1.Application\"\x10\xc2\xf3\x18\ftenants:read\x12`\n" +

@@ -114,13 +114,15 @@ service IAMService {
   rpc ListRoles(ListRolesRequest) returns (ListRolesResponse) {
       option (qrdb.v1.permission) = "tenants:read";
   }
-  // AssignRole mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/roles and takes its tenants:create grant.
+  // AssignRole takes the tenant-scoped roles:assign grant, as the QuicBaaS
+  // service's AssignRole does (REST's tenants:create grant is system-scope).
   rpc AssignRole(AssignRoleRequest) returns (AssignRoleResponse) {
-      option (qrdb.v1.permission) = "tenants:create";
+      option (qrdb.v1.permission) = "roles:assign";
   }
-  // RevokeRole mirrors REST DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} and takes its tenants:delete grant.
+  // RevokeRole takes the tenant-scoped roles:unassign grant, as the QuicBaaS
+  // service's RevokeRole does (REST's tenants:delete grant is system-scope).
   rpc RevokeRole(RevokeRoleRequest) returns (RevokeRoleResponse) {
-      option (qrdb.v1.permission) = "tenants:delete";
+      option (qrdb.v1.permission) = "roles:unassign";
   }
   // ReconcileRoles converges a tenant's stored built-in roles onto the
   // definitions the running build carries. It takes the role-create family
