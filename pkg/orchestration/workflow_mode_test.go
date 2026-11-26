@@ -1,6 +1,7 @@
 package orchestration
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -81,5 +82,66 @@ agents:
 	}
 	if decomposeCalls == 0 {
 		t.Fatal("a constrained workflow is lead-decomposed: DecomposeTask must be called")
+	}
+}
+
+// TestWorkflowLoader_StoredCannedWorkflowRunsConstrained is the upgrade
+// regression: a canned definition stored before the mode was deleted is read
+// back by Rehydrate and RehydrateAll (the boot and the resume path) as
+// constrained, so the control loop keeps its workflow-authoritative role and
+// backend restriction instead of treating it as unconstrained.
+func TestWorkflowLoader_StoredCannedWorkflowRunsConstrained(t *testing.T) {
+	t.Parallel()
+	stored := func() *WorkflowDefinition {
+		return &WorkflowDefinition{
+			Name:     "legacy",
+			TenantID: "acme",
+			Mode:     WorkflowMode("canned"),
+			Agents: []AgentRoleSpec{
+				{Role: "lead", Backend: "ollama"},
+				{Role: "coder", Backend: "claude"},
+			},
+		}
+	}
+	rehydrators := map[string]func(*WorkflowLoader) error{
+		"Rehydrate": func(wl *WorkflowLoader) error {
+			_, err := wl.Rehydrate(context.Background(), "acme")
+			return err
+		},
+		"RehydrateAll": func(wl *WorkflowLoader) error {
+			_, err := wl.RehydrateAll(context.Background())
+			return err
+		},
+	}
+	for name, rehydrate := range rehydrators {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			persistor := newMemWorkflowPersistor()
+			persistor.saved["legacy"] = stored()
+			loader := NewWorkflowLoader()
+			loader.SetPersistor(persistor)
+			if err := rehydrate(loader); err != nil {
+				t.Fatalf("rehydrate: %v", err)
+			}
+			got, err := loader.Get("acme", "legacy")
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if got.Mode != WorkflowModeConstrained {
+				t.Fatalf("mode = %q, want %q", got.Mode, WorkflowModeConstrained)
+			}
+			if err := got.Validate(); err != nil {
+				t.Fatalf("the migrated definition must validate: %v", err)
+			}
+
+			cl := &ControlLoop{workflow: got}
+			if !cl.isConstrainedWorkflowMode() {
+				t.Fatal("a stored canned workflow must stay constrained")
+			}
+			item := &WorkItem{RequiredRole: "coder", Backend: "llm-picked"}
+			if backend := cl.resolveBackendForMode(item, nil); backend != "claude" {
+				t.Fatalf("backend = %q, want the workflow's coder backend claude", backend)
+			}
+		})
 	}
 }
