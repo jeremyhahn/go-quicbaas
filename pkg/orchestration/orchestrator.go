@@ -1166,10 +1166,11 @@ func runtimeTrustCapabilities(runtime ContainerRuntime) TrustCapabilities {
 		return TrustCapabilities{}
 	}
 	// An attesting runtime answers for itself across all three tiers.
-	if attesting, ok := runtime.(AttestingContainerRuntime); ok {
+	// A wrapper (VolumeRuntime) answers with the runtime it wraps.
+	if attesting, ok := RuntimeAs[AttestingContainerRuntime](runtime); ok {
 		return attesting.TrustCapabilities()
 	}
-	if _, ok := runtime.(pinVerifyingRuntime); ok {
+	if _, ok := RuntimeAs[pinVerifyingRuntime](runtime); ok {
 		return TrustCapabilities{DigestPinning: true}
 	}
 	return TrustCapabilities{}
@@ -2066,6 +2067,21 @@ func (s *agentServiceImpl) authorizeSandboxMounts(
 	return nil
 }
 
+// refuseSpawnPrivileges refuses a spawn caller's ContainerConfig that asks
+// for the broker class, a host device or a volume claim. Those are granted
+// only to an operator-configured service launch, never to a spawn caller.
+func refuseSpawnPrivileges(cfg *ContainerSpec) error {
+	switch {
+	case cfg.PrivilegeClass != "":
+		return &InputValidationError{Field: "container_config.privilege_class", Message: "not accepted on a spawn request"}
+	case len(cfg.Devices) > 0:
+		return &InputValidationError{Field: "container_config.devices", Message: "not accepted on a spawn request"}
+	case len(cfg.Volumes) > 0:
+		return &InputValidationError{Field: "container_config.volumes", Message: "not accepted on a spawn request"}
+	}
+	return nil
+}
+
 // spawnSandboxedSession builds a ContainerSpec and runs the container.
 //
 // Everything privileged on the spec was decided by SpawnSession before this
@@ -2086,6 +2102,11 @@ func (s *agentServiceImpl) spawnSandboxedSession(
 	// Use the provided container config, or build one from request fields.
 	var spec *ContainerSpec
 	if req.ContainerConfig != nil {
+		// Broker access, host devices and volumes are granted only to an
+		// operator-configured service launch, never to a spawn caller.
+		if err := refuseSpawnPrivileges(req.ContainerConfig); err != nil {
+			return "", err
+		}
 		spec = req.ContainerConfig
 	} else {
 		image := req.ContainerImage

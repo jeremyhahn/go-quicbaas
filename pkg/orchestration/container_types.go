@@ -15,6 +15,7 @@ package orchestration
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -77,6 +78,58 @@ type ContainerRuntime interface {
 	// not gated on a network round-trip. Returns ContainerImagePullError on
 	// failure; nil on success or when the image is already cached locally.
 	Pull(ctx context.Context, image string) error
+}
+
+// RuntimeUnwrapper is a ContainerRuntime that wraps another one and names it,
+// so a caller looking for an optional capability can find it on the wrapped
+// runtime.
+type RuntimeUnwrapper interface {
+	Unwrap() ContainerRuntime
+}
+
+// ContainerVolumeReleaser is a runtime that holds volumes for containers and
+// releases them for the container known under the first of keys (its ID or
+// its name) that has a record. A caller that removed the container under
+// another key than the one it was launched under releases them with it.
+type ContainerVolumeReleaser interface {
+	ReleaseContainer(ctx context.Context, keys ...string) error
+}
+
+// RecoveredVolumeReleaser is a runtime that recovered, at start, the volumes
+// an earlier run of the node held, and releases them once their containers
+// are gone.
+type RecoveredVolumeReleaser interface {
+	ReleaseRecovered(ctx context.Context) error
+}
+
+// PendingVolumeReleaser retries volume releases that failed earlier; the
+// fleet reaper calls it each pass.
+type PendingVolumeReleaser interface {
+	RetryPendingReleases(ctx context.Context) error
+}
+
+// ContainerVolumeReconciler lists owner's containers through lister and
+// releases the volumes of the containers it launched that the listing no
+// longer shows; the fleet reaper lists through it each pass.
+type ContainerVolumeReconciler interface {
+	ReconcileVolumes(ctx context.Context, owner string, lister OwnedContainerLister) ([]OwnedContainer, error)
+}
+
+// RuntimeAs returns the first runtime in rt's wrapper chain, rt itself
+// first, that implements T. The walk follows Unwrap and stops after 8 hops.
+func RuntimeAs[T any](rt ContainerRuntime) (T, bool) {
+	for i := 0; rt != nil && i < 8; i++ {
+		if t, ok := rt.(T); ok {
+			return t, true
+		}
+		u, ok := rt.(RuntimeUnwrapper)
+		if !ok {
+			break
+		}
+		rt = u.Unwrap()
+	}
+	var zero T
+	return zero, false
 }
 
 // InteractiveProcess represents a running interactive container with stdio pipes.
@@ -212,6 +265,16 @@ type ContainerSpec struct {
 	// for CapAdd.
 	CapDrop []string `json:"cap_drop,omitempty"`
 
+	// PrivilegeClass names the service privilege class the container runs
+	// in. Empty is the ordinary class; PrivilegeClassBroker is the only other
+	// and the only one Validate lets carry Devices. Measured.
+	PrivilegeClass string `json:"privilege_class,omitempty"`
+
+	// Devices are host device nodes passed into the container (--device),
+	// broker class only. A VolumeRuntime fills them from raw volume claims.
+	// Measured.
+	Devices []ContainerDevice `json:"devices,omitempty"`
+
 	// --- Trust dimension (see container_trust.go and trust_policy.go) ---
 
 	// ImageDigest pins the container to an immutable OCI content digest in
@@ -257,6 +320,14 @@ type ContainerSpec struct {
 	// launch: sha256, sha384 or sha512. Empty resolves to sha256. sha1 is
 	// refused: the Verifier does not appraise a SHA-1 quote.
 	MeasurementBank string `json:"measurement_bank,omitempty"`
+
+	// Volumes are go-blockstore block volumes the workload claims. Only a
+	// VolumeRuntime can honour them: it attaches each claim on the node and
+	// hands the runtime it wraps a copy with the volumes resolved into bind
+	// Mounts (which is what ContainerConfigDigest measures). Any other
+	// runtime refuses a spec that still carries volumes, through Validate,
+	// rather than launch the workload without its storage.
+	Volumes []VolumeClaim `json:"volumes,omitempty"`
 }
 
 // ContainerMount defines a mount between host and container.
@@ -316,6 +387,12 @@ func (s *ContainerSpec) Validate() error {
 	}
 	if s.PidsLimit < 0 {
 		return &InputValidationError{Field: "pids_limit", Message: "cannot be negative"}
+	}
+	if len(s.Volumes) > 0 {
+		return fmt.Errorf("%w: %d volume claim(s) not attached: the spec needs a VolumeRuntime", ErrVolumeUnsupported, len(s.Volumes))
+	}
+	if err := s.validatePrivilegeClass(); err != nil {
+		return err
 	}
 	if err := validateUlimits(s.Ulimits); err != nil {
 		return err

@@ -151,6 +151,7 @@ require (
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jeremyhahn/go-auth v0.4.0-alpha // indirect
+	github.com/jeremyhahn/go-blockstore v0.4.0-alpha // indirect
 	github.com/jeremyhahn/go-codec v1.5.1-alpha // indirect
 	github.com/jeremyhahn/go-enclave v0.6.1-alpha // indirect
 	github.com/jeremyhahn/go-frost v0.3.1-alpha // indirect

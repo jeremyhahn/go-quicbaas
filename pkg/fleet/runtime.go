@@ -809,7 +809,7 @@ func (r *Runtime) Close(ctx context.Context, backendName, sessionID string) erro
 // cannot list them or the listing failed. Nil means "not reported", which the
 // control plane reads as unknown rather than as a host with no images.
 func (r *Runtime) Images(ctx context.Context) []string {
-	lister, ok := r.containerRuntime.(orchestration.ImageLister)
+	lister, ok := orchestration.RuntimeAs[orchestration.ImageLister](r.containerRuntime)
 	if !ok {
 		return nil
 	}
@@ -929,7 +929,7 @@ func (r *Runtime) ensureImage(ctx context.Context, image string) error {
 	if r.containerRuntime == nil {
 		return nil
 	}
-	if inspector, ok := r.containerRuntime.(imageInspector); ok {
+	if inspector, ok := orchestration.RuntimeAs[imageInspector](r.containerRuntime); ok {
 		_, err := inspector.InspectImage(ctx, image)
 		if err == nil {
 			return nil
@@ -962,11 +962,24 @@ func (r *Runtime) SweepOrphanContainers(ctx context.Context) (orchestration.Cont
 	if r.containerRuntime == nil || r.workDir == "" {
 		return orchestration.ContainerSweep{}, nil
 	}
-	sweeper, ok := r.containerRuntime.(orchestration.ContainerOwnerSweeper)
+	sweeper, ok := orchestration.RuntimeAs[orchestration.ContainerOwnerSweeper](r.containerRuntime)
 	if !ok {
 		return orchestration.ContainerSweep{}, nil
 	}
-	return sweeper.SweepOwned(ctx, r.workDir)
+	sweep, err := sweeper.SweepOwned(ctx, r.workDir)
+	if err != nil {
+		return sweep, err
+	}
+	// The volumes the swept containers held were recovered from the staging
+	// dir's state file; release them now their containers are gone. What
+	// fails stays pending and reserved, and is retried before the next
+	// launch. Without a sweeper they stay reserved, which is the safe failure.
+	if rel, ok := orchestration.RuntimeAs[orchestration.RecoveredVolumeReleaser](r.containerRuntime); ok {
+		if rerr := rel.ReleaseRecovered(ctx); rerr != nil {
+			r.logger.Warnf("fleet volumes: release volumes of swept containers: %v", rerr)
+		}
+	}
+	return sweep, nil
 }
 
 // ContainerReaper returns the running reaper for this daemon's sandbox
@@ -978,17 +991,86 @@ func (r *Runtime) ContainerReaper(grace time.Duration) (*orchestration.Container
 	if r.containerRuntime == nil || r.workDir == "" {
 		return nil, nil
 	}
-	lister, ok := r.containerRuntime.(orchestration.OwnedContainerLister)
+	lister, ok := orchestration.RuntimeAs[orchestration.OwnedContainerLister](r.containerRuntime)
 	if !ok {
 		return nil, nil
 	}
 	return orchestration.NewContainerReaper(orchestration.ContainerReaperConfig{
-		Runtime: lister,
+		Runtime: &ownedListerVia{OwnedContainerLister: lister, rt: r.containerRuntime, logger: r.logger},
 		Owner:   r.workDir,
 		Live:    r.HoldsSession,
 		Grace:   grace,
 		Logger:  r.logger,
 	})
+}
+
+// ownedListerVia lists through the runtime that can, removes through the
+// outermost runtime: a VolumeRuntime wrapping the lister then still releases
+// a reaped container's volumes. The listing gives full container IDs while
+// an interactive launch files its volumes under the container's name, so
+// Remove also releases the volumes filed under the name it last listed for
+// the ID.
+type ownedListerVia struct {
+	orchestration.OwnedContainerLister
+	rt     orchestration.ContainerRuntime
+	logger interfaces.Logger
+
+	mu    sync.Mutex
+	names map[string]string // container ID -> name, from the last listing
+}
+
+// ListOwned first retries the volume releases that failed earlier, then lists
+// through the inner lister and remembers each container's name. A container
+// whose volumes failed to release is gone from the list, so the retry cannot
+// hang off it: it runs on every reaper pass instead. When the runtime
+// reconciles volumes, the listing goes through it, so the volumes of a
+// container gone before any pass listed it (an interactive container removed
+// by --rm) are released too.
+func (o *ownedListerVia) ListOwned(ctx context.Context, owner string) ([]orchestration.OwnedContainer, error) {
+	if p, ok := orchestration.RuntimeAs[orchestration.PendingVolumeReleaser](o.rt); ok {
+		if err := p.RetryPendingReleases(ctx); err != nil && o.logger != nil {
+			o.logger.Warnf("fleet reaper: retry volume releases: %v", err)
+		}
+	}
+	var cs []orchestration.OwnedContainer
+	var err error
+	if rc, ok := orchestration.RuntimeAs[orchestration.ContainerVolumeReconciler](o.rt); ok {
+		cs, err = rc.ReconcileVolumes(ctx, owner, o.OwnedContainerLister)
+	} else {
+		cs, err = o.OwnedContainerLister.ListOwned(ctx, owner)
+	}
+	if err != nil {
+		return cs, err
+	}
+	names := make(map[string]string, len(cs))
+	for _, c := range cs {
+		names[c.ID] = c.Name
+	}
+	o.mu.Lock()
+	o.names = names
+	o.mu.Unlock()
+	return cs, nil
+}
+
+// Remove removes the container through the outermost runtime, then releases
+// the volumes filed under its listed name when that differs from its ID.
+func (o *ownedListerVia) Remove(ctx context.Context, containerID string) error {
+	err := o.rt.Remove(ctx, containerID)
+	var notFound *orchestration.ContainerNotFoundError
+	if err != nil && !errors.As(err, &notFound) {
+		return err
+	}
+	o.mu.Lock()
+	name := o.names[containerID]
+	o.mu.Unlock()
+	if name != "" && name != containerID {
+		if rel, ok := orchestration.RuntimeAs[orchestration.ContainerVolumeReleaser](o.rt); ok {
+			if rerr := rel.ReleaseContainer(ctx, name); rerr != nil {
+				return rerr
+			}
+		}
+	}
+	return err
 }
 
 // HoldsSession reports whether any backend this daemon serves holds a live

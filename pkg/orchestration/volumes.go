@@ -1,0 +1,594 @@
+package orchestration
+
+// Block volumes for container workloads, over go-blockstore.
+//
+// go-blockstore owns the volumes: provisioning, attaching a volume to a node as
+// a block device, mounting it, growing it, and the primary/secondary role of a
+// replicated one. This file is the orchestration side of that seam. A workload
+// names the volumes it needs as VolumeClaims; a VolumeAttacher, holding the
+// node's VolumeProvider and node identity, turns each claim into a volume
+// attached on this node and, for a claim with a filesystem, a host mount the
+// container receives as a bind mount. Release undoes it.
+//
+// The types re-exported here are go-blockstore's own, aliased so a caller of
+// pkg/orchestration (and of sdk/go/orchestration) needs no second import and
+// sees one set of names.
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+	"time"
+
+	bscommon "github.com/jeremyhahn/go-blockstore/pkg/common"
+	bsfactory "github.com/jeremyhahn/go-blockstore/pkg/factory"
+	bslocal "github.com/jeremyhahn/go-blockstore/pkg/local"
+)
+
+type (
+	// VolumeProvider is go-blockstore's block-storage backend contract.
+	VolumeProvider = bscommon.VolumeProvider
+
+	// ReplicatedVolumeProvider is a VolumeProvider with primary/secondary
+	// roles (DRBD). Promote and Demote reach it.
+	ReplicatedVolumeProvider = bscommon.ReplicatedProvider
+
+	// VolumeSpec is the spec a volume is provisioned from.
+	VolumeSpec = bscommon.VolumeSpec
+
+	// Volume is a provisioned volume and the spec it came from.
+	Volume = bscommon.Volume
+
+	// VolumeStatus is the observed state of a volume.
+	VolumeStatus = bscommon.VolumeStatus
+
+	// VolumeAttachInfo is the result of attaching a volume to a node.
+	VolumeAttachInfo = bscommon.AttachInfo
+
+	// VolumeMountOptions controls how a provider mounts a volume.
+	VolumeMountOptions = bscommon.MountOptions
+
+	// VolumeNodeID names the node a volume is attached to.
+	VolumeNodeID = bscommon.NodeID
+)
+
+var (
+	// ErrVolumeNotFound is go-blockstore's ErrNotFound: the volume does not
+	// exist.
+	ErrVolumeNotFound = bscommon.ErrNotFound
+
+	// ErrVolumeAlreadyExists is go-blockstore's ErrAlreadyExists.
+	ErrVolumeAlreadyExists = bscommon.ErrAlreadyExists
+
+	// ErrVolumeNotAttached is go-blockstore's ErrNotAttached.
+	ErrVolumeNotAttached = bscommon.ErrNotAttached
+
+	// ErrVolumeUnsupported is go-blockstore's ErrUnsupported: the provider
+	// cannot serve a well-formed request (a promote on a provider without
+	// replication, a node out of its reach).
+	ErrVolumeUnsupported = bscommon.ErrUnsupported
+
+	// ErrVolumeInvalidArgument is go-blockstore's ErrInvalidArgument.
+	ErrVolumeInvalidArgument = bscommon.ErrInvalidArgument
+
+	// ErrVolumeShrink is returned by a resize to below the volume's current
+	// size. Volumes are grow-only: a shrink would cut the filesystem on it.
+	ErrVolumeShrink = errors.New("volume: resize is grow-only")
+
+	// ErrVolumeClaim is returned when a VolumeClaim is malformed.
+	ErrVolumeClaim = errors.New("volume: invalid claim")
+
+	// ErrVolumeInUse is returned when a launch claims a volume another owner
+	// holds, another container on this runtime or another volume runtime on
+	// the host: a volume has one owner at a time.
+	ErrVolumeInUse = errors.New("volume: held by another owner")
+
+	// ErrVolumeOwnerLabel is returned when a runtime with an owner is asked to
+	// launch a volume-bearing spec whose ContainerOwnerLabel is not that owner:
+	// the startup sweep removes only containers it can claim by that label
+	// before releasing the volumes they held.
+	ErrVolumeOwnerLabel = errors.New("volume: a volume launch must carry this daemon's owner label")
+
+	// ErrVolumeStateLocked is returned when another volume runtime holds the
+	// staging dir: one runtime owns a staging dir's attachment state.
+	ErrVolumeStateLocked = errors.New("volume: the staging dir's attachment state is held by another volume runtime")
+)
+
+// NewVolumeProvider constructs the named go-blockstore provider ("local", or
+// "drbd" in a build with the drbd tag) from its snake_case settings. An unknown
+// provider or an unknown settings key is an error.
+func NewVolumeProvider(name string, settings map[string]string) (VolumeProvider, error) {
+	p, err := bsfactory.NewProvider(name, settings)
+	if err != nil {
+		return nil, fmt.Errorf("volume provider %q: %w", name, err)
+	}
+	return p, nil
+}
+
+// volumeNamePattern bounds a claim's name. The name becomes the volume's name
+// in the backend (an LVM logical volume, a DRBD resource) and a directory
+// under the staging root, so it is kept to a portable, path-safe set.
+var volumeNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,62}$`)
+
+// VolumeClaim is a workload's request for one block volume.
+//
+// A claim with FSType is mounted on the host and reaches the container as a
+// bind mount at Target. A claim without FSType is a raw block device: the
+// attacher reports its device path, and a broker-class launch passes it
+// through as a device at Target (or at the host's device path).
+type VolumeClaim struct {
+	// Name identifies the volume. The attacher looks the volume up under this
+	// name and provisions it when it does not exist, so a relaunch reattaches
+	// the same volume.
+	Name string `json:"name"`
+
+	// SizeBytes is the usable capacity. A volume found smaller than this is
+	// grown to it; one found larger is left as it is.
+	SizeBytes int64 `json:"size_bytes"`
+
+	// FSType is the filesystem the volume is created with ("ext4", "xfs").
+	// Empty means a raw block device.
+	FSType string `json:"fs_type,omitempty"`
+
+	// Target is the absolute path inside the container: the mount point with
+	// FSType (required), the device node's path without it (optional).
+	Target string `json:"target,omitempty"`
+
+	// ReadOnly mounts the volume read-only.
+	ReadOnly bool `json:"readonly,omitempty"`
+
+	// Replicas is passed to the provider; zero means the provider's natural
+	// count.
+	Replicas int `json:"replicas,omitempty"`
+
+	// Labels are passed to the provider as the volume's labels.
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// Validate reports whether the claim is well-formed. It checks only what the
+// orchestration side owns; the provider validates the rest (the filesystem
+// type against its allowlist, the name against its backend's rules).
+func (c VolumeClaim) Validate() error {
+	if !volumeNamePattern.MatchString(c.Name) {
+		return fmt.Errorf("%w: name %q must match %s", ErrVolumeClaim, c.Name, volumeNamePattern)
+	}
+	if c.SizeBytes <= 0 {
+		return fmt.Errorf("%w: volume %q: size_bytes must be positive", ErrVolumeClaim, c.Name)
+	}
+	if c.Replicas < 0 {
+		return fmt.Errorf("%w: volume %q: replicas must not be negative", ErrVolumeClaim, c.Name)
+	}
+	if c.FSType == "" {
+		// A raw volume's target is the device node's path in the container
+		// (optional: empty keeps the host's device path). It lands in a
+		// colon-separated --device value, so a colon is refused.
+		if c.Target != "" && (!path.IsAbs(c.Target) || path.Clean(c.Target) != c.Target || c.Target == "/" || strings.Contains(c.Target, ":")) {
+			return fmt.Errorf("%w: volume %q: raw target %q must be a clean absolute device path", ErrVolumeClaim, c.Name, c.Target)
+		}
+		return nil
+	}
+	if c.Target == "" || !path.IsAbs(c.Target) || path.Clean(c.Target) != c.Target || c.Target == "/" {
+		return fmt.Errorf("%w: volume %q: target %q must be a clean absolute path other than /", ErrVolumeClaim, c.Name, c.Target)
+	}
+	return nil
+}
+
+func (c VolumeClaim) spec() VolumeSpec {
+	return VolumeSpec{
+		Name:      c.Name,
+		SizeBytes: c.SizeBytes,
+		FSType:    c.FSType,
+		Replicas:  c.Replicas,
+		Labels:    c.Labels,
+	}
+}
+
+// AttachedVolume is a claim attached on this node.
+type AttachedVolume struct {
+	// Claim is the claim the volume was attached for.
+	Claim VolumeClaim `json:"claim"`
+
+	// VolumeID is the provider's identifier for the volume.
+	VolumeID string `json:"volume_id"`
+
+	// DevicePath is the block device on this node.
+	DevicePath string `json:"device_path"`
+
+	// HostPath is where the volume is mounted on the host; empty for a raw
+	// volume.
+	HostPath string `json:"host_path,omitempty"`
+
+	// Promoted reports that this node's copy of a replicated volume was
+	// promoted to primary for the launch, so release demotes it before
+	// Detach. It is set before Promote is called, so a launch killed during
+	// Promote is still demoted on recovery: a Demote of a Secondary is
+	// harmless.
+	Promoted bool `json:"promoted,omitempty"`
+}
+
+// ContainerMount returns the bind mount that hands the volume to the
+// container, and false for a raw volume, which has none.
+func (v AttachedVolume) ContainerMount() (ContainerMount, bool) {
+	if v.HostPath == "" {
+		return ContainerMount{}, false
+	}
+	return ContainerMount{
+		Source:   v.HostPath,
+		Target:   v.Claim.Target,
+		ReadOnly: v.Claim.ReadOnly,
+		Type:     MountTypeBind,
+	}, true
+}
+
+// VolumeAttacher attaches workload volumes on one node.
+type VolumeAttacher struct {
+	provider   VolumeProvider
+	node       VolumeNodeID
+	stagingDir string
+}
+
+// NewVolumeAttacher returns an attacher for the node, mounting filesystem
+// volumes under stagingDir/<volume id>. stagingDir must be absolute.
+func NewVolumeAttacher(provider VolumeProvider, node VolumeNodeID, stagingDir string) (*VolumeAttacher, error) {
+	if provider == nil {
+		return nil, fmt.Errorf("%w: volume attacher: nil provider", ErrVolumeInvalidArgument)
+	}
+	if node == "" {
+		return nil, fmt.Errorf("%w: volume attacher: empty node id", ErrVolumeInvalidArgument)
+	}
+	if !filepath.IsAbs(stagingDir) {
+		return nil, fmt.Errorf("%w: volume attacher: staging dir %q must be absolute", ErrVolumeInvalidArgument, stagingDir)
+	}
+	return &VolumeAttacher{provider: provider, node: node, stagingDir: filepath.Clean(stagingDir)}, nil
+}
+
+// Provider returns the attacher's provider.
+func (a *VolumeAttacher) Provider() VolumeProvider { return a.provider }
+
+// Node returns the node the attacher attaches to.
+func (a *VolumeAttacher) Node() VolumeNodeID { return a.node }
+
+// StagingDir returns the directory filesystem volumes are mounted under.
+func (a *VolumeAttacher) StagingDir() string { return a.stagingDir }
+
+// Ensure returns the ID of the claim's volume, provisioning it when it does not
+// exist and growing it when it is smaller than the claim.
+func (a *VolumeAttacher) Ensure(ctx context.Context, claim VolumeClaim) (string, error) {
+	id, _, _, _, err := a.ensure(ctx, claim, false)
+	return id, err
+}
+
+// ensure is Ensure, also reporting the volume's size afterwards and whether
+// the volume existed before this call.
+func (a *VolumeAttacher) ensure(ctx context.Context, claim VolumeClaim, growAfterAttach bool) (id string, size int64, existed, grow bool, err error) {
+	if err := claim.Validate(); err != nil {
+		return "", 0, false, false, err
+	}
+	st, err := a.provider.Status(ctx, claim.Name)
+	if errors.Is(err, bscommon.ErrNotFound) {
+		vol, perr := a.provider.Provision(ctx, claim.spec())
+		if perr != nil {
+			return "", 0, false, false, fmt.Errorf("volume %q: provision: %w", claim.Name, perr)
+		}
+		return vol.ID, claim.SizeBytes, false, false, nil
+	}
+	if err != nil {
+		return "", 0, false, false, fmt.Errorf("volume %q: status: %w", claim.Name, err)
+	}
+	id = st.ID
+	if id == "" {
+		id = claim.Name
+	}
+	if st.SizeBytes < claim.SizeBytes {
+		if err := a.provider.Resize(ctx, id, claim.SizeBytes); err != nil {
+			// A provider that grows only attached volumes (drbd) refuses a
+			// detached Resize; the launch grows it right after Attach.
+			if growAfterAttach && errors.Is(err, ErrVolumeNotAttached) {
+				return id, claim.SizeBytes, true, true, nil
+			}
+			return "", 0, true, false, fmt.Errorf("volume %q: grow to %d bytes: %w", claim.Name, claim.SizeBytes, err)
+		}
+	}
+	return id, max(st.SizeBytes, claim.SizeBytes), true, false, nil
+}
+
+// Resize grows the volume to newSize bytes. A size below the current one is
+// refused with ErrVolumeShrink before the provider is asked; an equal size is
+// still passed on, so a repeat finishes a filesystem grow a previous call left
+// undone (go-blockstore's Resize contract).
+func (a *VolumeAttacher) Resize(ctx context.Context, volID string, newSize int64) error {
+	if newSize <= 0 {
+		return fmt.Errorf("%w: volume %q: size must be positive", ErrVolumeInvalidArgument, volID)
+	}
+	st, err := a.provider.Status(ctx, volID)
+	if err != nil {
+		return fmt.Errorf("volume %q: status: %w", volID, err)
+	}
+	if newSize < st.SizeBytes {
+		return fmt.Errorf("%w: volume %q is %d bytes, asked for %d", ErrVolumeShrink, volID, st.SizeBytes, newSize)
+	}
+	if err := a.provider.Resize(ctx, volID, newSize); err != nil {
+		return fmt.Errorf("volume %q: resize: %w", volID, err)
+	}
+	return nil
+}
+
+// Promote makes this node's copy of a replicated volume the primary. A
+// provider without replication returns ErrVolumeUnsupported.
+func (a *VolumeAttacher) Promote(ctx context.Context, volID string) error {
+	rp, ok := a.provider.(ReplicatedVolumeProvider)
+	if !ok {
+		return fmt.Errorf("%w: volume %q: promote needs a replicated provider", ErrVolumeUnsupported, volID)
+	}
+	if err := rp.Promote(ctx, volID); err != nil {
+		return fmt.Errorf("volume %q: promote: %w", volID, err)
+	}
+	return nil
+}
+
+// Demote makes this node's copy of a replicated volume a secondary. A provider
+// without replication returns ErrVolumeUnsupported.
+func (a *VolumeAttacher) Demote(ctx context.Context, volID string) error {
+	rp, ok := a.provider.(ReplicatedVolumeProvider)
+	if !ok {
+		return fmt.Errorf("%w: volume %q: demote needs a replicated provider", ErrVolumeUnsupported, volID)
+	}
+	if err := rp.Demote(ctx, volID); err != nil {
+		return fmt.Errorf("volume %q: demote: %w", volID, err)
+	}
+	return nil
+}
+
+// Attach ensures, attaches and (for a filesystem claim) mounts every claim, in
+// order. The claims are validated together first: two claims may not share a
+// name or a target. If any claim fails, the volumes already attached are
+// released again and the error is returned, so a failed launch leaves nothing
+// attached. A replicated volume is promoted to primary after Attach, before
+// any grow and Mount.
+func (a *VolumeAttacher) Attach(ctx context.Context, claims []VolumeClaim) ([]AttachedVolume, error) {
+	vols, _, err := a.attach(ctx, claims, nil)
+	return vols, err
+}
+
+// attach is Attach, also returning the volumes its rollback could not
+// release. The rollback runs on a cleanupContext, so a launch cancelled part
+// way still releases what it attached. journal, when set, is called with each
+// volume before its Attach and again after it (see attachOne), so a caller can
+// record what a launch killed part way left on the node. The entry after
+// Attach carries the promotion of a replicated volume, recorded before Promote.
+func (a *VolumeAttacher) attach(ctx context.Context, claims []VolumeClaim, journal func(AttachedVolume) error) (vols, held []AttachedVolume, err error) {
+	if err := validateClaims(claims); err != nil {
+		return nil, nil, err
+	}
+	attached := make([]AttachedVolume, 0, len(claims))
+	for _, claim := range claims {
+		v, err := a.attachOne(ctx, claim, journal)
+		if v.VolumeID != "" {
+			attached = append(attached, v)
+		}
+		if err != nil {
+			cctx, cancel := cleanupContext(ctx)
+			held, rerr := a.release(cctx, attached)
+			cancel()
+			if rerr != nil {
+				err = errors.Join(err, fmt.Errorf("release after failed attach: %w", rerr))
+			}
+			return nil, held, err
+		}
+	}
+	return attached, nil, nil
+}
+
+// attachOne returns the partly attached volume with the error when the
+// provider's Attach, or a step after it, fails, so the caller can release it:
+// an Attach may activate the volume before it fails. HostPath is
+// recorded before Mount, so a Mount that fails after mounting is still
+// unmounted.
+//
+// journal, when set, records the volume twice: before Attach, with its
+// planned HostPath, so a node killed during Attach or Mount still finds it to
+// release (an Unmount of an unmounted target and a Detach of an unattached
+// volume are both harmless); and after Attach, with its DevicePath. A journal
+// error before Attach returns nothing to release; after it, the attached
+// volume, so the rollback detaches it.
+func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim, journal func(AttachedVolume) error) (AttachedVolume, error) {
+	id, size, existed, grow, err := a.ensure(ctx, claim, true)
+	if err != nil {
+		return AttachedVolume{}, err
+	}
+	if id == "" || id != filepath.Base(id) || id == "." || id == ".." {
+		return AttachedVolume{}, fmt.Errorf("%w: volume %q: provider returned unusable id %q", ErrVolumeInvalidArgument, claim.Name, id)
+	}
+	var host string
+	if claim.FSType != "" {
+		host = filepath.Join(a.stagingDir, id)
+	}
+	if journal != nil {
+		if err := journal(AttachedVolume{Claim: claim, VolumeID: id, HostPath: host}); err != nil {
+			return AttachedVolume{}, fmt.Errorf("volume %q: journal: %w", claim.Name, err)
+		}
+	}
+	info, err := a.provider.Attach(ctx, id, a.node)
+	if err != nil {
+		// The provider may have activated the volume before failing, and its own
+		// compensation may not have run: return it (with no HostPath, nothing was
+		// mounted) so the rollback detaches it on its own context, and what does
+		// not detach stays journaled and pending.
+		return AttachedVolume{Claim: claim, VolumeID: id}, fmt.Errorf("volume %q: attach to node %q: %w", claim.Name, a.node, err)
+	}
+	v := AttachedVolume{Claim: claim, VolumeID: id, DevicePath: info.DevicePath}
+	// A replicated volume attaches as a Secondary, whose device cannot be
+	// opened at all, and a grow and Mount need the primary: the order is
+	// Attach, Promote, grow, Mount, for raw and read-only claims too.
+	rp, replicated := a.provider.(ReplicatedVolumeProvider)
+	if replicated {
+		v.Promoted = true
+	}
+	if journal != nil {
+		// Recorded with the planned HostPath and the promotion too, so a kill
+		// during Promote or Mount is still demoted and unmounted on recovery.
+		planned := v
+		planned.HostPath = host
+		if err := journal(planned); err != nil {
+			return v, fmt.Errorf("volume %q: journal: %w", claim.Name, err)
+		}
+	}
+	if replicated {
+		if err := rp.Promote(ctx, id); err != nil {
+			return v, fmt.Errorf("volume %q: promote on node %q: %w", claim.Name, a.node, err)
+		}
+	}
+	// The grow ensure deferred because the provider refused it detached runs
+	// now, before Mount; a failure returns v so the rollback detaches it.
+	if grow {
+		if err := a.provider.Resize(ctx, id, claim.SizeBytes); err != nil {
+			return v, fmt.Errorf("volume %q: grow to %d bytes after attach: %w", claim.Name, claim.SizeBytes, err)
+		}
+	}
+	if claim.FSType == "" {
+		return v, nil
+	}
+	if err := os.MkdirAll(host, 0o700); err != nil {
+		return v, fmt.Errorf("volume %q: staging dir: %w", claim.Name, err)
+	}
+	// The target is recorded before Mount: a provider can mount, fail a later
+	// check and fail its own compensating unmount, so a failed Mount may leave
+	// a live mount. The rollback's Unmount (idempotent at the provider) then
+	// clears it before Detach.
+	v.HostPath = host
+	if err := a.provider.Mount(ctx, id, host, VolumeMountOptions{ReadOnly: claim.ReadOnly}); err != nil {
+		return v, fmt.Errorf("volume %q: mount at %s: %w", claim.Name, host, err)
+	}
+	// A grow made while the volume was unmounted may leave the filesystem at
+	// its old size (XFS grows only mounted), and an equal-size Resize finishes
+	// it, so this also recovers a grow an earlier launch left undone. The local
+	// provider refuses any Resize of an attached encrypted volume
+	// (ErrResizeWhileAttached); its detached Resize in ensure grew the
+	// filesystem inside the container itself, so that refusal is not a failure.
+	if existed && !claim.ReadOnly {
+		if err := a.provider.Resize(ctx, id, size); err != nil && !errors.Is(err, bslocal.ErrResizeWhileAttached) {
+			return v, fmt.Errorf("volume %q: grow filesystem after mount: %w", claim.Name, err)
+		}
+	}
+	return v, nil
+}
+
+// Release unmounts and detaches the volumes in reverse order. It carries on
+// past a failure so one stuck volume does not keep the others attached, and
+// returns every failure joined. VolumeRuntime retries what is still held. A
+// promoted replicated volume is demoted after Unmount, before Detach.
+func (a *VolumeAttacher) Release(ctx context.Context, vols []AttachedVolume) error {
+	_, err := a.release(ctx, vols)
+	return err
+}
+
+// release is Release, also returning the volumes still held, in their
+// original order. A volume whose Unmount failed is kept as it was; one that
+// unmounted but did not detach is kept with no HostPath, so a retry only
+// detaches it. A Detach that reports the volume not attached
+// (ErrVolumeNotAttached) counts as released. One that unmounted but did not
+// demote is kept with no HostPath and Promoted set, so a retry demotes and
+// detaches it.
+func (a *VolumeAttacher) release(ctx context.Context, vols []AttachedVolume) ([]AttachedVolume, error) {
+	var errs []error
+	var held []AttachedVolume
+	for i := len(vols) - 1; i >= 0; i-- {
+		v := vols[i]
+		if v.HostPath != "" {
+			if err := a.provider.Unmount(ctx, v.VolumeID, v.HostPath); err != nil {
+				errs = append(errs, fmt.Errorf("volume %q: unmount %s: %w", v.Claim.Name, v.HostPath, err))
+				held = append(held, v)
+				continue
+			}
+		}
+		// A promoted volume is demoted before Detach, which refuses a primary.
+		// A volume that fails to demote is held unmounted and still promoted,
+		// so a retry demotes and detaches it only.
+		if v.Promoted {
+			if err := a.demote(ctx, v); err != nil {
+				errs = append(errs, fmt.Errorf("volume %q: demote on node %q: %w", v.Claim.Name, a.node, err))
+				v.HostPath = ""
+				held = append(held, v)
+				continue
+			}
+			v.Promoted = false
+		}
+		// A volume that is not attached is released: a journaled volume
+		// whose Attach never happened is then released cleanly on recovery.
+		if err := a.provider.Detach(ctx, v.VolumeID, a.node); err != nil && !errors.Is(err, ErrVolumeNotAttached) {
+			errs = append(errs, fmt.Errorf("volume %q: detach from node %q: %w", v.Claim.Name, a.node, err))
+			v.HostPath = ""
+			held = append(held, v)
+		}
+	}
+	slices.Reverse(held)
+	return held, errors.Join(errs...)
+}
+
+// demote makes this node's copy of v a secondary. A Demote that fails while
+// the provider reports the local role is not primary (a secondary, or a
+// resource that is down) counts as demoted: Detach then succeeds.
+func (a *VolumeAttacher) demote(ctx context.Context, v AttachedVolume) error {
+	rp, ok := a.provider.(ReplicatedVolumeProvider)
+	if !ok {
+		return fmt.Errorf("%w: volume %q: demote needs a replicated provider", ErrVolumeUnsupported, v.VolumeID)
+	}
+	err := rp.Demote(ctx, v.VolumeID)
+	if err == nil {
+		return nil
+	}
+	if st, serr := rp.ReplicationState(ctx, v.VolumeID); serr == nil && st.Role != bscommon.ReplRolePrimary {
+		return nil
+	}
+	return err
+}
+
+// cleanupContext bounds a rollback on its own clock: the launch that failed
+// may have failed because its context was cancelled, and the release must
+// still run.
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), volumeCleanupTimeout)
+}
+
+// volumeCleanupTimeout bounds one rollback or pending-release retry.
+const volumeCleanupTimeout = time.Minute
+
+// ContainerMounts returns the bind mounts for the attached volumes that have a
+// filesystem, in order.
+func ContainerMounts(vols []AttachedVolume) []ContainerMount {
+	var out []ContainerMount
+	for _, v := range vols {
+		if m, ok := v.ContainerMount(); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func validateClaims(claims []VolumeClaim) error {
+	names := make(map[string]struct{}, len(claims))
+	targets := make(map[string]struct{}, len(claims))
+	for _, c := range claims {
+		if err := c.Validate(); err != nil {
+			return err
+		}
+		if _, dup := names[c.Name]; dup {
+			return fmt.Errorf("%w: volume %q claimed twice", ErrVolumeClaim, c.Name)
+		}
+		names[c.Name] = struct{}{}
+		if c.Target == "" {
+			continue
+		}
+		if _, dup := targets[c.Target]; dup {
+			return fmt.Errorf("%w: two volumes target %q", ErrVolumeClaim, c.Target)
+		}
+		targets[c.Target] = struct{}{}
+	}
+	return nil
+}

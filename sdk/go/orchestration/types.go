@@ -153,6 +153,56 @@ type ContainerSpec = pkgorch.ContainerSpec
 // measured.
 type ContainerMount = pkgorch.ContainerMount
 
+// ContainerDevice is a host device node passed into a broker-class container.
+type ContainerDevice = pkgorch.ContainerDevice
+
+// PrivilegeClassBroker is the privilege class that may carry devices: the
+// boot node and its NBD export, which reach raw volumes through them.
+const PrivilegeClassBroker = pkgorch.PrivilegeClassBroker
+
+// ErrDevicePassthroughDenied reports devices or a raw volume outside the
+// broker class.
+var ErrDevicePassthroughDenied = pkgorch.ErrDevicePassthroughDenied
+
+// ContainerDevices returns the device passthrough for the raw volumes among
+// the attached ones.
+var ContainerDevices = pkgorch.ContainerDevices
+
+// Coordination for replicated volumes: go-blockstore's common.Coordinator and
+// HA controller, with the two coordinators go-quicbaas supplies.
+type (
+	// VolumeCoordinator is the lease, KV and watch primitive replicated
+	// volumes elect their primary with.
+	VolumeCoordinator = pkgorch.VolumeCoordinator
+	// VolumeLease is a held lease from a VolumeCoordinator.
+	VolumeLease = pkgorch.VolumeLease
+	// VolumeCoordinatorEvent is one change delivered by VolumeCoordinator.Watch.
+	VolumeCoordinatorEvent = pkgorch.VolumeCoordinatorEvent
+	// VolumeHAConfig configures the HA controller.
+	VolumeHAConfig = pkgorch.VolumeHAConfig
+	// VolumeHAController elects the primary of each replicated volume.
+	VolumeHAController = pkgorch.VolumeHAController
+	// QRDBVolumeCoordinator coordinates over a raft-mode go-qrdb, across nodes.
+	QRDBVolumeCoordinator = pkgorch.QRDBVolumeCoordinator
+	// LocalVolumeCoordinator coordinates within one process, for a
+	// single-node deployment.
+	LocalVolumeCoordinator = pkgorch.LocalVolumeCoordinator
+)
+
+// ErrVolumeLeaseHeld is returned by AcquireLease when another holder owns
+// the key.
+var ErrVolumeLeaseHeld = pkgorch.ErrVolumeLeaseHeld
+
+var (
+	// NewVolumeHAController returns the HA controller for a replicated
+	// provider, electing through a coordinator.
+	NewVolumeHAController = pkgorch.NewVolumeHAController
+	// NewQRDBVolumeCoordinator adapts a connected go-qrdb client.
+	NewQRDBVolumeCoordinator = pkgorch.NewQRDBVolumeCoordinator
+	// NewLocalVolumeCoordinator returns an in-process coordinator.
+	NewLocalVolumeCoordinator = pkgorch.NewLocalVolumeCoordinator
+)
+
 // ContainerUlimit is one per-process resource limit inside a container
 // (ContainerSpec.Ulimits, emitted as --ulimit name=soft:hard). Ulimits
 // participate in ContainerConfigDigest, sorted by name.
@@ -305,6 +355,80 @@ const (
 
 	// RuntimePodman is the podman container runtime command.
 	RuntimePodman = pkgorch.RuntimePodman
+)
+
+// Volumes: go-blockstore block volumes for workloads. go-blockstore supplies
+// the volumes; a consumer such as go-trusted-platform's NBD export takes the
+// claims and attached volumes through these aliases and adds the transport.
+
+// VolumeProvider is go-blockstore's volume lifecycle surface: provision,
+// grow-only resize, attach to a device path, mount, release.
+type VolumeProvider = pkgorch.VolumeProvider
+
+// ReplicatedVolumeProvider adds promote/demote for replicated volumes.
+type ReplicatedVolumeProvider = pkgorch.ReplicatedVolumeProvider
+
+// VolumeSpec is what a provider provisions.
+type VolumeSpec = pkgorch.VolumeSpec
+
+// Volume is a provisioned volume.
+type Volume = pkgorch.Volume
+
+// VolumeStatus is a volume's observed state.
+type VolumeStatus = pkgorch.VolumeStatus
+
+// VolumeAttachInfo is the result of attaching a volume to a node.
+type VolumeAttachInfo = pkgorch.VolumeAttachInfo
+
+// VolumeMountOptions controls how a provider mounts a volume.
+type VolumeMountOptions = pkgorch.VolumeMountOptions
+
+// VolumeNodeID names the node a volume is attached to.
+type VolumeNodeID = pkgorch.VolumeNodeID
+
+// VolumeClaim is a workload's request for one block volume.
+type VolumeClaim = pkgorch.VolumeClaim
+
+// AttachedVolume is a claim attached on a node: its device path and, for a
+// filesystem claim, its host mount.
+type AttachedVolume = pkgorch.AttachedVolume
+
+// VolumeAttacher attaches workload volumes on one node.
+type VolumeAttacher = pkgorch.VolumeAttacher
+
+var (
+	// NewVolumeProvider constructs a named go-blockstore provider.
+	NewVolumeProvider = pkgorch.NewVolumeProvider
+
+	// NewVolumeAttacher returns an attacher for one node.
+	NewVolumeAttacher = pkgorch.NewVolumeAttacher
+
+	// ContainerMounts returns the bind mounts of attached filesystem volumes.
+	ContainerMounts = pkgorch.ContainerMounts
+)
+
+// Volume sentinels, shared with pkg/orchestration and go-blockstore.
+var (
+	ErrVolumeNotFound        = pkgorch.ErrVolumeNotFound
+	ErrVolumeAlreadyExists   = pkgorch.ErrVolumeAlreadyExists
+	ErrVolumeNotAttached     = pkgorch.ErrVolumeNotAttached
+	ErrVolumeUnsupported     = pkgorch.ErrVolumeUnsupported
+	ErrVolumeInvalidArgument = pkgorch.ErrVolumeInvalidArgument
+	ErrVolumeShrink          = pkgorch.ErrVolumeShrink
+	ErrVolumeClaim           = pkgorch.ErrVolumeClaim
+)
+
+// Volume signatures and aliases, checked in both directions.
+var (
+	_ func(string, map[string]string) (VolumeProvider, error)             = NewVolumeProvider
+	_ func(VolumeProvider, VolumeNodeID, string) (*VolumeAttacher, error) = NewVolumeAttacher
+	_ func([]AttachedVolume) []ContainerMount                             = ContainerMounts
+	_ pkgorch.VolumeProvider                                              = (VolumeProvider)(nil)
+	_ VolumeProvider                                                      = (pkgorch.VolumeProvider)(nil)
+	_ *pkgorch.VolumeClaim                                                = (*VolumeClaim)(nil)
+	_ *VolumeClaim                                                        = (*pkgorch.VolumeClaim)(nil)
+	_ *pkgorch.AttachedVolume                                             = (*AttachedVolume)(nil)
+	_ *AttachedVolume                                                     = (*pkgorch.AttachedVolume)(nil)
 )
 
 // NewExecContainerRuntime creates a runtime that auto-detects docker or

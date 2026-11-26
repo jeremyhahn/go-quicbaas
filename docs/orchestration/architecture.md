@@ -256,6 +256,8 @@ pre-side-effect chokepoint and both deny-by-default:
 - [Autonomous Projects](autonomy-and-dispatch.md): `Project.Autonomous`, the
   task dispatcher, context repositories and the container workspace contract.
 - [Fleet](../agent-fleet/architecture.md) and [Job runners](job-runners.md).
+- [Volumes](volumes.md): go-blockstore volumes, broker-class devices and the
+  NBD volume store.
 - The Software Factory modules: [SDLC](../sdlc/architecture.md),
   [projects](../projects/architecture.md),
   [pooled accounts](../accounts/architecture.md) and

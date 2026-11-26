@@ -83,6 +83,11 @@ type Config struct {
 	// sessions. "auto" probes docker then podman.
 	ContainerRuntime ContainerRuntimeSelector `json:"container_runtime,omitempty" yaml:"container_runtime,omitempty"`
 
+	// Volumes configures the go-blockstore volumes this node attaches for
+	// workloads that declare them. Unset (no provider) means the node attaches
+	// none and refuses a spec that claims one.
+	Volumes VolumeConfig `json:"volumes,omitempty" yaml:"volumes,omitempty"`
+
 	// ImageMap maps backend name ("claude-code", "codex", "opencode") to
 	// the fully qualified image reference the daemon spawns for
 	// sandboxed sessions.
