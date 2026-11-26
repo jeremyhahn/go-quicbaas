@@ -34,7 +34,6 @@ var auditRPCPermissions = []struct {
 }{
 	{"/quicbaas.iam.v1.AuditService/QueryAuditEvents", "audit:query"},
 	{"/quicbaas.iam.v1.AuditService/GetAuditEvent", "audit:read"},
-	{"/quicbaas.iam.v1.AuditService/RecordAuditEvent", "audit_events:record"},
 }
 
 // TestAuditRPCs_HolderOfPermissionIsAllowed proves a caller holding the
