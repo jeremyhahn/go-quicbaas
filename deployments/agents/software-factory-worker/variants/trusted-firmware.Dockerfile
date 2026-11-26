@@ -1,31 +1,4 @@
-# trusted-firmware lane image: the published factory worker plus cppcheck and
-# trivy, which trusted-firmware's `lint` stage requires (mk/stages.mk
-# require-tools) and the bench lanes run, and the host tools the OP-TEE QEMU
-# stack build needs: `file` at /usr/bin/file for Buildroot's host check,
-# libgnutls28-dev for U-Boot's tools, python3-pip and python3-setuptools for
-# QEMU's configure, python3-venv for the ensurepip QEMU's configure runs under
-# `make optee-qemu`, with bc, bison, cpio, device-tree-compiler, flex,
-# libslirp-dev, ninja-build, python3-cryptography, python3-pyelftools and wget
-# for the rest of that build.
-# trivy is pinned to the same release and SHA-256s as pkg/version/toolchain.mk
-# (TRIVY_VERSION, TRIVY_SHA256_X86_64, TRIVY_SHA256_AARCH64): change them
-# together; variants_test.go fails when they differ.
-# A project that needs more than the default worker image builds FROM it.
-# The variant runs `apt-get upgrade` because the base image's packages can
-# predate Debian security fixes the vulnerability scan reads, and the floor
-# list fails the build if a flagged package is still below its fixed version;
-# raise a floor (never drop one) when the scan names a newer fix.
-#
-# Built FROM the ghcr base image, so it takes the base's labels, the
-# io.quicbaas.worker.languages label the factory reads among them. The
-# worker-image-variants workflow builds it against the base image's digest
-# and publishes it to ghcr.io beside the base:
-#
-#   ghcr.io/jeremyhahn/quicbaas-software-factory-worker-trusted-firmware:base-<base digest, 12 hex>
-#   (and the same image as :current)
-#
-# A trusted-firmware lane then names it, in the factory env or on the launch:
-#   FACTORY_IMAGE=ghcr.io/jeremyhahn/quicbaas-software-factory-worker-trusted-firmware:current
+# trusted-firmware lane image: the published worker plus cppcheck, trivy and the OP-TEE QEMU build's host tools; trivy's pins match pkg/version/toolchain.mk (variants_test.go).
 ARG BASE=ghcr.io/jeremyhahn/quicbaas-software-factory-worker:current
 FROM ${BASE}
 USER root

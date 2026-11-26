@@ -1,27 +1,8 @@
-# QuicBaaS Integration Test Runner Dockerfile
-# Runs the integration test binary with the cluster.
-#
-# Build model: first-party dependencies resolve from Gitea as tagged modules,
-# exactly as they do for `go build` on a developer machine and in every other
-# job (dependency-resolution.md §1). go.mod is the single source of truth.
-#
-# Until 2026-08-14 this image instead copied nine sibling repos out of a
-# `workspace` named build context (`../../..` on the host) and generated a
-# go.work inside the image. That model was abolished by §2, could not work on
-# a CI runner -- where the parent directory holds no siblings, so the build
-# died on `COPY --from=workspace go-xkms: "/go-xkms": not found` -- and had
-# rotted unnoticed: the generated file pinned go-codec v1.3.0, listed go-frost
-# twice at two different versions, and the build then deleted go.sum and ran
-# with GOSUMDB=off GOFLAGS=-insecure, which is not a defensible way to build a
-# security product.
-#
-# What the suite tests is unchanged. Only module resolution moved.
+# QuicBaaS integration test runner image.
 
 ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio"
 
-# ============================================================================
-# Stage 1: Build the server binary
-# ============================================================================
+# Stage 1: build the server binary.
 FROM golang:1.27.4-alpine AS builder
 
 ARG BUILD_TAGS
@@ -33,11 +14,7 @@ WORKDIR /workspace/go-quicbaas
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
-# Gitea credentials arrive as a BuildKit secret, mounted on tmpfs for this RUN
-# alone and sourced rather than exported, so the token reaches neither a layer,
-# image metadata, nor a command line (dependency-resolution.md §6). The mount
-# is optional: on GitHub no secret is supplied and these modules resolve from
-# the public proxy once tags are mirrored.
+# Module credentials arrive as a BuildKit secret on tmpfs, sourced for this run only, so the token reaches no layer or command line.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then set -a; . /run/secrets/gomodauth; set +a; fi; \
@@ -51,17 +28,11 @@ RUN rm -f pkg/api/rest/debug_integration.go pkg/api/rest/debug_noop.go || true
 RUN CGO_ENABLED=0 GOOS=linux \
     go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd
 
-# The CLI the tests dispatch through. It used to be built on the host by
-# `make integration-test` and bind-mounted in; it is built from tracked source,
-# so it belongs in the image -- and a bind mount cannot work here anyway, since
-# the source path would be resolved by the host daemon, which cannot see the
-# job container's workspace.
+# The CLI the tests dispatch through.
 RUN CGO_ENABLED=0 GOOS=linux \
     go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
 
-# ============================================================================
-# Stage 2: Test runtime — full Go toolchain plus the built server binary
-# ============================================================================
+# Stage 2: test runtime, the Go toolchain and the built server binary.
 FROM golang:1.27.4-alpine
 
 ARG BUILD_TAGS
@@ -86,9 +57,7 @@ RUN apk add --no-cache \
     docker-cli \
     docker-cli-compose
 
-# golangci-lint at the repository's pin, read from the one copy of it
-# (pkg/version/toolchain.mk) so this image lints with the version CI does
-# (go-quicbaas#391).
+# golangci-lint at the pin in pkg/version/toolchain.mk.
 COPY pkg/version/toolchain.mk /tmp/toolchain.mk
 RUN set -eu; \
     golangci_version=$(sed -n 's/^GOLANGCI_VERSION := //p' /tmp/toolchain.mk); \
@@ -99,10 +68,7 @@ RUN set -eu; \
 
 WORKDIR /workspace/go-quicbaas
 
-# The tests compile in this stage, so its module cache is populated here --
-# `go mod download` covers the packages and tests of the main module, which is
-# what `go test ./test/integration/...` needs. Warming it at build time is what
-# lets the container run the suite without credentials of its own.
+# The tests compile in this stage, so its module cache is filled here.
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
@@ -113,9 +79,7 @@ RUN --mount=type=secret,id=gomodauth \
 
 COPY . .
 
-# Binaries built in stage 1. The CLI lands on the PATH the tests already expect
-# (/workspace/go-quicbaas/bin, first entry below) instead of arriving as a bind
-# mount.
+# Binaries built in stage 1.
 COPY --from=builder /workspace/go-quicbaas/bin/quicbaasd /usr/local/bin/quicbaasd
 COPY --from=builder /workspace/go-quicbaas/bin/quicbaas /workspace/go-quicbaas/bin/quicbaas
 
@@ -123,9 +87,7 @@ COPY --from=builder /workspace/go-quicbaas/bin/quicbaas /workspace/go-quicbaas/b
 COPY test/integration/health_check.sh /usr/local/bin/health_check.sh
 RUN chmod +x /usr/local/bin/health_check.sh /usr/local/bin/quicbaasd /workspace/go-quicbaas/bin/quicbaas
 
-# GOSUMDB=off and GOINSECURE are deliberately absent: the module cache is
-# warmed above, and go.sum is the integrity record rather than something to
-# delete. TEST_BUILD_TAGS persists BUILD_TAGS to runtime for test execution.
+# GOSUMDB=off and GOINSECURE are deliberately absent; go.sum is the integrity record.
 ENV QUICBAAS_TEST_MODE=integration \
     QUICBAAS_LOG_LEVEL=debug \
     QUICBAAS_LOG_FORMAT=text \
