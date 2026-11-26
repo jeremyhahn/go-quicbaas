@@ -23,6 +23,7 @@ package object
 import (
 	"context"
 	"crypto/rand"
+	stderrors "errors"
 	"os"
 	"strconv"
 	"sync/atomic"
@@ -33,6 +34,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -279,6 +281,15 @@ func TestObjectStorage_TenantBackendsAndIsolation(t *testing.T) {
 			TenantID: "tenant-basic",
 		})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "cross-tenant")
+		var qb *errors.QBError
+		require.True(t, stderrors.As(err, &qb), "want a coded error, got %v", err)
+		assert.Equal(t, errors.ErrNotFound, qb.Code)
+
+		got, err := stack.objects.GetObject(premiumCtx, &service.GetObjectRequest{
+			Key:      "private:tenant-a/secret.txt",
+			TenantID: "tenant-premium",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []byte("Tenant A's private data"), got.Value)
 	})
 }
