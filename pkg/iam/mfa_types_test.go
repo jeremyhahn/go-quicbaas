@@ -534,45 +534,25 @@ func TestMFAChallengeValidate(t *testing.T) {
 // TestMFAChallengeIsExpired tests MFAChallenge.IsExpired() method.
 func TestMFAChallengeIsExpired(t *testing.T) {
 	t.Parallel()
+	// Each case holds an offset from now; the expiry is built when the
+	// subtest runs, since parallel subtests may start well after the
+	// table is built.
 	tests := []struct {
-		name      string
-		challenge *MFAChallenge
-		want      bool
+		name   string
+		offset time.Duration
+		want   bool
 	}{
-		{
-			name: "not expired - future expiration",
-			challenge: &MFAChallenge{
-				ExpiresAt: time.Now().Add(5 * time.Minute),
-			},
-			want: false,
-		},
-		{
-			name: "expired - past expiration",
-			challenge: &MFAChallenge{
-				ExpiresAt: time.Now().Add(-5 * time.Minute),
-			},
-			want: true,
-		},
-		{
-			name: "expired - exactly now (within margin)",
-			challenge: &MFAChallenge{
-				ExpiresAt: time.Now().Add(-1 * time.Millisecond),
-			},
-			want: true,
-		},
-		{
-			name: "not expired - 1 second in future",
-			challenge: &MFAChallenge{
-				ExpiresAt: time.Now().Add(1 * time.Second),
-			},
-			want: false,
-		},
+		{name: "not expired - future expiration", offset: 5 * time.Minute, want: false},
+		{name: "expired - past expiration", offset: -5 * time.Minute, want: true},
+		{name: "expired - exactly now (within margin)", offset: -1 * time.Millisecond, want: true},
+		{name: "not expired - 1 second in future", offset: 1 * time.Second, want: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := tt.challenge.IsExpired()
+			challenge := &MFAChallenge{ExpiresAt: time.Now().Add(tt.offset)}
+			got := challenge.IsExpired()
 			if got != tt.want {
 				t.Errorf("MFAChallenge.IsExpired() = %v, want %v", got, tt.want)
 			}
