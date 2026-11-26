@@ -49,6 +49,21 @@ var iamTenantScopedTools = map[string]struct{}{
 	"quicbaas_iam_audit_query":     {},
 	"quicbaas_iam_audit_get":       {},
 	"quicbaas_iam_audit_delete":    {},
+
+	"quicbaas_iam_federation_createprovider": {},
+	"quicbaas_iam_federation_getprovider":    {},
+	"quicbaas_iam_federation_listproviders":  {},
+	"quicbaas_iam_federation_updateprovider": {},
+	"quicbaas_iam_federation_deleteprovider": {},
+	"quicbaas_iam_federation_linkaccount":    {},
+	"quicbaas_iam_federation_getuserlinks":   {},
+	"quicbaas_iam_federation_unlinkaccount":  {},
+	"quicbaas_iam_gdpr_consent_grant":        {},
+	"quicbaas_iam_gdpr_consent_withdraw":     {},
+	"quicbaas_iam_gdpr_consent_get":          {},
+	"quicbaas_iam_gdpr_consent_list":         {},
+	"quicbaas_iam_gdpr_export_request":       {},
+	"quicbaas_iam_gdpr_deletion_request":     {},
 }
 
 // scopeIAMTenant applies the REST cross-tenant rule to an IAM tool call: the
