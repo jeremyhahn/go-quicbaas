@@ -147,6 +147,8 @@ func (s *PEPServer) Check(ctx context.Context, req *iampb.CheckRequest) (*iampb.
 }
 
 // CheckBatch performs batch authorization checks for multiple resources.
+// The batch acts only in the caller's bound tenant: the subject's tenant
+// must be empty or that tenant, as in Check, and any other is refused.
 func (s *PEPServer) CheckBatch(ctx context.Context, req *iampb.CheckBatchRequest) (*iampb.CheckBatchResponse, error) {
 	s.logger.WithFields(map[string]interface{}{
 		"subject_id":     req.Subject.GetId(),
@@ -165,8 +167,14 @@ func (s *PEPServer) CheckBatch(ctx context.Context, req *iampb.CheckBatchRequest
 		return nil, status.Error(codes.InvalidArgument, "at least one resource is required")
 	}
 
-	// Convert proto subject to domain subject
+	// The batch acts only in the caller's bound tenant: the subject's tenant
+	// must be empty or that tenant, as in Check.
+	tenantID, err := tenantctx.Target(ctx, "pep.CheckBatch", req.Subject.GetTenantId())
+	if err != nil {
+		return nil, convertPEPError(err)
+	}
 	subject := convertProtoToSubject(req.Subject)
+	subject.TenantID = tenantID
 
 	// Convert context
 	reqContext := make(map[string]interface{})

@@ -57,15 +57,15 @@ func TestMapToToolName_PIV(t *testing.T) {
 	}
 }
 
-// TestMapToToolName_FIDO2 pins every FIDO2 method onto its xkms.fido2.* tool.
+// TestMapToToolName_FIDO2 pins every FIDO2 method onto its xkms_fido2_* tool.
 func TestMapToToolName_FIDO2(t *testing.T) {
 	tr := &Transport{}
 	cases := map[string]string{
-		"BeginRegistration":    "xkms.fido2.beginRegistration",
-		"FinishRegistration":   "xkms.fido2.finishRegistration",
-		"BeginAddCredential":   "xkms.fido2.beginAddCredential",
-		"BeginAuthentication":  "xkms.fido2.beginAuthentication",
-		"FinishAuthentication": "xkms.fido2.finishAuthentication",
+		"BeginRegistration":    "xkms_fido2_beginRegistration",
+		"FinishRegistration":   "xkms_fido2_finishRegistration",
+		"BeginAddCredential":   "xkms_fido2_beginAddCredential",
+		"BeginAuthentication":  "xkms_fido2_beginAuthentication",
+		"FinishAuthentication": "xkms_fido2_finishAuthentication",
 	}
 	for method, want := range cases {
 		if got := tr.mapToToolName("quicbaas.FIDO2", method); got != want {
@@ -238,7 +238,7 @@ func TestFIDO2MCPHandler_TransformResponse(t *testing.T) {
 // account from the authenticated caller.
 func TestFIDO2BeginAddCredential_OverMCP(t *testing.T) {
 	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
-		wantTool: "xkms.fido2.beginAddCredential",
+		wantTool: "xkms_fido2_beginAddCredential",
 		assertArgs: func(t *testing.T, args map[string]interface{}) {
 			assert.NotContains(t, args, "email")
 			assert.NotContains(t, args, "user_id")
@@ -259,7 +259,7 @@ func TestFIDO2BeginAddCredential_OverMCP(t *testing.T) {
 // an empty session.
 func TestFIDO2BeginAddCredential_RefusalOverMCP(t *testing.T) {
 	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
-		wantTool:  "xkms.fido2.beginAddCredential",
+		wantTool:  "xkms_fido2_beginAddCredential",
 		toolError: true,
 		rawText:   "forbidden: cross-tenant",
 	})

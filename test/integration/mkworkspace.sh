@@ -1,19 +1,5 @@
 #!/bin/sh
 # mkworkspace.sh writes the go.work the seal integration images build in.
-#
-# Usage: mkworkspace.sh [OUTPUT]   (default: ./go.work)
-#
-# Run it from the directory that holds the sibling checkouts (go-qrdb,
-# go-xkms, ... and go-quicbaas itself) copied in from the BuildKit `workspace`
-# named context. Dockerfile.seal and Dockerfile.seal-hardware both run this one
-# script, so the module list lives in exactly one place
-# (go-quicbaas#399; `make check-workspace-script` keeps it that way).
-#
-# The `go` line is the toolchain the image actually carries (`go env
-# GOVERSION`), never a literal: a literal drifts from the base image tag, and a
-# go line newer than the toolchain makes every build in the image fail.
-#
-# GO overrides the go binary consulted, for the script's own test.
 set -eu
 
 out=${1:-go.work}

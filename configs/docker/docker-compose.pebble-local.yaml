@@ -1,14 +1,4 @@
-# QuicBaaS PebbleDB Local Configuration - Docker Compose
-# Single-node with PebbleDB storage, no Raft consensus
-# Best for: Single-node deployments, development with persistence
-#
-# Usage:
-#   docker compose -f configs/docker/docker-compose.pebble-local.yaml up
-#   docker compose -f configs/docker/docker-compose.pebble-local.yaml up -d  # detached
-#
-# Access:
-#   REST API: http://localhost:8443
-#   gRPC:     localhost:9443
+# QuicBaaS single node with PebbleDB storage and no Raft.
 
 services:
   quicbaas:
@@ -23,8 +13,7 @@ services:
       - quicbaas-data:/data/quicbaas
     environment:
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_STORAGE_BACKEND=pebble
       - QUICBAAS_SERVER_GRPC_ENABLED=true

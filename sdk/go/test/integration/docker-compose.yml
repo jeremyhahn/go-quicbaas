@@ -1,5 +1,4 @@
-# QuicBaaS SDK Integration Test Environment
-# Single-node server for testing SDK functionality
+# QuicBaaS SDK integration environment: one server node.
 
 services:
   quicbaas:
@@ -31,8 +30,7 @@ services:
       - QUICBAAS_LOGGING_FORMAT=console
       - QUICBAAS_STORAGE_DATA_DIR=/data
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_ENABLE_TCP=true
       - QUICBAAS_SERVER_ENABLE_REST=true
@@ -40,26 +38,16 @@ services:
       - QUICBAAS_KMS_ENABLED=true
       - QUICBAAS_KMS_BACKEND=software
       - QUICBAAS_SECRETS_ENABLED=true
-      # TLS is mandatory stack-wide: the REST listener serves HTTPS with the
-      # shared integration cert fixtures (quicbaas.yaml security.tls_*). The
-      # suite pins test/integration/certs/ca.crt as the client RootCAs (see
-      # setup_test.go suiteTLS); no InsecureSkipVerify anywhere.
-      # Default-deny scope -> RBAC gate ON (the secure default). The suite
-      # bootstraps a platform token via public OAuth2 (DCR + client_credentials)
-      # and attaches it to every protected data-plane request; an anonymous
-      # request to a protected path is rejected (proved by the negative test).
+      # TLS is mandatory: the REST listener serves HTTPS with the shared integration certificate fixtures.
       - QUICBAAS_SECURITY_REQUIRE_AUTHZ=true
       - QUICBAAS_SERVER_MCP_ENABLED=false
     volumes:
       - quicbaas-data:/data
       - quicbaas-logs:/var/log/quicbaas
       - quicbaas-socket:/var/run/quicbaas
-      # Server config: fixture-cert TLS identity + cert-bound bootstrap admin
-      # + RFC 7591 DCR enablement (keys the env surface cannot express).
+      # Server config: fixture TLS identity, certificate-bound bootstrap admin and RFC 7591 DCR.
       - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
-      # Shared integration cert fixtures, issued by QuicBaaS's own CA
-      # (test/integration/certfixture): serving cert valid for localhost, the
-      # trust anchor, and the bootstrap admin client cert bundle.
+      # Shared integration certificate fixtures, issued by QuicBaaS's own CA.
       - ../../../../test/integration/certs:/etc/quicbaas/certs:ro
     networks:
       - sdk-test-network
@@ -70,9 +58,7 @@ services:
       retries: 15
       start_period: 20s
 
-# Gitea module-fetch credentials for the image build, as a BuildKit secret
-# (dependency-resolution.md §6), staged by `make stage-gomodauth`. When empty the
-# build falls back to the public proxy.
+# Module fetch credentials for the image build as a BuildKit secret, staged by `make stage-gomodauth`.
 secrets:
   gomodauth:
     file: ${GOMODAUTH_ENV:-/tmp/quicbaas-gomodauth.env}

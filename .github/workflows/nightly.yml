@@ -1,28 +1,4 @@
-# nightly-template: v1.0 (customized) -- the known-red and long-horizon jobs,
-# off the push path.
-#
-# Owner ruling 2026-08-20 (fail-fast pipeline for iteration speed): jobs that
-# are known-red with tracked issues, or that verify a slow-moving property, do
-# NOT run per push -- a known-red job burning 60-90 runner-minutes per push
-# produces information we already have. They run here on a daily
-# schedule at `5 4 * * *` (04:05 UTC) and on workflow_dispatch, and are NOT
-# in any merge gate. When their tracked issues land (FIPS: this repo's
-# fips140=only failures; Trivy: the install diagnosis), a job may move back
-# to ci.yml -- that move is deliberate, not automatic.
-#
-# The owner ordered (2026-11-22): "the nightlys shouldnt require any manual
-# executiion, it should be getting run automatically!" That order supersedes
-# the 2026-10-11 no-`schedule:` rule for this Nightly workflow only; its slot
-# is `5 4 * * *` (04:05 UTC).
-#
-# sdk-go-integration joined on the same terms: it is the sdk/go docker-compose
-# harness that `make test-sdk-go` excludes from the gate (see the comment
-# above test-sdk-go in the Makefile).
-#
-# fips and trivy are the jobs that were in this repo's ci.yml, moved unchanged
-# apart from the fips job's `needs: [build]`, which had no meaning here.
-# Reconciled against software/templates/github-actions/nightly.yml in the
-# automatethethings repo (devops.md §1/§8/§9).
+# nightly-template: v1.0 (customized). Known-red and long-horizon jobs, off the push path.
 
 name: Nightly
 
@@ -35,12 +11,7 @@ env:
   GO_VERSION: '1.27.4'
 
 jobs:
-  # The whole root module under fips140=only, dealt over two shards by `make
-  # test-fips-shard` (the deal ci.yml's unit shards use). It is a plain run,
-  # no -race and no tags, far lighter than ci.yml's race shards; two shards
-  # keep each well inside its 45 minutes on a 4-core runner. It stays here,
-  # out of the merge gate, while it is known-red (see the header); the green
-  # curated subset is `make test-fips-conformance`.
+  # The root module under fips140=only, over two shards from `make test-fips-shard`.
   fips:
     name: FIPS (shard ${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
@@ -67,11 +38,7 @@ jobs:
       - name: Unit tests (FIPS mode)
         run: make test-fips-shard SHARD=${{ matrix.shard }} SHARDS=2
 
-  # trivy fs -- dependency CVEs and leaked secrets in the tree (devops.md §8).
-  # Scoping mirrors the `trivy` target in the Makefile; keep the two identical.
-  # test/ and examples/ do not ship; bin/, build/ and data/ are local build
-  # output. The skip-files entry keeps the secret scanner off the committed
-  # test TLS material in pkg/server/certs.
+  # trivy fs: dependency CVEs and leaked secrets in the tree.
   trivy:
     timeout-minutes: 60
     name: Trivy
@@ -83,11 +50,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      # Two paths for one gate. trivy-action's setup step cannot authenticate
-      # to github.com from a Gitea runner and upload-sarif has no
-      # GHES-compatible endpoint there, so the action path is guarded on the
-      # server URL and Gitea gates with the trivy CLI below. Both run the same
-      # fs scan at the same severity; only the SARIF upload is GitHub-only.
+      # SARIF upload on github.com; other forges gate with the trivy CLI below.
       - name: Trivy scan (SARIF for code scanning)
         if: github.server_url == 'https://github.com'
         uses: aquasecurity/trivy-action@master
@@ -134,10 +97,7 @@ jobs:
             --skip-dirs test --skip-dirs examples --skip-dirs bin --skip-dirs build --skip-dirs data \
             --skip-files 'pkg/server/certs/*.key' --ignorefile .trivyignore .
 
-  # Every worker-image toolchain pin at its upstream's latest release
-  # (devops.md: track the latest). The pins move by hand, so this is what
-  # notices when one falls behind; it names each stale pin and its latest
-  # release. A slow-moving property, so nightly rather than per push.
+  # Every worker-image toolchain pin at its upstream's latest release.
   worker-toolchain-currency:
     name: Worker toolchain currency
     runs-on: ubuntu-latest
@@ -148,12 +108,7 @@ jobs:
       - name: Check every worker-image pin against upstream
         run: make check-worker-toolchain-currency
 
-  # The sdk/go docker-compose harness (sdk/go/test/integration). Its compose
-  # file builds the server from test/integration/Dockerfile.dev, which resolves
-  # first-party modules from published tags (no sibling checkouts), so the
-  # image builds on a runner. The harness is excluded from ci.yml's
-  # `make test-sdk-go` (Makefile, grep -v '/test/') and runs here so it is
-  # never out of sight. Moving it into ci.yml is deliberate, not automatic.
+  # The sdk/go docker-compose harness (sdk/go/test/integration).
   sdk-go-integration:
     name: SDK Go integration
     runs-on: ubuntu-latest
@@ -165,9 +120,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      # The harness's TestMain exits 0 when `docker info` fails, so a runner
-      # without Docker would report green and run nothing. This step turns that
-      # into a failure.
+      # The harness's TestMain exits 0 without Docker, so require it here.
       - name: Require Docker and Compose
         run: |
           docker info

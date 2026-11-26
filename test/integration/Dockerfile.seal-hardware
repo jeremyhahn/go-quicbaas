@@ -1,27 +1,8 @@
-# QuicBaaS Hardware-Seal Integration Test Runner Dockerfile
-#
-# Builds quicbaasd AND the quicbaas CLI WITH the hardware seal build tags
-# (tpm2 pkcs11) so the seal factories are compiled in, then ships the full
-# Go toolchain + workspace so the tagged seal integration tests can run.
-#
-# Unlike Dockerfile.seal (cloud backends, CGO_ENABLED=0), this image:
-#   * enables CGO_ENABLED=1 — required by miekg/pkcs11 for the pkcs11 backend.
-#   * builds SoftHSM2 v2.6.1 from source (same configuration as
-#     test/integration/docker/softhsm/Dockerfile) so the library at
-#     /usr/local/lib/softhsm/libsofthsm2.so is ABI-compatible with the
-#     Alpine pkcs11 CGO binary.
-#   * ships softhsm2-util for per-test token initialization.
-#   * does NOT install swtpm — the tpm2 backend connects to the external
-#     swtpm1 container over TCP via the go-xkms TCP transport path.
-#
-# Both stages use golang:1.27.4-alpine (matching go.mod).
-# Alpine supports CGO via apk gcc + musl-dev.
+# QuicBaaS hardware-seal integration test runner image.
 
 ARG BUILD_TAGS="local quic raft rest iam mcp hashicorpmetrics codec_json codec_yaml tpm2 pkcs11"
 
-# ============================================================================
-# Stage 0: Build SoftHSM2 v2.6.1 from source (matches the softhsm Dockerfile)
-# ============================================================================
+# Stage 0: build SoftHSM2 v2.6.1 from source.
 FROM alpine:3.22.1 AS softhsm-builder
 
 RUN apk add --no-cache \
@@ -48,22 +29,18 @@ RUN git clone https://github.com/opendnssec/SoftHSMv2.git && \
     make -j$(nproc) && \
     make install DESTDIR=/build/softhsm-install
 
-# ============================================================================
-# Stage 1: Build quicbaasd + quicbaas CLI inside a workspace mirroring host
-# ============================================================================
+# Stage 1: build quicbaasd and the quicbaas CLI in a workspace.
 FROM golang:1.27.4-alpine AS builder
 
 ARG BUILD_TAGS
 
-# Build toolchain: git, make, bash, gcc + musl-dev for
-# CGO (pkcs11 uses miekg/pkcs11), openssl-dev + sqlite-dev for SoftHSM.
+# Build toolchain: gcc and musl-dev for cgo (pkcs11), openssl-dev and sqlite-dev for SoftHSM.
 RUN apk add --no-cache \
     git make bash ca-certificates \
     gcc musl-dev \
     openssl-dev sqlite-dev
 
-# Install SoftHSM2 runtime + headers from the softhsm-builder stage so the
-# CGO build can link against the same library the tests will use.
+# SoftHSM2 runtime and headers, so the cgo build links the library the tests use.
 COPY --from=softhsm-builder /build/softhsm-install/usr/local /usr/local
 
 WORKDIR /workspace
@@ -80,8 +57,7 @@ COPY --from=workspace go-frost      ./go-frost
 
 COPY . ./go-quicbaas
 
-# go.work comes from the one shared script; its go line is this image's
-# toolchain (go-quicbaas#399).
+# go.work comes from the shared script; its go line is this image's toolchain.
 RUN sh ./go-quicbaas/test/integration/mkworkspace.sh go.work
 
 WORKDIR /workspace/go-quicbaas
@@ -89,8 +65,7 @@ WORKDIR /workspace/go-quicbaas
 RUN rm -f pkg/api/rest/debug_integration.go pkg/api/rest/debug_noop.go || true
 RUN rm -f go.sum sdk/go/go.sum
 
-# Build the daemon WITH the hardware seal tags so the seal factories compile in.
-# CGO_ENABLED=1 is required for the pkcs11 tag (miekg/pkcs11 C binding).
+# Build the daemon with the hardware seal tags.
 RUN CGO_ENABLED=1 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
     go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd
 
@@ -98,10 +73,7 @@ RUN CGO_ENABLED=1 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
 RUN CGO_ENABLED=1 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
     go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
 
-# ============================================================================
-# Stage 2: Test runtime — full Go toolchain, workspace, built binaries,
-#           SoftHSM2 runtime + CLI for PKCS#11 token management
-# ============================================================================
+# Stage 2: test runtime, the Go toolchain, workspace and binaries.
 FROM golang:1.27.4-alpine
 
 ARG BUILD_TAGS
@@ -109,11 +81,7 @@ ARG BUILD_TAGS
 LABEL maintainer="Jeremy Hahn"
 LABEL description="QuicBaaS hardware-seal integration test runner (tpm2 + pkcs11)"
 
-# Runtime dependencies:
-#   - bash, coreutils, curl, jq, ca-certificates, tzdata: standard test harness.
-#   - netcat-openbsd (nc): used by the test harness for TCP readiness probing.
-#   - gcc musl-dev: CGO runtime for the `go test` compiler invocation.
-#   - openssl sqlite-libs p11-kit: SoftHSM2 runtime shared library dependencies.
+# Runtime dependencies: the test harness tools, gcc and musl-dev for cgo, and the SoftHSM2 shared libraries.
 RUN apk add --no-cache \
     bash \
     coreutils \
@@ -131,9 +99,7 @@ RUN apk add --no-cache \
     sqlite-libs \
     p11-kit
 
-# Install SoftHSM2 built from source (same config as test/integration/docker/
-# softhsm/Dockerfile): library at /usr/local/lib/softhsm/libsofthsm2.so,
-# utility at /usr/local/bin/softhsm2-util.
+# SoftHSM2 built from source: /usr/local/lib/softhsm/libsofthsm2.so and /usr/local/bin/softhsm2-util.
 COPY --from=softhsm-builder /build/softhsm-install/usr/local /usr/local
 
 # Verify softhsm2-util is usable.
@@ -152,8 +118,7 @@ COPY --from=workspace go-codec      ./go-codec
 COPY --from=workspace go-frost      ./go-frost
 COPY . ./go-quicbaas
 
-# go.work comes from the one shared script; its go line is this image's
-# toolchain (go-quicbaas#399).
+# go.work comes from the shared script; its go line is this image's toolchain.
 RUN sh ./go-quicbaas/test/integration/mkworkspace.sh go.work
 
 COPY --from=builder /workspace/go-quicbaas/bin/quicbaasd /usr/local/bin/quicbaasd

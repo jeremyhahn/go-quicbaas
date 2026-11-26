@@ -44,7 +44,7 @@ import CreateTaskDialog from '../src/components/orchestrator/CreateTaskDialog.sv
 // ---------------------------------------------------------------------------
 
 const AGENTS = [
-  { id: 'agent-1', name: 'gpu-host-01', host: '10.0.0.1', capabilities: ['gpu'] },
+  { id: 'agent-1', name: 'gpu-01', host: '10.0.0.1', capabilities: ['gpu'] },
   { id: 'agent-2', name: 'cpu-host-02', host: '10.0.0.2', capabilities: [] },
 ];
 
@@ -89,7 +89,7 @@ describe('CreateTaskDialog', () => {
 
     const hostSelect = screen.getByLabelText(/Host affinity — pin task to a specific fleet node/i) as HTMLSelectElement;
     const options = Array.from(hostSelect.options).map((o) => o.value);
-    expect(options).toContain('gpu-host-01');
+    expect(options).toContain('gpu-01');
     expect(options).toContain('cpu-host-02');
     // "Any" option is always first.
     expect(options[0]).toBe('');
@@ -132,13 +132,13 @@ describe('CreateTaskDialog', () => {
     });
 
     const hostSelect = screen.getByLabelText(/Host affinity — pin task to a specific fleet node/i);
-    await fireEvent.change(hostSelect, { target: { value: 'gpu-host-01' } });
+    await fireEvent.change(hostSelect, { target: { value: 'gpu-01' } });
 
     await fireEvent.click(screen.getByRole('button', { name: /Create Task/i }));
 
     await waitFor(() => {
       expect(mockCreateTask).toHaveBeenCalledWith(
-        expect.objectContaining({ host_affinity: 'gpu-host-01' }),
+        expect.objectContaining({ host_affinity: 'gpu-01' }),
       );
     });
   });

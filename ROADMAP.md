@@ -81,6 +81,7 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **agents** — users create their own agents, any name, each with its account and model — [#2471](../../issues/2471) — open
 - **project-agents** — a new software-factory project chooses its agents and accounts, reusing an existing agent or creating a project-specific one — [#2472](../../issues/2472) — open
 - **agent-sessions** — session-only options at session start: reasoning effort, context window size and similar — [#2473](../../issues/2473) — open
+- **ai-native-sdlc** — the AI-native SDLC built in: managed settings, OpenTelemetry session export, weekly security scans and a first responder, notifying over Signal (preferred) and Slack — [#2463](../../issues/2463) — open
 
 ## Dependencies
 - Up, pinned to release tags (`make check-library-pins`): go-xkms v0.49.0-alpha (the release without a firmware dependency is needed, [#1185](../../issues/1185)), go-qrdb v0.30.1-alpha, go-quicraft v0.15.0-alpha (indirect), go-signal v0.2.0-alpha (a `pkg/*` import), go-libsignal v0.2.0-alpha, go-objstore v0.3.0-alpha (a direct require: go-objstore owns all object storage and go-quicbaas re-exports it; buckets and multipart wait on go-objstore #89 and #90), go-enclave v0.6.1-alpha, go-auth v0.4.0-alpha, go-codec v1.4.0; the latest go-qrdb and go-xkms, embedded and remote: [#2370](../../issues/2370). Down: go-trusted-platform and go-recountly

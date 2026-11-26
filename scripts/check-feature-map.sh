@@ -1,26 +1,5 @@
 #!/bin/sh
-# check-feature-map.sh checks the feature mapping table in the Makefile
-# (testing-guidelines section 4): every integration test belongs to a feature,
-# every feature has an integration target, and every path of the table names
-# a tracked file. A table path with no / names a file at the repository root
-# only (so *.md is the root's markdown, not an embedded prompt under pkg/).
-#
-# Usage: scripts/check-feature-map.sh
-#
-# It fails when:
-#   - a feature of INTEGRATION_FEATURES has no FEATURE_PATHS_<feature> row;
-#   - a feature has neither an explicit integration-test-<feature> rule nor a
-#     directory test/integration/<feature>/ (the integration-test-% rule);
-#   - a path of a row, of INTEGRATION_SHARED_PATHS, INTEGRATION_DOC_PATHS or
-#     INTEGRATION_UNTARGETED_PATHS matches no file of `git ls-files`;
-#   - a tracked *_test.go or *.test.js under any test/integration/ directory
-#     (test/integration/, sdk/go/test/integration/, ...), or a tracked
-#     *_test.go anywhere whose //go:build line requires the integration tag
-#     (pkg/sdlc/forge_gitea_live_test.go, ...), matches no feature row, no
-#     shared path and no INTEGRATION_UNTARGETED_PATHS path.
-#
-# Exit 0 when the table is clean, 1 listing every problem, 2 when the table or
-# make's rule database cannot be read.
+# check-feature-map.sh: every integration test belongs to a feature, every feature has an integration target, and every path in the Makefile's feature table is tracked.
 set -euf
 
 cd "$(git rev-parse --show-toplevel)"
