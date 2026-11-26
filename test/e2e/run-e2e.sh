@@ -4,7 +4,7 @@
 # Boots quicbaasd in the background, waits for first-boot readiness, then runs
 # the requested Playwright project against it — the same flow as the host
 # `make test-e2e`, but self-contained in one container so the CA cert and the
-# first-boot invite log are local to both the daemon and the test runner.
+# first-boot admin certificate are local to both the daemon and the test runner.
 #
 # Environment (set by the image / compose / Make):
 #   E2E_PROJECT     Playwright project: chromium-no-backend | chromium-acp
@@ -110,6 +110,7 @@ cd /app/cmd/quicbaas/frontend
 NODE_EXTRA_CA_CERTS="${DATA_DIR}/certs/ca-chain.crt" \
 QUICBAAS_UI_URL="https://localhost:${PORT}/ui/" \
 QUICBAAS_DAEMON_LOG="$LOG" \
+QUICBAAS_E2E_DATA_DIR="$DATA_DIR" \
 QUICBAAS_E2E_NO_SANDBOX=1 \
   npx playwright test --project="$PROJECT" $EXTRA_PW
 RESULT=$?

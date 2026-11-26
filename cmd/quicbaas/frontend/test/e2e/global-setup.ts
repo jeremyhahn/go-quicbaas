@@ -7,8 +7,8 @@
  * supported ways of getting one differ only in how the passkey comes to exist.
  *
  *   FIRST-BOOT ADMIN (default, `make test-e2e`) — a freshly built daemon on a
- *   scratch data dir prints a one-time invite URL. Walk it: activate a passkey
- *   for `admin` through the invite UI, then sign in.
+ *   scratch data dir issues `admin` a client certificate and writes it under
+ *   the data dir. Present it to enrol a passkey for `admin`, then sign in.
  *
  *   LIVE TENANT USER (`make test-e2e-live`) — a long-lived node, an account that
  *   already exists, and no invite left to walk. Enrol a passkey for that user
@@ -32,17 +32,16 @@ import {
   AUTH_DIR,
   ADMIN_STORAGE_STATE,
   ADMIN_TOKEN_FILE,
-  ADMIN_EMAIL,
   TOKEN_KEY,
   REFRESH_TOKEN_KEY,
-  readAdminInviteToken,
+  readFirstBootAdminConfig,
   readLiveTenantConfig,
   type AdminTokens,
   type LiveTenantConfig,
 } from './fixtures/auth.ts';
 import { chromiumLaunchOptions, trustCA } from './fixtures/browser.ts';
 import { serverBase } from './fixtures/_http.ts';
-import { ensurePasskey } from './fixtures/live_tenant.ts';
+import { enrolPasskey, ensurePasskey } from './fixtures/live_tenant.ts';
 
 /** The shape context.storageState() returns — Playwright does not export it. */
 type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>;
@@ -83,29 +82,19 @@ async function attachVirtualAuthenticator(cdp: CDPSession): Promise<string> {
 }
 
 /**
- * Walk the first-boot invite: activate a passkey for the admin account through
- * the InviteActivateView UI (POST .../activate/fido2/begin+finish behind it).
+ * Enrol a passkey for the first-boot admin, authorized by the admin client
+ * certificate first boot wrote to the daemon's data dir, then reload so the
+ * sign-in ceremony that follows starts on a settled credentials API.
  */
-async function activateFirstBootAdmin(page: Page, baseURL: string): Promise<Principal> {
-  const inviteToken = readAdminInviteToken();
-
+async function enrolFirstBootAdmin(page: Page, baseURL: string): Promise<Principal> {
+  const cfg = readFirstBootAdminConfig();
   await page.goto(baseURL, { waitUntil: 'networkidle' });
-  await page.evaluate((tok: string) => {
-    window.location.hash = `#/invite/${tok}`;
-  }, inviteToken);
-  await page.waitForLoadState('networkidle');
+  await enrolPasskey(page, cfg, serverBase());
+  // eslint-disable-next-line no-console
+  console.log(`[global-setup] ${cfg.email}: enrolled a passkey with the first-boot admin certificate`);
+  await page.reload({ waitUntil: 'networkidle' });
 
-  const activateFinish = page.waitForResponse(
-    (r) => r.url().includes('/activate/fido2/finish') && r.request().method() === 'POST',
-  );
-  await page.getByRole('button', { name: /Register Security Key/i }).click();
-  const actResp = await activateFinish;
-  if (actResp.status() < 200 || actResp.status() >= 300) {
-    throw new Error(`admin passkey activation failed: HTTP ${actResp.status()}`);
-  }
-  await page.getByText(/sign in to your account/i).waitFor({ timeout: 15_000 });
-
-  return { email: ADMIN_EMAIL };
+  return { email: cfg.email };
 }
 
 /**
@@ -219,7 +208,7 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     // --- Step 1: make sure the principal has a passkey this browser can use. ---
     const principal =
       live === null
-        ? await activateFirstBootAdmin(page, baseURL)
+        ? await enrolFirstBootAdmin(page, baseURL)
         : await enrolLiveTenantUser(page, cdp, authenticatorId, live, baseURL);
 
     // --- Step 2: sign in with it. ---
