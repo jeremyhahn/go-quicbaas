@@ -72,7 +72,7 @@ func (s *TenantAdminSession) BearerSession(ctx context.Context) (string, time.Ti
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.token.Bearer != "" && s.now().Before(s.token.ExpiresAt) {
+	if pivCachedTokenUsable(s.token, s.now()) {
 		return s.token.Bearer, s.token.ExpiresAt, nil
 	}
 
