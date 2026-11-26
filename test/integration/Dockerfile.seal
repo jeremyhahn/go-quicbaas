@@ -1,31 +1,8 @@
-# QuicBaaS Cloud-Seal Integration Test Runner Dockerfile
-#
-# Builds quicbaasd AND the quicbaas CLI WITH the cloud seal build tags
-# (awskms vault) so the seal factories (pkg/server/seal_factory_<backend>.go)
-# are compiled in, then ships the full Go toolchain + workspace so the tagged
-# seal integration tests (test/integration/seal/, //go:build integration &&
-# <backend>) can compile and run against the emulators.
-#
-# Build model mirrors test/integration/Dockerfile: a go.work workspace is
-# reconstructed from the sibling repos supplied via the BuildKit `workspace`
-# named context, by test/integration/mkworkspace.sh.
-#
-# pkcs11 and tpm2 are NOT enabled here:
-#   * pkcs11 needs CGO + a PKCS#11 provider (SoftHSM2) system library.
-#     To add it: install `softhsm2 opensc` (the runtime libs), build with
-#     CGO_ENABLED=1 and -tags pkcs11, initialise a SoftHSM token in setup,
-#     and point seal.pkcs11.library at /usr/lib/softhsm/libsofthsm2.so.
-#   * tpm2 needs a software TPM (swtpm) + the go-xkms tpm_simulator tag.
-#     To add it: install `swtpm tpm2-tools`, run `swtpm socket ...`, build
-#     with -tags 'tpm2 tpm_simulator', provision the simulated TPM in setup,
-#     and set seal.tpm2.use_simulator=true.
-# Both are documented as the hardware-integration follow-up.
+# QuicBaaS cloud-seal integration test runner image.
 
 ARG BUILD_TAGS="local quic raft rest iam mcp hashicorpmetrics codec_json codec_yaml awskms vault"
 
-# ============================================================================
-# Stage 1: Build quicbaasd + quicbaas CLI inside a workspace mirroring host
-# ============================================================================
+# Stage 1: build quicbaasd and the quicbaas CLI in a workspace.
 FROM golang:1.27.4-alpine AS builder
 
 ARG BUILD_TAGS
@@ -46,8 +23,7 @@ COPY --from=workspace go-frost      ./go-frost
 
 COPY . ./go-quicbaas
 
-# go.work comes from the one shared script; its go line is this image's
-# toolchain (go-quicbaas#399).
+# go.work comes from the shared script; its go line is this image's toolchain.
 RUN sh ./go-quicbaas/test/integration/mkworkspace.sh go.work
 
 WORKDIR /workspace/go-quicbaas
@@ -55,19 +31,13 @@ WORKDIR /workspace/go-quicbaas
 RUN rm -f pkg/api/rest/debug_integration.go pkg/api/rest/debug_noop.go || true
 RUN rm -f go.sum sdk/go/go.sum
 
-# Modules outside the go.work workspace -- private first-party ones such as
-# go-auth included -- are fetched here, behind the gomodauth BuildKit secret:
-# mounted on tmpfs for this RUN alone and sourced rather than exported, so the
-# token reaches neither a layer, image metadata, nor a command line
-# (dependency-resolution.md §6). The mount is optional, as in the other
-# Dockerfiles. The runtime stage copies this module cache, so the seal tests
-# compile at run time without credentials.
+# Modules outside the workspace are fetched behind the gomodauth BuildKit secret, so the token reaches no layer or command line.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then set -a; . /run/secrets/gomodauth; set +a; fi; \
     GOSUMDB=off go mod download
 
-# Build the daemon WITH the cloud seal tags so the seal factories compile in.
+# Build the daemon with the cloud seal tags.
 RUN CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
     go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd
 
@@ -75,9 +45,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
 RUN CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
     go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
 
-# ============================================================================
-# Stage 2: Test runtime — full Go toolchain, workspace, built binaries
-# ============================================================================
+# Stage 2: test runtime, the Go toolchain, workspace and binaries.
 FROM golang:1.27.4-alpine
 
 ARG BUILD_TAGS
@@ -100,8 +68,7 @@ COPY --from=workspace go-codec      ./go-codec
 COPY --from=workspace go-frost      ./go-frost
 COPY . ./go-quicbaas
 
-# go.work comes from the one shared script; its go line is this image's
-# toolchain (go-quicbaas#399).
+# go.work comes from the shared script; its go line is this image's toolchain.
 RUN sh ./go-quicbaas/test/integration/mkworkspace.sh go.work
 
 # The module cache the builder fetched behind the secret; see above.

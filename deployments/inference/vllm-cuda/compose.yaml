@@ -1,42 +1,17 @@
 # vLLM serving the triage model on a CUDA card.
-#
-# WHY VLLM AND NOT OLLAMA. ollama does not batch: measured on one fleet it held
-# a flat ~21 triage turns/min from concurrency 1 through 16, because each
-# request is served to completion before the next starts. vLLM's continuous
-# batching plus a cross-request prefix cache reached 268.7 turns/min at the same
-# concurrency — 12.8x — and triage is ~94% prefill, so the prefix cache is doing
-# most of that work. The ollama backend stays registered; this is the default,
-# not a replacement.
-#
-# THE CARD MUST BE THIS SERVICE'S ALONE. --gpu-memory-utilization=0.92 asks
-# for 92% of the device at startup, and BF16 Qwen3.8-27B is 52 GiB of weights
-# before any KV cache. A host that also keeps a resident ollama model on the
-# same card (the GPU host's ollama-preload holds review-q8 at ~45 GiB, keep-alive
-# forever) cannot start this: the engine refuses at the free-memory check and
-# `restart: unless-stopped` turns that into a crash loop -- 1,554 restarts were
-# measured on 2026-09-20. Either stop the ollama residency or do not start
-# this service; there is no utilisation value that fits both.
-#
-# WHY BF16 RATHER THAN A QUANTISED BUILD. Every quantisation of the previous
-# model returned a wrong verdict on the reference triage case, and so did BF16
-# of that model — the fault was the MODEL, not the precision. Qwen3.8-27B in
-# BF16 answers it correctly under both the vendor-recommended sampling and
-# greedy decoding. Quantising is worth revisiting only against that same case.
 services:
   vllm:
     image: vllm/vllm-openai:latest
     container_name: quicbaas-vllm
     restart: unless-stopped
     runtime: nvidia
-    # vLLM's workers talk over shared memory; the 64MB default /dev/shm
-    # deadlocks them at startup rather than failing.
+    # vLLM's workers use shared memory; the 64MB default /dev/shm deadlocks them.
     ipc: host
     ports:
       - "11435:8000"
     volumes:
       - ${QUICBAAS_VLLM_MODEL_DIR:-/data/models/hf}:/models:ro
-      # Persists the compiled CUDA graphs. Without it every restart pays the
-      # full compile again, which is most of the ~120s cold start.
+      # Persists the compiled CUDA graphs.
       - ${QUICBAAS_VLLM_CACHE_DIR:-/var/cache/quicbaas/vllm}:/root/.cache/vllm
     deploy:
       resources:
@@ -51,34 +26,21 @@ services:
       - --served-model-name=review
       - --dtype=bfloat16
       - --max-model-len=65536
-      # 0.92 leaves the card's display and driver allocations room on a 96GB
-      # board. Raising it to 0.95 OOMs during graph capture, which surfaces as a
-      # container that exits AFTER reporting the model loaded.
+      # 0.92 leaves room for the card's display and driver allocations.
       - --gpu-memory-utilization=0.92
       - --max-num-seqs=32
       - --enable-prefix-caching
       - --enable-chunked-prefill
       - --max-num-batched-tokens=8192
-      # WITHOUT THESE TWO EVERY AGENTIC TURN FAILS. The triage and review loops
-      # send tools, and vLLM answers a request carrying tool_choice "auto" with
-      # 400 '"auto" tool choice requires --enable-auto-tool-choice and
-      # --tool-call-parser to be set' unless both are given. The server starts
-      # and serves plain completions perfectly well, so the misconfiguration is
-      # invisible until a real job runs.
+      # Required for agentic tool calls.
       - --enable-auto-tool-choice
-      # qwen3_xml, NOT hermes: Qwen3.8's chat template emits
-      # <tool_call><function=name><parameter=x> rather than <tool_call>{json}.
-      # Check the template in the model's tokenizer_config.json before changing
-      # the model — a parser that disagrees with the template silently yields
-      # zero tool calls instead of an error.
+      # qwen3_xml, not hermes: the model's chat template emits XML tool calls.
       - --tool-call-parser=qwen3_xml
-      # Splits the model's <think> block into reasoning_content so it never
-      # reaches the tool parser or the verdict text.
+      # Splits the <think> block into reasoning_content, away from the tool parser and the verdict text.
       - --reasoning-parser=qwen3
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/models"]
       interval: 30s
-      # Cold start compiles CUDA graphs; a shorter start_period reports the
-      # container unhealthy while it is doing exactly what it should.
+      # Cold start compiles CUDA graphs.
       start_period: 600s
       retries: 3

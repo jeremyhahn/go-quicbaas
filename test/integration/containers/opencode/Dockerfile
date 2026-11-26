@@ -1,6 +1,4 @@
-# OpenCode Agent Container
-# Multi-stage: Alpine 3.21 + Go 1.23 to install opencode binary, minimal Alpine runtime
-# Non-root agent user, workspace at /workspace
+# OpenCode agent container: opencode built with Go, minimal Alpine runtime; non-root, workspace at /workspace.
 
 FROM alpine:3.21 AS installer
 
@@ -12,8 +10,7 @@ RUN apk add --no-cache \
     curl \
     && go version
 
-# Install opencode from source via go install
-# Using the canonical Go install pattern for reproducible builds
+# opencode via go install.
 RUN GOPATH=/opt/go GOBIN=/opt/go/bin go install github.com/opencode-ai/opencode@latest \
     && /opt/go/bin/opencode --version
 

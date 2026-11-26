@@ -1,6 +1,4 @@
-# Claude Code Agent Container
-# Alpine 3.21 + Node.js 20 LTS with @anthropic-ai/claude-code CLI
-# Non-root agent user, workspace at /workspace
+# Claude Code agent container: Alpine, Node.js and the claude-code CLI; non-root, workspace at /workspace.
 
 FROM alpine:3.21 AS base
 
