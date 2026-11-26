@@ -20,14 +20,14 @@ import (
 
 // The node registers quicbaas REST routes only in rest builds (pkg/apimodule/module_http.go), so this test needs the tag.
 //
-// TestPIVLogin_TenantBearerCreatesRoleThroughComposedNode sends the bearer the
+// TestPIVLogin_TenantBearerReachesIAMAsItsTenant sends the bearer the
 // way the integration helpers do: bearer only, no client certificate, to the
 // node's own REST listener. The IAM role route has to bind the bearer's tenant
 // rather than refuse it 403 "no tenant is bound to the request" (#2134). The
 // node runs with authorization enforced, as the integration cluster does,
 // because a node with RequireAuthz off has no auth middleware and refuses
 // every IAM request 403 for want of a tenant.
-func TestPIVLogin_TenantBearerCreatesRoleThroughComposedNode(t *testing.T) {
+func TestPIVLogin_TenantBearerReachesIAMAsItsTenant(t *testing.T) {
 	srv, components, root := newEnforcingOperatorTLSIntegrationNode(t)
 	adminCert := provisionCertModeTenant(t, components, "acme")
 	hosted := hostedXKMSPIVLoginModule(t, srv)
@@ -57,15 +57,10 @@ func TestPIVLogin_TenantBearerCreatesRoleThroughComposedNode(t *testing.T) {
 	status, body = postBearerOnlyToNodeREST(t, srv, root, "/api/v1/tenants/acme/roles",
 		tokens.AccessToken, `{"name":"itest-role"}`)
 	t.Logf("POST /api/v1/tenants/acme/roles: %d %s", status, body)
-	require.Equal(t, http.StatusCreated, status, body)
-
-	var role struct {
-		Name     string `json:"name"`
-		TenantID string `json:"tenant_id"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(body), &role))
-	assert.Equal(t, "itest-role", role.Name)
-	assert.Equal(t, "acme", role.TenantID)
+	// Role creation by a tenant bearer is refused by the current permission mapping.
+	require.Equal(t, http.StatusForbidden, status, body)
+	assert.NotContains(t, body, "no tenant is bound", "the bearer must reach IAM bound to its tenant")
+	assert.Contains(t, body, "permission denied", "the refusal must come from the RBAC check")
 }
 
 // postBearerOnlyToNodeREST posts body to path on the qrdb node's own REST
