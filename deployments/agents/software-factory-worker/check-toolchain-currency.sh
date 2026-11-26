@@ -12,29 +12,7 @@
 # 2. Commercial License
 #    Contact licensing@automatethethings.com for commercial licensing options.
 #
-# check-toolchain-currency.sh TOOLCHAIN_MK
-#
-# Fails when any worker-image pin is behind its upstream's latest release.
-# Checked pins: every *_VERSION in TOOLCHAIN_MK (pkg/version/toolchain.mk), each
-# module@version in its GO_TOOL_DEPENDENCY_FLOORS, and the CLAUDE_CODE_VERSION
-# and CODEX_VERSION the Makefile passes in the environment. Each pin is
-# compared with the latest release its upstream publishes, and a pin with no
-# entry in SOURCES fails too, so a new pin cannot slip past the check.
-#
-# SERENA_DEPENDENCY_FLOORS is not checked. Its entries are lower bounds
-# (urllib3>=2.8.0) that uv already resolves to the newest release, so one can
-# never be behind.
-#
-# NPM_BUNDLED_DEPENDENCY_FLOORS is checked the other way round. Each entry is
-# a stopgap for a package npm bundles, so it is OBSOLETE -- and fails the
-# check -- once the latest npm release already bundles that version or newer,
-# or no longer bundles the package: drop it then, as the build would refuse it
-# on the next npm upgrade.
-#
-# Run it through `make check-worker-toolchain-currency`; nightly CI runs the
-# same target. It needs curl, grep, sed, tar and sort -V. The GitHub lookups read
-# where releases/latest redirects rather than calling the API, so they need no
-# token and meet no API rate limit.
+# check-toolchain-currency.sh TOOLCHAIN_MK: fail when a worker-image pin is behind its upstream's latest release.
 
 set -euo pipefail
 

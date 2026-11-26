@@ -97,11 +97,16 @@ func relaxRequiredServeFlagsForConfigFile(cmd *cobra.Command, _ []string) error 
 // prefix plus the config key, upper-cased, per the configuration convention.
 const serveAdvertiseEnv = "QUICBAAS_ADVERTISE_ADDR"
 
+// serveOllamaEnv sets the ollama base URL from the environment, under the name
+// the e2e targets and the code-review workflow already use.
+const serveOllamaEnv = "OLLAMA_URL"
+
 // serveEnvFields maps every environment variable `fleet serve` reads to the
 // string fleet.Config field it sets. A set variable beats the config file and
 // loses to a flag given on the command line.
 var serveEnvFields = map[string]string{
 	serveAdvertiseEnv: "AdvertiseAddr",
+	serveOllamaEnv:    "OllamaBaseURL",
 }
 
 // resolveServeConfig builds the daemon's Config from four layers, lowest

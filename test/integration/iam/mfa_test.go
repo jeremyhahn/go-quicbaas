@@ -55,12 +55,7 @@ type BackupCodesResponse struct {
 
 // setupUserForMFATests creates a test user and returns tenant ID and user ID.
 func setupUserForMFATests(t *testing.T, cluster *testCluster) (string, string) {
-	tenantID := generateUniqueTenantID()
-	createTenantReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "MFA Test Tenant",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
+	tenantID := sharedMFATenantID(t, cluster)
 
 	email := generateUniqueEmail()
 	createUserReq := map[string]interface{}{
@@ -78,9 +73,24 @@ func setupUserForMFATests(t *testing.T, cluster *testCluster) (string, string) {
 	return tenantID, user.ID
 }
 
+// sharedMFATenantID returns the tenant the MFA tests share: every MFA
+// assertion is about a user the test creates (or a fixed nonexistent user).
+func sharedMFATenantID(t *testing.T, cluster *testCluster) string {
+	t.Helper()
+	return sharedTenantFor(t, cluster.httpEndpoint, "mfa", func(t *testing.T) string {
+		tenantID := generateUniqueTenantID()
+		createTenantReq := map[string]interface{}{
+			"id":   tenantID,
+			"name": "MFA Test Tenant",
+		}
+		require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
+		return tenantID
+	}).id
+}
+
 // cleanupMFATests cleans up test resources.
 func cleanupMFATests(cluster *testCluster, tenantID string) {
-	cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	deleteTenantUnlessShared(cluster, tenantID)
 }
 
 // TestMFAStatusNotEnrolled tests getting MFA status for a user without MFA.
@@ -226,12 +236,7 @@ func TestMFAStatusNonExistentUser(t *testing.T) {
 	// The system admin creates the test's tenant and acts in it by the tenant lift.
 	cluster := base.asSystemAdmin()
 
-	tenantID := generateUniqueTenantID()
-	createTenantReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "MFA Test Tenant",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
+	tenantID := sharedMFATenantID(t, cluster)
 	defer cleanupMFATests(cluster, tenantID)
 
 	var status MFAStatusResponse

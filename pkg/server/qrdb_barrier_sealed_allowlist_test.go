@@ -41,8 +41,8 @@ func (alwaysSealedProbe) IsSealed() bool { return true }
 // refuses data routes while sealed (#2512).
 func TestNodeBarrierServerOptions_SealedAllowlistAdmitsComposedBarrierRoutes(t *testing.T) {
 	s := &Server{logger: buildTestLogger(t)}
-	if got := s.nodeBarrierServerOptions(false); len(got) != 2 {
-		t.Fatalf("seal disabled: expected 2 options, got %d", len(got))
+	if got := s.nodeBarrierServerOptions(false); len(got) != 3 {
+		t.Fatalf("seal disabled: expected 3 options, got %d", len(got))
 	}
 
 	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

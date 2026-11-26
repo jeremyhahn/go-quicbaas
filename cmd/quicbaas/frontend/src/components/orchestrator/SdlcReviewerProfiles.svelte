@@ -207,7 +207,7 @@
                   id="{idPrefix}-reviewer-{i}-endpoint"
                   type="url"
                   class="input input-bordered input-sm w-full font-mono"
-                  placeholder="http://gpu-host:11434 (opencode on ollama/… only)"
+                  placeholder="http://gpu-01:11434 (opencode on ollama/… only)"
                   bind:value={profile.endpoint}
                 />
               </div>

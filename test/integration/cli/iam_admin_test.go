@@ -18,6 +18,8 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +30,17 @@ import (
 // =============================================================================
 // Helper Functions
 // =============================================================================
+
+// uniqueNumericUserIDSeq keeps two user IDs taken in the same nanosecond apart.
+var uniqueNumericUserIDSeq atomic.Uint64
+
+// uniqueNumericUserID returns a unique user ID in decimal form. Since #389 a
+// user ID is a uint64 the API reads from a decimal string, so a prefixed text
+// key is refused before the request does any work. The atomic sequence keeps
+// two IDs taken in the same nanosecond apart.
+func uniqueNumericUserID() string {
+	return strconv.FormatUint(uint64(time.Now().UnixNano())+uniqueNumericUserIDSeq.Add(1), 10)
+}
 
 // createAssignmentJSON creates an admin assignment with --output json and returns
 // the parsed JSON map. The caller is responsible for cleanup.
@@ -69,6 +82,22 @@ func deleteAssignment(t *testing.T, runner *TestRunner, assignmentID string) {
 	_, _, _ = runner.Run(cmd)
 }
 
+// impersonationStartCommand returns the command that starts an impersonation
+// session of targetUserID in tenantID with --output json.
+func impersonationStartCommand(targetUserID, tenantID, reason string) CommandDef {
+	return CommandDef{
+		Name: fmt.Sprintf("iam admin impersonate start as %s json", targetUserID),
+		Args: []string{
+			"iam", "admin", "impersonate", "start",
+			"--target-user-id", targetUserID,
+			"--tenant-id", tenantID, "--reason", reason, "--output", "json",
+		},
+		ExpectSuccess:  true,
+		Timeout:        10 * time.Second,
+		SkipTransports: iamTransportsToSkip,
+	}
+}
+
 // startImpersonationJSON starts an impersonation session with --output json and
 // returns the parsed JSON map. The caller is responsible for cleanup.
 //
@@ -80,17 +109,7 @@ func deleteAssignment(t *testing.T, runner *TestRunner, assignmentID string) {
 // could name a different actor if it tried.
 func startImpersonationJSON(t *testing.T, runner *TestRunner, targetUserID, tenantID, reason string) map[string]interface{} {
 	t.Helper()
-	cmd := CommandDef{
-		Name: fmt.Sprintf("iam admin impersonate start as %s json", targetUserID),
-		Args: []string{
-			"iam", "admin", "impersonate", "start",
-			"--target-user-id", targetUserID,
-			"--tenant-id", tenantID, "--reason", reason, "--output", "json",
-		},
-		ExpectSuccess:  true,
-		Timeout:        10 * time.Second,
-		SkipTransports: iamTransportsToSkip,
-	}
+	cmd := impersonationStartCommand(targetUserID, tenantID, reason)
 	stdout, stderr, err := runner.Run(cmd)
 	require.NoError(t, err, "failed to start impersonation: stdout=%s stderr=%s", stdout, stderr)
 
@@ -129,7 +148,7 @@ func TestIAMAdminAssignmentLifecycle(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("lifecycle-admin-user")
+		userID := uniqueNumericUserID()
 		role := "tenant_admin"
 		grantedBy := "admin"
 
@@ -186,7 +205,7 @@ func TestIAMAdminAssignmentCreate(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("create-admin-user")
+		userID := uniqueNumericUserID()
 		role := "tenant_admin"
 		grantedBy := "admin"
 
@@ -196,7 +215,7 @@ func TestIAMAdminAssignmentCreate(t *testing.T) {
 		assert.Contains(t, stdout, userID, "output should contain user ID")
 
 		// Clean up: extract ID from JSON create for deletion
-		result := createAssignmentJSON(t, runner, UniqueKey("create-cleanup"), role, grantedBy)
+		result := createAssignmentJSON(t, runner, uniqueNumericUserID(), role, grantedBy)
 		cleanupID := extractAssignmentID(t, result)
 		defer deleteAssignment(t, runner, cleanupID)
 	})
@@ -210,7 +229,7 @@ func TestIAMAdminAssignmentCreateJSON(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("createjson-admin-user")
+		userID := uniqueNumericUserID()
 		role := "user_admin"
 		grantedBy := "admin"
 
@@ -232,7 +251,7 @@ func TestIAMAdminAssignmentCreateWithPermissions(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("perms-admin-user")
+		userID := uniqueNumericUserID()
 		role := "tenant_admin"
 		grantedBy := "admin"
 
@@ -271,7 +290,7 @@ func TestIAMAdminAssignmentGet(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("get-admin-user")
+		userID := uniqueNumericUserID()
 		role := "policy_admin"
 		grantedBy := "admin"
 
@@ -295,7 +314,7 @@ func TestIAMAdminAssignmentGetJSON(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("getjson-admin-user")
+		userID := uniqueNumericUserID()
 		role := "audit_admin"
 		grantedBy := "admin"
 
@@ -329,7 +348,7 @@ func TestIAMAdminAssignmentUpdate(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("update-admin-user")
+		userID := uniqueNumericUserID()
 		initialRole := "tenant_admin"
 		updatedRole := "policy_admin"
 		grantedBy := "admin"
@@ -370,7 +389,7 @@ func TestIAMAdminAssignmentUpdateDeactivate(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("deactivate-admin-user")
+		userID := uniqueNumericUserID()
 		role := "tenant_admin"
 		grantedBy := "admin"
 
@@ -419,7 +438,7 @@ func TestIAMAdminAssignmentDelete(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("delete-admin-user")
+		userID := uniqueNumericUserID()
 		role := "read_only"
 		grantedBy := "admin"
 
@@ -453,8 +472,8 @@ func TestIAMAdminAssignmentList(t *testing.T) {
 			return
 		}
 
-		userID1 := UniqueKey("list-admin-user-1")
-		userID2 := UniqueKey("list-admin-user-2")
+		userID1 := uniqueNumericUserID()
+		userID2 := uniqueNumericUserID()
 		grantedBy := "admin"
 
 		result1 := createAssignmentJSON(t, runner, userID1, "tenant_admin", grantedBy)
@@ -482,8 +501,8 @@ func TestIAMAdminAssignmentListActiveOnly(t *testing.T) {
 			return
 		}
 
-		activeUserID := UniqueKey("active-list-user")
-		inactiveUserID := UniqueKey("inactive-list-user")
+		activeUserID := uniqueNumericUserID()
+		inactiveUserID := uniqueNumericUserID()
 		grantedBy := "admin"
 
 		// Create active assignment
@@ -532,7 +551,7 @@ func TestIAMAdminAssignmentCreateInvalidRole(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("invalid-role-user")
+		userID := uniqueNumericUserID()
 		invalidRole := "nonexistent_role"
 		grantedBy := "admin"
 
@@ -586,7 +605,7 @@ func TestIAMAdminCheckPermission(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("checkperm-user")
+		userID := uniqueNumericUserID()
 		permission := "user:read"
 		grantedBy := "admin"
 
@@ -611,7 +630,7 @@ func TestIAMAdminCheckPermissionWithTenant(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("checkperm-tenant-user")
+		userID := uniqueNumericUserID()
 		tenantID := UniqueKey("checkperm-tenant")
 		permission := "user:create"
 		grantedBy := "admin"
@@ -637,7 +656,7 @@ func TestIAMAdminCheckPermissionWithResource(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("checkperm-resource-user")
+		userID := uniqueNumericUserID()
 		permission := "document:read"
 		resourceType := "document"
 		resourceID := UniqueKey("resource")
@@ -678,14 +697,21 @@ func TestIAMAdminImpersonateStart(t *testing.T) {
 			return
 		}
 
-		targetUserID := UniqueKey("impersonate-target")
-		tenantID := UniqueKey("impersonate-tenant")
+		tenantID, targetUserID := createImpersonationTarget(t, runner, "impersonate")
+		// The target's tenant refused the system admin (tenant isolation).
+		if targetUserID == "" {
+			return
+		}
 		reason := "integration test impersonation"
 
 		// No test-created admin assignment: the authenticated caller (the
 		// runner's firstboot super_admin credential) already holds
 		// user:impersonate, and the actor can no longer be named by the
 		// request (go-quicbaas#383).
+		// REST refuses impersonation of a user in another tenant.
+		if expectCrossTenantRefusal(t, runner, impersonationStartCommand(targetUserID, tenantID, reason), TransportREST) {
+			return
+		}
 		result := startImpersonationJSON(t, runner, targetUserID, tenantID, reason)
 		sessionID := extractSessionID(t, result)
 		defer endImpersonation(t, runner, sessionID)
@@ -712,11 +738,18 @@ func TestIAMAdminImpersonateEnd(t *testing.T) {
 			return
 		}
 
-		targetUserID := UniqueKey("end-impersonate-target")
-		tenantID := UniqueKey("end-impersonate-tenant")
+		tenantID, targetUserID := createImpersonationTarget(t, runner, "end-impersonate")
+		// The target's tenant refused the system admin (tenant isolation).
+		if targetUserID == "" {
+			return
+		}
 		reason := "integration test end impersonation"
 
 		// The authenticated caller is already privileged (#383).
+		// REST refuses impersonation of a user in another tenant.
+		if expectCrossTenantRefusal(t, runner, impersonationStartCommand(targetUserID, tenantID, reason), TransportREST) {
+			return
+		}
 		result := startImpersonationJSON(t, runner, targetUserID, tenantID, reason)
 		sessionID := extractSessionID(t, result)
 
@@ -736,13 +769,20 @@ func TestIAMAdminImpersonateList(t *testing.T) {
 			return
 		}
 
-		targetUserID := UniqueKey("list-impersonate-target")
-		tenantID := UniqueKey("list-impersonate-tenant")
+		tenantID, targetUserID := createImpersonationTarget(t, runner, "list-impersonate")
+		// The target's tenant refused the system admin (tenant isolation).
+		if targetUserID == "" {
+			return
+		}
 		reason := "integration test list impersonations"
 
 		// Start a session so the list has something to return. The actor
 		// is the authenticated caller (#383), so list by the id the
 		// session actually recorded rather than a client-chosen one.
+		// REST refuses impersonation of a user in another tenant.
+		if expectCrossTenantRefusal(t, runner, impersonationStartCommand(targetUserID, tenantID, reason), TransportREST) {
+			return
+		}
 		result := startImpersonationJSON(t, runner, targetUserID, tenantID, reason)
 		sessionID := extractSessionID(t, result)
 		defer endImpersonation(t, runner, sessionID)

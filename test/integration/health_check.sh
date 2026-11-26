@@ -1,10 +1,5 @@
 #!/bin/bash
-# Health check script for integration test environment
-# Verifies that the QuicBaaS cluster is fully operational before running tests:
-# every node is live and ready, accepts a PIV login with the integration admin
-# certificate, and listens on its gRPC and MCP ports. Any failure exits 1.
-#
-# Exercised without Docker by health_check_test.sh (`make check-workspace-script`).
+# Health check for the integration cluster: every node live and ready, PIV login works, gRPC and MCP ports listen.
 
 set -e
 

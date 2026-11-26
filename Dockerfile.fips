@@ -1,5 +1,4 @@
-# QuicBaaS FIPS 140-3 Compliant Dockerfile
-# Uses Go 1.24+ GOFIPS140 for FIPS-validated cryptography
+# QuicBaaS FIPS 140-3 image: Go's GOFIPS140 for FIPS-validated cryptography.
 
 # Build arguments
 ARG GO_VERSION=1.27.4
@@ -7,11 +6,7 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
 ARG GOFIPS140=v1.0.0
-# gms_pure_go is the floor, not a feature: this builder is CGO_ENABLED=0 and
-# dolthub/go-mysql-server's internal/regex has no file satisfying
-# `cgo && !gms_pure_go` without cgo, so the link fails on "build constraints
-# exclude all Go files" (see Dockerfile's identical comment). release.yml
-# never overrides BUILD_TAGS for this image, so this default is load-bearing.
+# gms_pure_go is required: the builder is CGO_ENABLED=0 and go-mysql-server's regex needs cgo otherwise.
 ARG BUILD_TAGS=gms_pure_go
 
 # Stage 1: Build stage with FIPS support
@@ -32,21 +27,7 @@ WORKDIR /build
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
-# Until 2026-08-14 this stage copied working-tree clones out of a .deps/
-# directory and rewrote a set of relative `replace` directives to point at
-# them (see Dockerfile's identical comment). Both are gone: .deps/ was
-# deleted with the decoupling, and the only replaces left in go.mod are the
-# intra-repo sdk/go one and an armon/go-metrics version pin, neither of which
-# needs rewriting. The COPY of a directory that no longer exists failed the
-# build outright.
-#
-# go.mod pins first-party modules, which this download resolves through the
-# module proxy and the checksum database like any other module. Any fetch
-# credentials arrive as a BuildKit secret, never a build arg, mounted on tmpfs for this
-# RUN alone and never becoming a layer. The mount is optional by design: on
-# GitHub Actions no secret is supplied and these modules resolve from the
-# public proxy once tags are mirrored (§7), so the same Dockerfile builds on
-# both hosts.
+# Modules resolve through the module proxy; the gomodauth secret mount is optional.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
@@ -62,8 +43,7 @@ ARG DATE
 ARG GOFIPS140
 ARG BUILD_TAGS
 
-# Build static FIPS binaries using downloaded dependencies
-# GOFIPS140=v1.0.0 enables FIPS 140-3 mode by default
+# Static FIPS binaries; GOFIPS140 enables FIPS 140-3 mode by default.
 RUN GOFIPS140=${GOFIPS140} CGO_ENABLED=0 GOOS=linux go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false \
     -ldflags="-w -s -X github.com/jeremyhahn/go-quicbaas/pkg/version.Version=${VERSION} -X github.com/jeremyhahn/go-quicbaas/pkg/version.BuildTime=${DATE} -X github.com/jeremyhahn/go-quicbaas/pkg/version.GitCommit=${COMMIT}" \
     -o quicbaasd ./cmd/quicbaasd
@@ -77,14 +57,7 @@ RUN echo "Verifying FIPS binaries:" && \
     file quicbaasd && \
     file quicbaas
 
-# Stage 2: Runtime stage
-# The binaries are static (CGO_ENABLED=0, FIPS comes from Go's crypto/fips140,
-# not the OS), so the runtime needs only ca-certificates and tzdata. The
-# debian:bookworm-slim base failed the release Trivy gate on 58 HIGH/CRITICAL
-# base-layer CVEs (#591); this is the same base the daemon and CLI images use,
-# which pass the identical gate. Pinned by tag and digest (the manifest-list
-# digest of alpine:3.24.1, resolved 2026-10-11) so a scan is reproducible.
-# Bump both together; `apk upgrade` covers the interval between base releases.
+# Stage 2: runtime; the binaries are static, so only ca-certificates and tzdata are needed.
 FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 # Install runtime dependencies, patched
@@ -112,10 +85,7 @@ USER quicbaas
 # Set working directory
 WORKDIR /data
 
-# Expose ports
-# 8080: HTTP/REST API
-# 9090: gRPC API
-# 63001-63010: Raft cluster communication
+# Ports: 8080 REST, 9090 gRPC, 63001-63010 Raft.
 EXPOSE 8080 9090 63001-63010
 
 # Health check using CLI
@@ -125,8 +95,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Volume for data persistence
 VOLUME ["/data"]
 
-# Default environment variables
-# GODEBUG=fips140=on ensures FIPS mode is enabled at runtime
+# GODEBUG=fips140=on enables FIPS mode at runtime.
 ENV QUICBAAS_LOG_LEVEL=info \
     QUICBAAS_LOG_FORMAT=json \
     QUICBAAS_STORAGE_DATA_DIR=/data \

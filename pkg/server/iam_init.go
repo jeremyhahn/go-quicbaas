@@ -360,6 +360,8 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	if s.promptSeeder != nil {
 		tenantManager.SetPromptSeeder(s.promptSeeder)
 	}
+	// Tell the server's created-hooks after every new tenant (its defaults).
+	tenantManager.AddCreatedObserver(&s.tenantCreatedHooks)
 
 	// Create policy cache and engine
 	policyCache := iam.NewPolicyCache(&iam.CacheConfig{
@@ -1820,7 +1822,8 @@ type inviteActivationGetter interface {
 
 // registerIAMService registers IAM-related gRPC services with the gRPC server.
 // It retrieves IAM components from the QuicBaaS service via the iamComponentsGetter
-// interface and creates gRPC server adapters for IAM, MFA, PEP, Session, and Audit.
+// interface. It builds the MFA server locally and registers the host-built
+// IAM, Federation, PEP, Session and Audit servers the node also mounts.
 func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 	if s.quicBaaSService == nil {
 		return
@@ -1840,7 +1843,7 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 	s.logger.Info("Registered IAM gRPC service")
 
 	ctx := context.Background()
-	policyEngine, err := getter.GetPolicyEngine(ctx)
+	_, err := getter.GetPolicyEngine(ctx)
 	if err != nil {
 		s.logger.WithError(err).Warn("Failed to get policy engine, skipping the remaining IAM gRPC registrations")
 		return
@@ -1870,11 +1873,12 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 		}
 	}
 
-	// Register PEP (Policy Enforcement Point) service
-	pepAdapter := grpcapi.NewPEPServiceAdapter(policyEngine)
-	pepServer := grpcapi.NewPEPServer(pepAdapter, s.logger)
-	iampb.RegisterPEPServiceServer(grpcServer, pepServer)
-	s.logger.Info("Registered PEP gRPC service")
+	// Register PEP service: the same instance the node mounts (see
+	// buildPEPServer).
+	if host.PEP != nil {
+		iampb.RegisterPEPServiceServer(grpcServer, host.PEP)
+		s.logger.Info("Registered PEP gRPC service")
+	}
 
 	// Register Session service (in-memory storage fallback: see
 	// buildSessionServer)
@@ -1883,22 +1887,12 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 		s.logger.Info("Registered Session gRPC service")
 	}
 
-	// Register Audit service. The audit logger is ALWAYS the node-backed
-	// NodeAuditLogger (node_audit_logger.go) once IAM composes — there is
-	// no in-memory fallback (P5.2: a fallback that loses records on
-	// restart is the defect the unified audit plane exists to eliminate).
-	// A nil return here means IAM itself failed to compose, in which case
-	// skipping Audit gRPC registration is correct: nothing else registered
-	// either.
-	auditLogger, _ := getter.GetAuditLogger(ctx)
-	if auditLogger == nil {
-		s.logger.Error("Audit logger unavailable, skipping Audit gRPC registration")
-		return
+	// Register Audit service: the same instance the node mounts (see
+	// buildAuditServer).
+	if host.Audit != nil {
+		iampb.RegisterAuditServiceServer(grpcServer, host.Audit)
+		s.logger.Info("Registered Audit gRPC service")
 	}
-	auditAdapter := grpcapi.NewAuditServiceAdapter(auditLogger)
-	auditServer := grpcapi.NewAuditServer(auditAdapter, s.logger)
-	iampb.RegisterAuditServiceServer(grpcServer, auditServer)
-	s.logger.Info("Registered Audit gRPC service")
 }
 
 // buildIAMServer builds the IAMService server over the IAM components the
