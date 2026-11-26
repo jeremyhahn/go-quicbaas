@@ -1,17 +1,4 @@
-# ============================================================================
-# Container runtime integration test runner
-# ============================================================================
-#
-# Builds the pkg/containerruntime integration test binary with cgo, so that
-# libcontainer's nsenter init is linked in, and runs it. libcontainer starts
-# each container by re-executing the current binary, so the test binary is
-# also the container init.
-#
-# busybox-static supplies the one file of the test image the tests push to
-# the compose file's registry.
-#
-# Used by test/integration/containerruntime/docker-compose.yml; run it with
-# `make integration-test-containerruntime`. The container must be privileged.
+# Container runtime integration test runner.
 
 FROM golang:1.27.4
 
@@ -24,9 +11,7 @@ WORKDIR /workspace/go-quicbaas
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
-# Gitea credentials arrive as a BuildKit secret, sourced for this RUN alone
-# (dependency-resolution.md §6), the same way test/integration/Dockerfile
-# takes them.
+# Module credentials arrive as a BuildKit secret, sourced for this run only, as in test/integration/Dockerfile.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then set -a; . /run/secrets/gomodauth; set +a; fi; \

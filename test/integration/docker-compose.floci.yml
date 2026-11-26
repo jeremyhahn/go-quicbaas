@@ -16,8 +16,7 @@ services:
     networks:
       - quicbaas-test
     healthcheck:
-      # Assert the services actually report "running" instead of just probing
-      # the port, so warm-up never masquerades as readiness.
+      # Check the services report "running", not just an open port.
       test:
         - CMD
         - bash
