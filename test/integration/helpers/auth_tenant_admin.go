@@ -153,11 +153,11 @@ func deleteTenantAsSystemAdmin(ctx context.Context, baseURL, tenantID string) er
 
 // enrollTenantPIVUser has the fixture CA issue an ephemeral tenant-scoped
 // client cert, creates a PIV user in tenantID and activates it through the
-// invite flow, binding the cert. adminBearer must be the system admin's: the
-// users route requires tenants:create, a cross-scope permission a tenant's own
-// admin never holds, and since go-quicbaas#2342 a system caller acts in the
-// tenant the URL names. The user holds no role: the caller grants whatever
-// the principal is for.
+// invite flow, binding the cert. adminBearer is the system admin's: the users
+// route requires users:create (the same permission as gRPC CreateUser), and
+// since go-quicbaas#2342 a system caller acts in the tenant the URL names,
+// re-authorized there through the tenant lift. The user holds no role: the
+// caller grants whatever the principal is for.
 func enrollTenantPIVUser(ctx context.Context, baseURL, tenantID, adminBearer string) (userID string, certPEM, keyPEM []byte, err error) {
 	certPEM, keyPEM, err = IssueTenantClientCert(ctx, tenantID)
 	if err != nil {

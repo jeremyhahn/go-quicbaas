@@ -1,17 +1,4 @@
-# worker-image-variants — build, scan and publish each project's worker image
-# variant to ghcr.io, FROM the worker image's digest (issue #2700).
-#
-# A variant is deployments/agents/software-factory-worker/variants/<v>.Dockerfile:
-# `ARG BASE` + `FROM ${BASE}` plus the project's own tools, no COPY/ADD. It
-# runs after every successful worker-image run that moved `current` (the
-# schedule), and on dispatch (optionally for one base digest). The base is
-# always pinned BY DIGEST, so a variant names exactly the base it was built on.
-# Tags: ghcr.io/<owner>/quicbaas-software-factory-worker-<v>:<base12> (never
-# pushed twice) and `current`, moved only after both secret scans and the
-# CRITICAL/HIGH vulnerability scan pass and the push resolves. The push uses
-# the job's own GITHUB_TOKEN under `packages: write` (G1: no PAT, no other
-# secret), like worker-image. A registry denial on the lookup counts as an
-# absent tag only when the packages API answers 404 for the package.
+# worker-image-variants: build, scan and publish each project's worker image variant to ghcr.io from the worker image's digest.
 name: worker-image-variants
 
 on:
@@ -107,8 +94,6 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           elif grep -qi 'denied' "$err"; then
             # A container package that has never been pushed answers `denied`.
-            # Only the packages API saying 404 for the package proves that;
-            # any other answer fails closed.
             cat "$err" >&2
             case "$OWNER_TYPE" in Organization) scope=orgs ;; *) scope=users ;; esac
             pkg="${REPO##*/}"

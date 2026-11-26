@@ -100,10 +100,11 @@ func (b *benchmarkStorage) ListJobs(ctx context.Context, query *JobQuery) ([]*Jo
 }
 
 func (b *benchmarkStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*Job, error) {
+	eligible := DueJobFilterFrom(ctx)
 	b.mu.RLock()
 	result := make([]*Job, 0, limit)
 	for _, job := range b.jobs {
-		if job.Status == JobStatusPending && (job.NextRun.Before(before) || job.NextRun.Equal(before)) {
+		if job.Status == JobStatusPending && (job.NextRun.Before(before) || job.NextRun.Equal(before)) && (eligible == nil || eligible(job)) {
 			result = append(result, job)
 			if len(result) >= limit {
 				break

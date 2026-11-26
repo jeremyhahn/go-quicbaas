@@ -283,10 +283,32 @@ func (r *TestRunner) RequireCryptoAvailable() bool {
 	}
 
 	stdout, stderr, err := r.Run(probeCmd)
+	if err != nil && cryptoProbeAuthRefused(stdout, stderr) {
+		r.t.Fatalf("[%s] crypto service availability probe was refused (auth failure): %s", r.transport, strings.TrimSpace(stdout+stderr))
+	}
 	if err != nil && outputIndicatesUnavailable(stdout, stderr) {
 		combined := strings.TrimSpace(stdout + stderr)
 		r.t.Logf("[%s] Crypto service not available (validated correct error response: %s)", r.transport, combined)
 		return false
 	}
 	return true
+}
+
+// cryptoProbeAuthRefused reports whether the crypto availability probe's
+// output is an authentication or authorization refusal. Such a refusal says
+// nothing about whether the crypto service is configured, so the probe fails
+// the leg instead of reading it as "available".
+func cryptoProbeAuthRefused(stdout, stderr string) bool {
+	combined := stdout + stderr
+	for _, indicator := range authRefusalIndicators {
+		if strings.Contains(combined, indicator) {
+			return true
+		}
+	}
+	for _, indicator := range credentialAuthRefusals {
+		if strings.Contains(combined, indicator) {
+			return true
+		}
+	}
+	return false
 }

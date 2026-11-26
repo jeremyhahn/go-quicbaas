@@ -28,6 +28,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
@@ -38,7 +39,12 @@ type JobStorage interface {
 	UpdateJob(ctx context.Context, job *Job) error
 	DeleteJob(ctx context.Context, id uint64, tenantID string) error
 	ListJobs(ctx context.Context, query *JobQuery) ([]*Job, string, error)
+
+	// GetJobsDueForExecution returns up to limit jobs due before before. A
+	// DueJobFilter carried by ctx (DueJobFilterFrom) narrows the scan, and
+	// the limit counts only the jobs it accepts.
 	GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*Job, error)
+
 	SaveExecution(ctx context.Context, exec *JobExecution) error
 	GetExecutions(ctx context.Context, jobID uint64, tenantID string, limit int) ([]*JobExecution, error)
 
@@ -512,6 +518,11 @@ func (s *SchedulerEngine) ScheduleJob(ctx context.Context, job *Job) error {
 	if job.ID >= SystemJobIDFloor {
 		return InvalidJobError{Field: "id", Message: "IDs at or above SystemJobIDFloor are reserved for system jobs"}
 	}
+	// A platform handler acts across every tenant; only a system-owned job
+	// may name one.
+	if err := checkPlatformHandler(job); err != nil {
+		return err
+	}
 
 	// Set defaults
 	now := time.Now()
@@ -958,6 +969,10 @@ func (s *SchedulerEngine) UpdateJob(ctx context.Context, jobID uint64, tenantID 
 		if updates.Handler != "" {
 			// Handler existence is validated at execution time, not update time
 			next.Handler = updates.Handler
+			// A tenant-owned job is never turned into a platform handler's job.
+			if err := checkPlatformHandler(&next); err != nil {
+				return nil, err
+			}
 		}
 		if updates.Payload != nil {
 			next.Payload = json.RawMessage(updates.Payload)
@@ -1490,6 +1505,14 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		return
 	}
 
+	// A tenant-owned job of a platform handler is refused here too, whatever
+	// wrote it: the handler acts across every tenant, so it never runs for
+	// one. The job fails without being retried.
+	if err := checkPlatformHandler(job); err != nil {
+		s.handleJobFailure(storageCtx, job, err)
+		return
+	}
+
 	// Re-check the job under its stripe lock before executing: a
 	// concurrent cancel, pause, or delete between dispatch and
 	// execution must win. The running-status write happens under the
@@ -1600,8 +1623,8 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 
 	// Create execution record
 	exec := &JobExecution{
-		TenantID:  JobTenantID(job),
 		JobID:     job.ID,
+		TenantID:  JobTenantID(job),
 		Status:    JobStatusRunning,
 		StartedAt: time.Now(),
 	}
@@ -1612,8 +1635,16 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		timeout = s.config.DefaultTimeout
 	}
 
+	// A tenant-owned job runs with its tenant bound, so a handler that reads
+	// the tenant from its context acts for that tenant and no other. A
+	// system-owned job's context is left as it is.
+	runCtx := ctx
+	if tenantID := JobTenantID(job); tenantID != "" {
+		runCtx = tenantctx.WithTenant(ctx, tenantID)
+	}
+
 	// Execute with timeout
-	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	execCtx, cancel := context.WithTimeout(runCtx, timeout)
 	defer cancel()
 
 	// Channel for result

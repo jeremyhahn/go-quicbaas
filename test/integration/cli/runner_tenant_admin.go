@@ -123,6 +123,35 @@ func (r *TestRunner) ActAsTenantAdmin(tenantID string) {
 	r.tenantAdmin = newTenantAdminSession(r.t.TempDir(), tenantID)
 }
 
+// TenantAdminID returns the tenant the runner's tenant admin acts in, or ""
+// when the runner acts as the system admin.
+func (r *TestRunner) TenantAdminID() string {
+	if r.tenantAdmin == nil {
+		return ""
+	}
+	return r.tenantAdmin.tenantID
+}
+
+// RunForTransportsAsTenantAdmin is RunForTransports with each transport
+// subtest acting as the admin of a tenant of its own, minted from
+// UniqueKey(tenantPrefix). The messaging, scheduler, orchestrator and fleet
+// verbs are tenant-only: go-qrdb's ScopeTenantOnly refuses them to the system
+// tenant on purpose, so a test of them must act as a tenant admin. The tenant
+// is provisioned on the first command and deleted when the test ends (see
+// ActAsTenantAdmin).
+func RunForTransportsAsTenantAdmin(t *testing.T, name, tenantPrefix string, excludeTransports []Transport, fn func(t *testing.T, runner *TestRunner)) {
+	RunForTransports(t, name, excludeTransports, func(t *testing.T, runner *TestRunner) {
+		runner.ActAsTenantAdmin(UniqueKey(tenantPrefix))
+		fn(t, runner)
+	})
+}
+
+// RunForAllTransportsAsTenantAdmin is RunForTransportsAsTenantAdmin on every
+// enabled transport.
+func RunForAllTransportsAsTenantAdmin(t *testing.T, name, tenantPrefix string, fn func(t *testing.T, runner *TestRunner)) {
+	RunForTransportsAsTenantAdmin(t, name, tenantPrefix, nil, fn)
+}
+
 // startTenantAdminSession provisions tenantID now, deleting it when t ends,
 // and returns its admin's session for runCommandAs. It calls t.Fatal on any
 // failure.

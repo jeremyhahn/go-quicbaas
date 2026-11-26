@@ -15,6 +15,7 @@ package scheduler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -183,6 +184,32 @@ func TestShouldExecute_LeaderCheckErrorTreatedAsFollower(t *testing.T) {
 	s := mustCluster(t, nil, "node-A", leader)
 	if s.shouldExecute(&Job{NodeAffinity: ""}) {
 		t.Error("leader-check error should suppress execution")
+	}
+}
+
+// TestDueJobFilter_MatchesShouldExecute checks that the filter a sweep hands
+// its storage makes the same placement decision shouldExecute makes before a
+// job fires, for every node, leadership and affinity combination.
+func TestDueJobFilter_MatchesShouldExecute(t *testing.T) {
+	leaders := map[string]func() LeaderChecker{
+		"nil":      func() LeaderChecker { return nil },
+		"leader":   func() LeaderChecker { return &fakeLeader{isLeader: true} },
+		"follower": func() LeaderChecker { return &fakeLeader{isLeader: false} },
+		"error":    func() LeaderChecker { return &fakeLeader{err: errors.New("raft unavailable")} },
+	}
+	for _, nodeID := range []string{"", "node-a"} {
+		for leaderName, leader := range leaders {
+			for _, affinity := range []string{"", "node-a", "node-b"} {
+				s := mustCluster(t, DefaultConfig(), nodeID, leader())
+				job := &Job{ID: 1, Name: "j", NodeAffinity: affinity}
+				filter := s.sweepDueFilter(context.Background())
+				got := filter == nil || filter(job)
+				if want := s.shouldExecute(job); got != want {
+					t.Errorf("node=%q leader=%s affinity=%q: filter=%v, shouldExecute=%v",
+						nodeID, leaderName, affinity, got, want)
+				}
+			}
+		}
 	}
 }
 

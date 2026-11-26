@@ -18,8 +18,6 @@ package iam_test
 
 import (
 	"testing"
-
-	"github.com/stretchr/testify/require"
 )
 
 // setupSessionSelf is setupUserForSessionTests for tests that call the
@@ -33,15 +31,23 @@ import (
 // no-op.
 func setupSessionSelf(t *testing.T, tc *testCluster) (tenantID, userID string, self *testCluster) {
 	t.Helper()
+	return sessionSelfIn(t, tc, createSessionTenant(t, tc), "session")
+}
 
-	tenantID = generateUniqueTenantID()
-	require.NoError(t, tc.asSystemAdmin().postJSON("/api/v1/tenants", map[string]interface{}{
-		"id":   tenantID,
-		"name": "Session Test Tenant",
-	}, nil))
+// sharedSessionSelf is setupSessionSelf on the package's shared session
+// tenant (shared_tenant_test.go): the PIV user and its session are the
+// test's own, so a test that asserts only on its user's sessions shares the
+// tenant.
+func sharedSessionSelf(t *testing.T, tc *testCluster) (tenantID, userID string, self *testCluster) {
+	t.Helper()
+	// The label names the user's email, so on the shared tenant it is unique.
+	return sessionSelfIn(t, tc, sharedSessionTenantID(t, tc), "session-"+generateUniqueUsername())
+}
 
+func sessionSelfIn(t *testing.T, tc *testCluster, tenantID, label string) (string, string, *testCluster) {
+	t.Helper()
 	// One login, one session: every self-call reuses this bearer so the
 	// test's own calls add no sessions of their own.
-	user := enrollPIVUser(t, tc, tenantID, "session")
+	user := enrollPIVUser(t, tc, tenantID, label)
 	return tenantID, user.id, pivUserView(t, tc, user)
 }

@@ -245,10 +245,22 @@ func (a *SchedulerAdapter) ListJobs(ctx context.Context, req *ListSchedulerJobsR
 		return nil, err
 	}
 
+	// A tenant caller that names no owner type lists the jobs its own tenant
+	// owns, the namespace CreateJob files them in by the same default; a
+	// tenant-owned listing always reads the resolved caller tenant's namespace.
+	ownerType := req.OwnerType
+	if ownerType == "" && tenantID != "" {
+		ownerType = SchedulerOwnerTypeTenant
+	}
+	ownerID := req.OwnerID
+	if ownerType == SchedulerOwnerTypeTenant && tenantID != "" {
+		ownerID = tenantID
+	}
+
 	// Convert request to scheduler.JobQuery
 	query := &scheduler.JobQuery{
-		OwnerType:      scheduler.OwnerType(req.OwnerType),
-		OwnerID:        req.OwnerID,
+		OwnerType:      scheduler.OwnerType(ownerType),
+		OwnerID:        ownerID,
 		TargetTenantID: targetTenantID,
 		Status:         scheduler.JobStatus(req.Status),
 		Handler:        req.Handler,
@@ -542,7 +554,7 @@ var schedulerInternalHandlers = map[string]bool{
 // schedulerRefuseInternalHandler refuses a scheduler API write that names, or
 // would edit a job of, an internal handler.
 func schedulerRefuseInternalHandler(operation, handler string) error {
-	if !schedulerInternalHandlers[handler] {
+	if !schedulerInternalHandlers[handler] && !scheduler.IsPlatformHandler(handler) {
 		return nil
 	}
 	return NewError(errors.ErrForbidden, "scheduler."+operation,

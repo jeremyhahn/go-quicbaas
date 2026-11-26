@@ -120,7 +120,7 @@ func (r *principalRegistry) bearer(ctx context.Context, baseURL string) (string,
 		principal = enrolled
 		r.principals[baseURL] = principal
 	}
-	if time.Now().Before(principal.token.ExpiresAt) {
+	if pivCachedTokenUsable(principal.token, time.Now()) {
 		return principal.token.Bearer, nil
 	}
 

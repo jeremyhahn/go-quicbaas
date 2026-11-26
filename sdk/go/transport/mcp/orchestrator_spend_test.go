@@ -103,7 +103,7 @@ func TestGetSpendReportArgumentsAreSnakeCase(t *testing.T) {
 		SessionID: "s1",
 		Round:     2,
 		RoundSet:  true,
-		Host:      "gpu-host:9091",
+		Host:      "gpu-01:9091",
 	})
 
 	for _, key := range []string{"tenant_id", "project_id", "task_id", "job_id", "session_id", "round", "host"} {
