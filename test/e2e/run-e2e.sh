@@ -54,7 +54,19 @@ if [ "${QUICBAAS_E2E_SANDBOX:-0}" = "1" ]; then
   fi
 fi
 
-printf 'iam:\n  spiffe_trust_domain: quicbaas.example.test\n' > "$DATA_DIR/e2e-config.yaml"
+# PIV (mTLS client cert) login is how the UI fixtures log the first-boot admin
+# in. The first boot writes certs/ca-chain.crt in the data dir before the REST
+# listener and IAM read piv_login.ca_file, so one boot on a fresh dir is enough.
+cat > "$DATA_DIR/e2e-config.yaml" <<YAML
+iam:
+  spiffe_trust_domain: quicbaas.example.test
+  piv_login:
+    enabled: true
+    ca_file: ${DATA_DIR}/certs/ca-chain.crt
+    # Test-only acknowledgement: the fixture admin certificate has no smartcard
+    # attestation. Never set this in a deployment configuration.
+    allow_unattested: true
+YAML
 echo "[run-e2e] starting quicbaasd (backend=$BACKEND ollama=$OLLAMA_URL project=$PROJECT sandbox=${QUICBAAS_E2E_SANDBOX:-0})"
 quicbaasd start \
   --config "$DATA_DIR/e2e-config.yaml" \
