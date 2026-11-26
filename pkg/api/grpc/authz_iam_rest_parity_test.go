@@ -65,10 +65,14 @@ var iamRESTParityGrants = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/UpdateRole": {"tenants", "create"},
 	// DELETE .../roles/{role_id}
 	"/quicbaas.iam.v1.IAMService/DeleteRole": {"tenants", "delete"},
-	// POST .../users/{user_id}/roles
-	"/quicbaas.iam.v1.IAMService/AssignRole": {"tenants", "create"},
-	// DELETE .../users/{user_id}/roles/{role}
-	"/quicbaas.iam.v1.IAMService/RevokeRole": {"tenants", "delete"},
+	// POST .../users/{user_id}/roles. Differs from the REST route grant on
+	// purpose: REST's tenants:create is system-scope, so the gRPC RPC takes
+	// the tenant-scoped roles:assign grant a tenant admin holds.
+	"/quicbaas.iam.v1.IAMService/AssignRole": {"roles", "assign"},
+	// DELETE .../users/{user_id}/roles/{role}. Differs from the REST route
+	// grant on purpose: REST's tenants:delete is system-scope, so the gRPC RPC
+	// takes the tenant-scoped roles:unassign grant a tenant admin holds.
+	"/quicbaas.iam.v1.IAMService/RevokeRole": {"roles", "unassign"},
 	// POST /api/v1/admin/impersonation/start
 	"/quicbaas.iam.v1.IAMService/StartImpersonation": {"users", "update"},
 	// POST .../users/{user_id}/gdpr/consent
