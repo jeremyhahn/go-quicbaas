@@ -43,6 +43,7 @@ func postUser(t *testing.T, handler *IAMHandler, tenantID, body string) *httptes
 	rctx.URLParams.Add("tenant_id", tenantID)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/"+tenantID+"/users/", strings.NewReader(body))
 	req = req.WithContext(callerRouteContext(req.Context(), rctx))
+	req = withRoleAssignCallerIn(handler.server, req, tenantID)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	handler.CreateUser(w, req)
