@@ -1,30 +1,12 @@
-# QuicBaaS Integration Test Node Dockerfile
-# Used for running QuicBaaS cluster nodes in integration tests.
-#
-# Build model: first-party dependencies resolve from Gitea as tagged modules,
-# exactly as they do for `go build` on a developer machine and in every other
-# job (dependency-resolution.md §1). go.mod is the single source of truth.
-#
-# Until 2026-08-14 this image copied nine sibling repos out of a `workspace`
-# named build context (`../../..` on the host) and generated a go.work inside
-# the image -- a model §2 abolished, which could not work on a CI runner and
-# had rotted unnoticed (go-codec pinned at v1.3.0, go-frost listed twice at two
-# versions), and which then deleted go.sum and built with GOSUMDB=off
-# GOFLAGS=-insecure. What this image runs is unchanged; only module resolution
-# moved.
+# QuicBaaS integration test node image.
 
 ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio"
 
-# ============================================================================
-# Stage 1: Build the node and CLI binaries.
-# ============================================================================
+# Stage 1: build the node and CLI binaries.
 FROM golang:1.27.4-alpine AS builder
 
 ARG BUILD_TAGS
-# COVER: when set to "1", build the daemon with Go coverage instrumentation
-# (-cover -coverpkg=.../pkg/server) so that running the daemon in the cluster
-# emits coverage data to GOCOVERDIR. Production builds leave COVER empty and
-# get an ordinary, uninstrumented binary.
+# COVER=1 builds the daemon with coverage instrumentation, written to GOCOVERDIR.
 ARG COVER=""
 # QUICBAAS_VERSION and GIT_COMMIT are compiled into quicbaasd, so every
 # cluster node reports the one build it runs on GET /api/v1/version.
@@ -43,10 +25,7 @@ WORKDIR /workspace/go-quicbaas
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
-# Gitea credentials arrive as a BuildKit secret, mounted on tmpfs for this RUN
-# alone and sourced rather than exported, so the token reaches neither a layer,
-# image metadata, nor a command line (dependency-resolution.md §6). The mount
-# is optional, so the same Dockerfile builds against the public proxy.
+# Module credentials arrive as a BuildKit secret on tmpfs, sourced for this run only, so the token reaches no layer or command line.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then set -a; . /run/secrets/gomodauth; set +a; fi; \
@@ -54,10 +33,7 @@ RUN --mount=type=secret,id=gomodauth \
 
 COPY . .
 
-# Build node + CLI. When COVER=1 the daemon is built with coverage
-# instrumentation scoped to pkg/server; -ldflags "-w -s" is dropped because
-# stripping is incompatible with the coverage runtime's need to emit a
-# meta-data file at exit.
+# Build the node and the CLI.
 RUN if [ "${COVER}" = "1" ]; then \
         echo "Building coverage-instrumented quicbaasd (-coverpkg=pkg/server, covermode=atomic)"; \
         CGO_ENABLED=0 GOOS=linux \
@@ -75,9 +51,7 @@ RUN if [ "${COVER}" = "1" ]; then \
     CGO_ENABLED=0 GOOS=linux \
     go build -tags "${BUILD_TAGS}" -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
 
-# ============================================================================
-# Stage 2: Minimal runtime for cluster nodes
-# ============================================================================
+# Stage 2: minimal runtime for cluster nodes.
 FROM alpine:latest
 
 LABEL maintainer="QuicBaaS Team"
@@ -107,14 +81,7 @@ COPY test/integration/node-entrypoint.sh /usr/local/bin/node-entrypoint.sh
 
 RUN chmod +x /usr/local/bin/quicbaasd /usr/local/bin/quicbaas /usr/local/bin/node-entrypoint.sh
 
-# The node config is tracked, so it is baked in rather than bind-mounted. A
-# bind source is a path in the *host* daemon's filesystem, and this compose is
-# driven from a job container whose workspace the host cannot see -- Docker then
-# creates an empty directory at the source and the daemon starts with
-# "read /etc/quicbaas/quicbaas.yaml: is a directory". Per-run *generated*
-# material (the mTLS/PIV certs) comes from the certs-init service through a
-# named volume instead; named volumes are daemon-side objects and work the same
-# on a runner and a laptop.
+# The node config is tracked, so it is baked in rather than bind-mounted.
 COPY test/integration/quicbaas.yaml /etc/quicbaas/quicbaas.yaml
 
 ENV QUICBAAS_LOG_LEVEL=info \
@@ -122,12 +89,7 @@ ENV QUICBAAS_LOG_LEVEL=info \
     QUICBAAS_DATA_DIR=/data \
     CGO_ENABLED=0
 
-# Expose ports
-# 8080: HTTP/REST API
-# 9090: Metrics/Prometheus
-# 50051: gRPC API
-# 4433: QUIC
-# 63001-63010: Raft cluster communication
+# Ports: 8080 REST, 9090 metrics, 50051 gRPC, 4433 QUIC, 63001-63010 Raft.
 EXPOSE 8080 9090 50051 4433 63001-63010
 
 VOLUME ["/data", "/var/log/quicbaas"]
@@ -135,7 +97,6 @@ VOLUME ["/data", "/var/log/quicbaas"]
 HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=10 \
     CMD curl -sf http://localhost:8080/api/v1/health/live >/dev/null || exit 1
 
-# The entrypoint derives the Raft member identities go-quicraft requires from the
-# peers' certificates, then execs the command.
+# The entrypoint derives the Raft member identities from the peers' certificates, then execs the command.
 ENTRYPOINT ["/usr/local/bin/node-entrypoint.sh"]
 CMD ["/usr/local/bin/quicbaasd", "node"]

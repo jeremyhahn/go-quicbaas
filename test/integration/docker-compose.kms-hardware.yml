@@ -1,6 +1,4 @@
-# QuicBaaS KMS Hardware Backend Test Environment
-# 3-node cluster with TPM2 (swtpm) and PKCS#11 (SoftHSM) support
-# Complete end-to-end testing of all hardware backends
+# QuicBaaS KMS hardware backend environment: 3 nodes with TPM2 (swtpm) and PKCS#11 (SoftHSM).
 
 version: '3.8'
 
@@ -144,8 +142,7 @@ services:
 
       # HTTP/gRPC configuration
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
@@ -224,8 +221,7 @@ services:
 
       # HTTP/gRPC configuration
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
@@ -310,8 +306,7 @@ services:
 
       # HTTP/gRPC configuration
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051

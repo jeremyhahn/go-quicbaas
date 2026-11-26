@@ -1,6 +1,5 @@
 #!/bin/bash
-# Ollama Devcontainer Startup Script
-# This script starts the Ollama service and pre-pulls the all-minilm model
+# Start the Ollama service and pre-pull the all-minilm model.
 
 set -e
 

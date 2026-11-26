@@ -1,13 +1,4 @@
-# QuicBaaS AI Agent Integration Test Environment
-# Orchestrates QuicBaaS server, Ollama inference, and AI agent containers.
-#
-# Usage:
-#   docker compose -f docker-compose.agents.yml up
-#   docker compose -f docker-compose.agents.yml --profile gpu up   # GPU-accelerated Ollama
-#
-# Required environment variables (or .env file):
-#   ANTHROPIC_API_KEY   - Anthropic API key for Claude Code agent
-#   OPENAI_API_KEY      - OpenAI API key for Codex and OpenCode agents
+# QuicBaaS AI agent test environment: the QuicBaaS server, Ollama and the agent containers.
 
 services:
 
@@ -24,8 +15,7 @@ services:
       - QUICBAAS_RAFT_NODE_ID=1
       - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas:63001
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
@@ -101,8 +91,7 @@ services:
       ollama:
         condition: service_healthy
     environment:
-      # Route through Ollama when ANTHROPIC_BASE_URL points to it;
-      # falls back to the official Anthropic API when unset.
+      # Routes through Ollama when ANTHROPIC_BASE_URL points to it; the Anthropic API when unset.
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-http://ollama:11434}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-test-key}
       - QUICBAAS_ADDRESS=http://quicbaas:8080

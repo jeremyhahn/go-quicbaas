@@ -1,19 +1,5 @@
 #!/bin/bash
-# Calculator Orchestration Example
-#
-# Fully local: uses Ollama for all LLM inference (lead decomposition + agent coding/review)
-# via OpenCode agents pointing at the local Ollama server. Zero API costs.
-#
-# Prerequisites:
-#   - make build (from repo root)
-#   - ollama running (model auto-pulled if missing)
-#   - opencode installed (go install github.com/opencode-ai/opencode@latest)
-#
-# Usage:
-#   ./run.sh                                              # defaults: gpu-lite + llama
-#   ./run.sh --gpu-profile cpu                            # CPU only, tinyllama
-#   ./run.sh --gpu-profile gpu-power --model-family qwen  # RTX 4090 / A6000
-#   ./run.sh --gpu-profile gpu-max --model-family deepseek # RTX 6000 Pro
+# Calculator orchestration example.
 
 set -euo pipefail
 

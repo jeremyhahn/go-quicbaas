@@ -269,6 +269,10 @@ func (d *Daemon) Start(ctx context.Context) error {
 			d.logger.Infof("fleet node daemon: swept %d orphaned worker container(s) left by a previous run",
 				len(sweep.Removed))
 		}
+		// AND, ONCE, THE OWNERS AN EARLIER QUICBAASD RAN CONTAINERS UNDER
+		// (Config.LegacyContainerOwners). They are not this daemon's, so a
+		// failure is logged and startup goes on.
+		d.runtime.SweepLegacyContainers(ctx, d.cfg.LegacyContainerOwners)
 		// AND THE RUNNING REAPER, started once the daemon is running: the
 		// sweep above covers a daemon that died, the reaper a container that
 		// came loose from its session while the daemon kept running.

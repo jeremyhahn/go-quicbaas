@@ -1,25 +1,5 @@
 #!/bin/bash
-# wait_stack.sh GATE [ARGS...] waits until one readiness gate of an integration
-# stack passes, probing every STEP seconds, and exits 1 naming the gate when its
-# timeout passes first. The Makefile's integration-test and
-# integration-test-cluster targets call it after `compose up` and stop on a
-# nonzero exit, so no test runs against a stack that never became ready.
-#
-#   grpc                 the gRPC port (50051) listens in test-node1..3
-#   mcp                  the MCP port (8888) listens in test-node1..3
-#   storage              the Floci, MinIO and Azurite healthchecks report healthy
-#   ollama               the local Ollama container answers `ollama list`
-#   ready NAME TIMEOUT URL...
-#                        every URL's /api/v1/health/ready answers 200
-#   add-node TIMEOUT URL...
-#                        one URL accepts AddNode for node4
-#
-# COMPOSE is the compose command with its project and file flags, e.g.
-# "docker compose -p quicbaas-integration -f docker-compose.integration.yml".
-# DOCKER is the docker binary. WAIT_TIMEOUT overrides the timeout, in seconds,
-# of the grpc, mcp, storage and ollama gates.
-#
-# Exercised without Docker by wait_stack_test.sh (`make check-workspace-script`).
+# wait_stack.sh GATE [ARGS...]: wait until one readiness gate of an integration stack passes, or exit 1 naming it.
 
 set -u
 

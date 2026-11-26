@@ -15,7 +15,33 @@
 
 package main
 
-import "github.com/jeremyhahn/go-quicbaas/pkg/containerruntime"
+import (
+	"context"
+
+	"github.com/jeremyhahn/go-quicbaas/internal/containerruntime"
+	"github.com/jeremyhahn/go-quicbaas/internal/inprocessruntime"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+)
+
+// registerInProcessContainerRuntime registers internal/containerruntime as the
+// agent's in-process runtime through internal/inprocessruntime (no
+// --container-runtime value selects it, and "auto" never takes it). It lives here,
+// in the agent's main package, because quicbaasd links pkg/fleet too and
+// must never link the runtime.
+func registerInProcessContainerRuntime() {
+	inprocessruntime.Register(newInProcessContainerRuntime)
+}
+
+// newInProcessContainerRuntime starts the in-process runtime with all of its
+// state under root and serves it as the orchestration contract.
+func newInProcessContainerRuntime(root string, _ interfaces.Logger) (orchestration.ContainerRuntime, error) {
+	rt, err := containerruntime.NewRuntime(context.Background(), containerruntime.RuntimeConfigUnder(root))
+	if err != nil {
+		return nil, err
+	}
+	return containerruntime.NewJobRuntime(rt), nil
+}
 
 // runContainerInit runs the container init when the agent was re-executed
 // as one by the in-process container runtime, and reports whether it did.

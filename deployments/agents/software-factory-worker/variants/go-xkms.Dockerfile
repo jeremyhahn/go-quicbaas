@@ -1,22 +1,4 @@
-# go-xkms lane image: the published factory worker plus the system packages
-# go-xkms's CI installs (.github/scripts/apt-deps.sh callers), so lanes and
-# lane-verify compile the cgo TPM simulator, PKCS#11, USB and desktop code.
-# A project that needs more than the default worker image builds FROM it.
-# The variant runs `apt-get upgrade` because the base image's packages can
-# predate Debian security fixes the vulnerability scan reads, and the floor
-# list fails the build if a flagged package is still below its fixed version;
-# raise a floor (never drop one) when the scan names a newer fix.
-#
-# Built FROM the ghcr base image, so it takes the base's labels, the
-# io.quicbaas.worker.languages label the factory reads among them. The
-# worker-image-variants workflow builds it against the base image's digest
-# and publishes it to ghcr.io beside the base:
-#
-#   ghcr.io/jeremyhahn/quicbaas-software-factory-worker-go-xkms:base-<base digest, 12 hex>
-#   (and the same image as :current)
-#
-# go-xkms's factory env then names it:
-#   FACTORY_IMAGE=ghcr.io/jeremyhahn/quicbaas-software-factory-worker-go-xkms:current
+# go-xkms lane image: the published worker plus the system packages go-xkms's CI installs.
 ARG BASE=ghcr.io/jeremyhahn/quicbaas-software-factory-worker:current
 FROM ${BASE}
 USER root
