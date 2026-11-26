@@ -107,6 +107,18 @@ paths and `mcp_endpoint` — from the spec's top-level fields. Writing any of
 those inside `node:` is refused (`DeployOwnedFieldError`) rather than
 silently overwritten.
 
+**Upgrading from a quicbaasd that ran containers.** quicbaasd no longer
+runs sandbox containers itself, and nothing removes the ones an earlier
+quicbaasd left unless the agent is told their owners. Before upgrading such
+a host, set `legacy_container_owners` in `node:` (or in `agent.yaml`) to
+`orchestrator:<absolute storage.data_dir>` and, if its embedded node ran,
+its `embedded_fleet_node.data_dir` exactly as written. The list is empty by
+default. The agent removes the containers labelled with those owners once
+at startup, after its own sweep, through its own engine: only the same
+docker or podman, as the same user, reaches them. Each value is matched
+exactly (there is no wildcard), a blank entry is skipped, and a sweep that
+fails is logged rather than failing startup.
+
 **Backends are selected one by one.** `backends` (and `fleet serve
 --backends`) names each backend the node serves: `claude`, `codex`,
 `opencode`, `openvino`, `ollama-agent`, `vllm`, `ollama`. `acp` is the group

@@ -13,18 +13,14 @@
 
 // Package backup provides the backup client for the QuicBaaS SDK.
 //
-// The backup client supports creating and restoring database backups with
-// optional compression and encryption.
+// The backup client supports creating, listing and restoring database
+// backups. The service writes backups to its configured backup storage.
 //
 // # Creating a Backup
 //
 //	client := backup.NewClient(transport)
 //
-//	resp, err := client.Create(ctx, &backup.BackupRequest{
-//	    Destination: "s3://my-bucket/backups/",
-//	    Compress:    true,
-//	    Encrypt:     true,
-//	})
+//	resp, err := client.Create(ctx, &backup.BackupRequest{})
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -34,13 +30,16 @@
 //
 //	resp, err := client.Restore(ctx, &backup.RestoreRequest{
 //	    BackupID: "backup-123",
-//	    Source:   "s3://my-bucket/backups/backup-123",
 //	})
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
+//	// The restore runs asynchronously: a running restore is not an
+//	// error, and Restored is set only once it has finished.
 //	if resp.Restored {
-//	    fmt.Printf("Restore completed in %v\n", resp.Duration)
+//	    fmt.Printf("Restore %s completed\n", resp.JobID)
+//	} else {
+//	    fmt.Printf("Restore %s is %s\n", resp.JobID, resp.Status)
 //	}
 //
 // # Listing Backups

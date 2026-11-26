@@ -304,6 +304,15 @@ type Config struct {
 	// unmodified and the spawned agent simply cannot reach the endpoint
 	// (current behavior, no regression).
 	MCPEndpoint string `json:"mcp_endpoint,omitempty" yaml:"mcp_endpoint,omitempty"`
+
+	// LegacyContainerOwners are owner label values an earlier quicbaasd on
+	// this host stamped on the sandbox containers it ran itself: its
+	// orchestration service's "orchestrator:<absolute storage.data_dir>" and
+	// its embedded node's embedded_fleet_node.data_dir, exactly as written.
+	// quicbaasd runs no containers now, so the agent sweeps these once at
+	// startup (Runtime.SweepLegacyContainers). Each entry is matched
+	// exactly; there is no wildcard, and a blank entry is skipped.
+	LegacyContainerOwners []string `json:"legacy_container_owners,omitempty" yaml:"legacy_container_owners,omitempty"`
 }
 
 // Validate checks that required fields are set and values are sane.
