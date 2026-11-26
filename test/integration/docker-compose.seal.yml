@@ -1,30 +1,7 @@
-# QuicBaaS Cloud-Seal Integration Test Environment
-#
-# A lightweight, self-contained harness for the cloud-backed barrier sealing
-# strategies (awskms, vault) that go-xkms supplies and quicbaas composes via
-# the build-tagged seal factories (pkg/server/seal_factory_<backend>.go).
-#
-# Unlike docker-compose.integration.yml (a 3-node Raft cluster), this file
-# brings up ONLY the emulators the cloud seal strategies need plus a single
-# test runner that:
-#
-#   * builds quicbaasd WITH the cloud seal tags (awskms vault), and
-#   * spawns a fresh, per-test daemon configured with each cloud strategy
-#     pointed at the emulator, then drives the barrier init -> seal -> unseal
-#     round-trip through the CLI (see test/integration/seal/).
-#
-# Pure-docker emulators (no real cloud credentials):
-#   * floci       — AWS KMS emulator for the awskms strategy (MIT, tokenless).
-#   * vault       — HashiCorp Vault dev server (Transit) for the vault strategy.
-#
-# gcpkms / azurekv have no faithful local KMS-key-wrapping emulator (the GCS /
-# Azurite emulators only cover object storage, not the KMS/Key-Vault key
-# operations the seal backends invoke); they require real cloud projects. See
-# test/integration/seal/README.md for the exact real-cloud requirements.
+# QuicBaaS cloud-seal integration environment.
 
 services:
-  # AWS KMS emulator for the awskms seal strategy. Floci is MIT-licensed and
-  # needs no auth token; it serves the same port 4566 as LocalStack did.
+  # AWS KMS emulator for the awskms seal strategy.
   floci:
     image: floci/floci:2.2.0@sha256:e97cd0c1dc2aa14e7697fb5ef5018404c4d6345169dbd276315f0bed2c7b0520
     hostname: floci
@@ -35,9 +12,7 @@ services:
     networks:
       - seal-test-network
     healthcheck:
-      # Assert KMS itself reports "running" rather than just probing the port:
-      # a port-open check goes green before the handlers are wired and turns
-      # emulator warm-up into spurious seal-test failures.
+      # Check KMS reports "running", not just an open port.
       test:
         - CMD
         - bash
@@ -58,8 +33,6 @@ services:
     restart: on-failure
 
   # HashiCorp Vault dev server (Transit engine) for the vault seal strategy.
-  # A dev server boots unsealed with an in-memory store and a fixed root token,
-  # so no unseal ceremony is required. IPC_LOCK lets Vault mlock its memory.
   vault:
     image: hashicorp/vault:latest
     hostname: vault
@@ -73,8 +46,7 @@ services:
     networks:
       - seal-test-network
     healthcheck:
-      # `vault status` exits 0 when initialized+unsealed (dev server) and
-      # non-zero while still booting.
+      # `vault status` exits 0 once initialized and unsealed.
       test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
       interval: 5s
       timeout: 3s
@@ -82,9 +54,7 @@ services:
       start_period: 5s
     restart: on-failure
 
-  # Cloud-seal integration test runner. Builds quicbaasd WITH the cloud seal
-  # tags (awskms vault) baked into the image, then runs the tagged seal tests
-  # which spawn per-test daemons against the emulators above.
+  # Cloud-seal integration test runner.
   seal-test:
     build:
       context: ../..
@@ -132,23 +102,7 @@ services:
       "
 
 
-  # =========================================================================
-  # Per-tenant barrier lane (make integration-test-tenantbarrier)
-  # =========================================================================
-  #
-  # Per-tenant barriers REQUIRE the embedded qrdb node's seal subsystem: the
-  # SHARED integration cluster (quicbaas.yaml) has no seal: section, so its
-  # nodes reject every per-tenant barrier verb with qrdb's fail-closed
-  # tenant.ErrBarrierNotEnabled. The tenantbarrier suite therefore runs in
-  # this compose file against a dedicated seal-ENABLED single-node daemon
-  # (passphrase strategy, auto-unsealed at boot) instead of the default lane.
-  #
-  # The node reuses the shared cluster's test-node1 hostname + the fixture
-  # material the QuicBaaS CA issues (test/integration/certfixture -> ./certs) so
-  # the helpers package defaults (endpoints, PIV admin cert, fixture CA) apply
-  # unchanged.
-  # Neither service depends on the floci/vault emulators — `docker
-  # compose run tenantbarrier-test` starts only this pair.
+  # Per-tenant barrier lane (make integration-test-tenantbarrier): a seal-enabled single-node daemon, since the shared cluster has no seal section.
 
   # Seal-enabled single-node quicbaasd under test.
   tenantbarrier-node:
@@ -168,26 +122,20 @@ services:
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
       - QUICBAAS_SERVER_HOST=0.0.0.0
-      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
-      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      # Sealed-window listeners default to loopback; this opts in so remote Shamir officers can reach them.
       - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
-      # System barrier: passphrase strategy, auto-initialised + auto-unsealed
-      # at startup (cmd/quicbaasd runDaemon injects WithSealPassphrase when
-      # this env var is set and seal.enabled=true in the config).
+      # System barrier: passphrase strategy, auto-initialised and auto-unsealed at startup.
       - QUICBAAS_SEAL_PASSPHRASE=tenantbarrier-integration-test-passphrase
     volumes:
       - tenantbarrier-data:/data
       - ./quicbaas-tenantbarrier.yaml:/etc/quicbaas/quicbaas.yaml:ro
       - ./certs:/etc/quicbaas/certs:ro
-    # Standalone mode (no Raft): the per-tenant barrier surface is delegated
-    # to the embedded qrdb node either way, and a single node keeps the lane
-    # fast and deterministic.
+    # Standalone mode, no Raft.
     command: ["/usr/local/bin/quicbaasd", "start", "--config", "/etc/quicbaas/quicbaas.yaml", "--data-dir", "/data"]
     networks:
       - seal-test-network
     healthcheck:
-      # Readiness (not liveness): waits for the full bootstrap including the
-      # seal auto-unseal so the test runner never races the barrier.
+      # Readiness, including the seal auto-unseal, so the runner never races the barrier.
       test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/ready"]
       interval: 5s
       timeout: 5s
@@ -215,18 +163,11 @@ services:
       - QUICBAAS_TEST_MODE=integration
       - INTEGRATION_TEST=1
       - CGO_ENABLED=0
-      # Point the helpers endpoint resolution at the single seal-enabled node
-      # (NODE2/NODE3 unset -> helpers treat this as a 1-node deployment).
+      # The single seal-enabled node; NODE2 and NODE3 unset make a one-node deployment.
       - QUICBAAS_NODE1_URL=https://test-node1:8080
       - QUICBAAS_NODE1_GRPC=test-node1:50051
     volumes:
-      # PIV/mTLS fixture bundle: the admin client cert for helpers.AuthPIV and
-      # the fixture CA itself (ca-keystore/) for helpers.AuthTenantAdmin, which
-      # issues its tenant-scoped certificate through that CA rather than signing
-      # one itself.
-      #
-      # Writable, unlike the node mount below: the CA records every certificate
-      # it signs in its certificate store.
+      # PIV and mTLS fixture bundle, with the fixture CA under ca-keystore/.
       - ./certs:/etc/quicbaas/certs
     working_dir: /workspace/go-quicbaas
     networks:
@@ -250,12 +191,7 @@ networks:
 volumes:
   tenantbarrier-data:
 
-# Gitea module-fetch credentials for the image builds (dependency-resolution.md
-# §6). Dockerfile and Dockerfile.node resolve first-party modules by tag and
-# read this. Dockerfile.seal still builds the siblings from the `workspace`
-# named context above, and reads this for every module outside that
-# workspace (go-auth among them). Staged and emptied by the Makefile targets
-# that build here (docs/testing/private-modules.md).
+# Module fetch credentials for the image builds.
 secrets:
   gomodauth:
     file: ${GOMODAUTH_ENV:-/tmp/quicbaas-gomodauth.env}

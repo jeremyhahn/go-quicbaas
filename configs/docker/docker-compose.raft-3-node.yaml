@@ -1,18 +1,4 @@
-# QuicBaaS 3-Node Raft Cluster Configuration - Docker Compose
-# Production-ready 3-node Raft cluster
-# Tolerates 1 node failure while maintaining quorum
-#
-# Usage:
-#   docker compose -f configs/docker/docker-compose.raft-3-node.yaml up
-#   docker compose -f configs/docker/docker-compose.raft-3-node.yaml up -d  # detached
-#
-# Access (any node can handle requests):
-#   Node 1: http://localhost:8444 (REST), localhost:9444 (gRPC)
-#   Node 2: http://localhost:8445 (REST), localhost:9445 (gRPC)
-#   Node 3: http://localhost:8446 (REST), localhost:9446 (gRPC)
-#
-# Cluster Status:
-#   curl http://localhost:8444/v1/cluster/members
+# QuicBaaS 3-node Raft cluster; tolerates one node failure.
 
 services:
   node1:

@@ -752,6 +752,7 @@ func (s *Server) startOrchestration() error {
 			// Shared with lifecycle_sdlc.go's attention inbox wiring — see
 			// Server.orchAccountStore.
 			s.orchAccountStore = accountStore
+			s.seedDefaultProviderAccounts(context.Background(), accountStore, accountProviders)
 			accountSecrets := orchestration.NewAccountSecretStore(s.secretsManager)
 			accountTokenOpts := []orchestration.AccountTokenManagerOption{
 				orchestration.WithAccountProviders(accountProviders),

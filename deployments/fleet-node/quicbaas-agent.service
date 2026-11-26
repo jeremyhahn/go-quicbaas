@@ -1,34 +1,4 @@
-# QuicBaaS Fleet Node Daemon systemd Unit
-#
-# Install to /etc/systemd/system/quicbaas-agent.service
-#
-# Setup steps:
-#   1. Create user:
-#      sudo useradd -r -s /bin/false -d /var/lib/quicbaas-agent -m quicbaas-agent
-#   2. Copy unit file:
-#      sudo cp quicbaas-agent.service /etc/systemd/system/
-#   3. Install the daemon's mTLS identity into the credentials directory.
-#      The daemon authenticates to the server with a client certificate
-#      issued by the server's CA -- there is no bootstrap token:
-#        /var/lib/quicbaas-agent/agent.crt      client certificate
-#        /var/lib/quicbaas-agent/agent.key      private key, mode 0600
-#        /var/lib/quicbaas-agent/server-ca.crt  CA bundle for --server
-#      These are the same three filenames `quicbaas fleet deploy` uploads,
-#      so a host provisioned either way looks identical.
-#   4. Write the environment file. agent.env.sample in this directory is
-#      the annotated template; each entry names the `fleet serve` flag it
-#      feeds:
-#      sudo mkdir -p /etc/quicbaas
-#      sudo install -m 0640 -o root -g quicbaas-agent \
-#        agent.env.sample /etc/quicbaas/agent.env
-#      sudoedit /etc/quicbaas/agent.env
-#   5. Enable and start:
-#      sudo systemctl daemon-reload
-#      sudo systemctl enable quicbaas-agent
-#      sudo systemctl start quicbaas-agent
-#   6. Verify:
-#      sudo systemctl status quicbaas-agent
-#      sudo journalctl -u quicbaas-agent -f
+# QuicBaaS fleet node daemon systemd unit.
 
 [Unit]
 Description=QuicBaaS Fleet Node Daemon
@@ -36,15 +6,7 @@ Documentation=https://quicbaas.dev/docs/agents/daemon
 After=network-online.target docker.service
 Wants=network-online.target
 
-# Start-rate limit. These are [Unit] properties: systemd has ignored them
-# in [Service] since v230, which is how this unit previously ended up with
-# no effective limit and an unbounded restart loop.
-#
-# The daemon waits out a control plane that is merely unreachable on its
-# own (capped exponential backoff, see --enroll-retry-base), so a process
-# that still exits is reporting something restarting cannot fix. Five
-# starts inside five minutes and the unit lands in "failed", where
-# monitoring sees it, instead of "activating (auto-restart)" forever.
+# Start-rate limit.
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
@@ -89,19 +51,6 @@ StateDirectory=quicbaas-agent
 EnvironmentFile=/etc/quicbaas/agent.env
 
 # Daemon command line.
-#
-# Every flag below exists on `quicbaas fleet serve`; the drift test in
-# cmd/quicbaas checks that against the live cobra command, because a unit
-# naming a removed flag fails at exec with "unknown flag" and then loops
-# on the restart policy above until the start limit trips.
-#
-# The invocation runs under /bin/sh because ${VAR:-default} and
-# ${VAR:+--flag "$VAR"} are shell expansions, not systemd ones. Each $ is
-# written $$ so systemd passes the reference through literally and the
-# shell -- which has supported both forms since forever -- does the
-# expansion, rather than depending on the substitution systemd added in
-# v249. `exec` replaces the shell so the daemon is the unit's main
-# process and receives SIGTERM directly on `systemctl stop`.
 ExecStart=/bin/sh -c 'exec /usr/local/bin/quicbaas fleet serve \
   --server "$${QUICBAAS_SERVER}" \
   --tenant "$${QUICBAAS_TENANT}" \
@@ -124,11 +73,7 @@ ExecStart=/bin/sh -c 'exec /usr/local/bin/quicbaas fleet serve \
   $${QUICBAAS_MCP_ENDPOINT:+--mcp-endpoint "$${QUICBAAS_MCP_ENDPOINT}"} \
   $${QUICBAAS_HEARTBEAT_INTERVAL:+--heartbeat-interval "$${QUICBAAS_HEARTBEAT_INTERVAL}"}'
 
-# Restart policy: automatic restart on failure (not after clean exit),
-# with an escalating delay so a persistent failure does not hammer the
-# host or the control plane. RestartSteps / RestartMaxDelaySec need
-# systemd >= 254; older versions log "Unknown key name", fall back to the
-# flat RestartSec, and are still bounded by the StartLimit* pair above.
+# Restart on failure only, with an escalating delay.
 Restart=on-failure
 RestartSec=5s
 RestartSteps=5
@@ -137,14 +82,7 @@ RestartMaxDelaySec=120s
 # Graceful shutdown: give sessions 30 seconds to drain
 TimeoutStopSec=60s
 
-# SIGTERM goes to the daemon ALONE, so it can drain (go-quicbaas#1064). The
-# default, control-group, signals every process in the unit at once -- the
-# `docker run` client behind each live worker included -- which closed a
-# worker's stream mid-prompt before the daemon had even begun to drain, and
-# the interrupted turn was charged to the work. With mixed, the daemon refuses
-# new spawns, lets in-flight turns finish within its shutdown grace, and only
-# once it has exited does systemd SIGKILL what remains; any container left
-# behind is removed by the daemon's orphan sweep on its next start.
+# SIGTERM goes to the daemon alone, so it can drain.
 KillMode=mixed
 
 # Standard output and error to systemd journal
@@ -155,16 +93,7 @@ SyslogIdentifier=quicbaas-agent
 # Security hardening
 NoNewPrivileges=yes
 
-# Mount /var/run/docker.sock (for nested container spawn)
-# CAUTION: This grants the daemon permission to spawn containers.
-# Only use with trusted host configurations.
-#
-# BindPaths= takes only "rbind"/"norbind" as its option string: the ":rw"
-# this line used to carry made systemd log "Invalid option string" and drop
-# the setting, so the socket was never bound at all. Bind mounts are
-# writable by default, so no option string is needed. The leading "-"
-# skips the mount when the socket is absent (podman hosts, container
-# runtime "none") instead of failing the unit.
+# Binds the docker socket for nested container spawn, which lets the daemon spawn containers; "-" skips it when the socket is absent.
 BindPaths=-/var/run/docker.sock:/var/run/docker.sock
 
 # Filesystem: strict read-only except state directory

@@ -107,7 +107,7 @@ quicbaas iam invite activate-piv --tenant acme-corp --token "$TOKEN" --cert piv.
 The certificate must chain to a root the server trusts, and the server's
 validation is authoritative. FIDO2 activation is not on the CLI.
 
-**Known gap:** MCP serves no invite tools while an owner ruling is pending, so
+**Known gap:** MCP serves no invite tools while a decision is pending, so
 on `--transport mcp` both verbs fail with the SDK's error. Use any other
 transport.
 

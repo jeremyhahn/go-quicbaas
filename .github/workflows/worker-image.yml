@@ -1,32 +1,4 @@
-# worker-image — build, scan and publish the software-factory worker image to
-# ghcr.io, nightly at 03:00 UTC and on any dispatch.
-#
-# build-publish builds the image with exactly the versions the repository
-# locks (G3): Claude Code, Codex and the Gemini CLI from
-# deployments/agents/software-factory-worker/versions.lock, and Go, gh and the
-# rest of the toolchain from pkg/version/toolchain.mk, both read by `make
-# build-worker-image`; nothing is taken from "latest". The Debian base packages
-# are upgraded in the Dockerfile on every build. The tag is the content tag plus
-# the UTC build date, <version>-cc<claude-code>-cx<codex>-n<YYYYMMDD>, so each
-# night publishes a fresh image and a rerun the same day pushes nothing: a
-# published tag is never pushed again. The push goes to ghcr.io with the job's
-# own GITHUB_TOKEN under `packages: write` (G1: no PAT, no other secret) via
-# `make push-worker-image`, whose Trivy gate blocks the push. Before the push,
-# two Trivy secret scans, one of the built image and one of each of its layer
-# tarballs, fail the job on a secret of any severity; the image scan also
-# covers the image config, and the config JSON is scanned with the layers. The
-# job fails before the build if any DEVCACHE_* variable is set, and both make
-# calls pass the dev-cache args empty. The image is published BY DIGEST: the
-# digest push-worker-image prints is the job's output, the `WORKER-IMAGE-DIGEST`
-# log line and the `worker-image-digest` artifact, each with the locked
-# versions and the CLIs' npm integrity sums. post-digest then posts that digest
-# to the run summary and as its own output. The package is public, like the
-# repository: no step asserts that it is private, and once the digest is
-# known the job checks that ghcr.io resolves it. move-current then points
-# `current` at that digest, on a scheduled run only and only when
-# build-publish and post-digest both succeeded: `current` moves after a green
-# nightly and never on a dispatch. The nightly schedule is an owner exception
-# to the no-`schedule:` workflow rule.
+# worker-image: build, scan and publish the software-factory worker image to ghcr.io, nightly at 03:00 UTC and on dispatch.
 name: worker-image
 
 on:
@@ -91,9 +63,7 @@ jobs:
           cx_int="$(integrity "@openai/codex@${cx}")"
           cx_x64_int="$(integrity "@openai/codex@${cx}-linux-x64")"
           gm_int="$(integrity "@google/gemini-cli@${gm}")"
-          # The Makefile's content tag, <VERSION>-cc<claude-code>-cx<codex>, plus
-          # the UTC build date, so each night's rebuild (fresh base packages)
-          # is a new tag and a same-day rerun finds its tag published.
+          # <VERSION>-cc<claude-code>-cx<codex> plus the UTC build date, so each nightly rebuild is a new tag.
           tag="$(tr -d '\n' < VERSION)-cc${cc}-cx${cx}-n$(date -u +%Y%m%d)"
           repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE}"
           printf 'cc=%s\ncx=%s\ngo=%s\ngh=%s\ntag=%s\nrepo=%s\n' "$cc" "$cx" "$go" "$gh" "$tag" "$repo" >> "$GITHUB_OUTPUT"
@@ -294,9 +264,7 @@ jobs:
           docker logout ghcr.io || true
           rm -rf "$RUNNER_TEMP/docker-config"
 
-  # The second job posts the digest build-publish published (or found already
-  # published under the same tag): a run summary and the job's outputs, for a
-  # caller of this workflow to pin the image by digest. It holds no token.
+  # Posts the published digest as a run summary and job outputs, for callers to pin the image by digest.
   post-digest:
     name: Post the worker image digest
     needs: build-publish
@@ -331,12 +299,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           { echo "ref=$REF"; echo "digest=$DIGEST"; } >> "$GITHUB_OUTPUT"
 
-  # The third job moves `current` to the digest this run published, on a
-  # scheduled run only and only after build-publish and post-digest succeeded,
-  # so `current` names the newest green nightly. A dispatch never moves it. The
-  # move is a registry-side retag of the same manifest: no build, no new bytes.
-  # --prefer-index=false keeps a single-platform manifest from being wrapped in
-  # a new index, so the digest does not change.
+  # Moves `current` to this run's digest, on a scheduled run only and after both jobs above succeed.
   move-current:
     name: Move current to the green nightly
     needs: [build-publish, post-digest]
