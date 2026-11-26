@@ -28,8 +28,10 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
 // IAMServer implements the IAM gRPC service.
@@ -183,13 +185,33 @@ func (s *IAMServer) requireRoleAssign(ctx context.Context, tenantID string) erro
 	if !ok || !caller.Authenticated || caller.ID == "" || granted == nil {
 		return status.Error(codes.PermissionDenied, "role assignment requires the authenticated caller to hold roles:assign")
 	}
-	if granted.Subject != caller.ID || (granted.UserID != 0 && caller.UserID != 0 && granted.UserID != caller.UserID) {
+	if !s.samePrincipal(ctx, tenantID, caller, granted) {
 		return status.Error(codes.PermissionDenied, "role assignment requires the authenticated caller to hold roles:assign: the bearer token names another principal")
 	}
 	if tenantID == "" || granted.TenantID != tenantID || (caller.TenantID != "" && caller.TenantID != tenantID) {
 		return status.Error(codes.PermissionDenied, "role assignment requires roles:assign in the target tenant")
 	}
 	return nil
+}
+
+// samePrincipal reports whether the bearer token's principal is the
+// authenticated caller. The immutable user ID decides it: the subject strings
+// differ for one account across authenticators (a certificate caller is named
+// by its username, a session token by its email, a generated token by its
+// decimal user ID). A certificate caller carries no user ID, so its username
+// is resolved to one in the target tenant. When no user ID is known for both
+// sides, only equal subject strings match.
+func (s *IAMServer) samePrincipal(ctx context.Context, tenantID string, caller interfaces.Subject, granted *platformtoken.AuthorizedContext) bool {
+	callerUserID := caller.UserID
+	if callerUserID == 0 && caller.IDKind == interfaces.SubjectIDUsername && tenantID != "" && s.iamService != nil {
+		if user, err := s.iamService.GetUserByUsername(ctx, tenantID, caller.ID); err == nil && user != nil {
+			callerUserID = user.ID
+		}
+	}
+	if granted.UserID != 0 && callerUserID != 0 {
+		return granted.UserID == callerUserID
+	}
+	return granted.Subject == caller.ID
 }
 
 // =============================================================================

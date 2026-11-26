@@ -304,3 +304,99 @@ func TestGRPC_UpdateUserRoleAssignWithoutBearerIsRefused(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"viewer"}, stored.Roles, "an update with no bearer token changed the user's roles")
 }
+
+// userIDRoleAuthorizer resolves updateUserAuthzToken to a principal carrying
+// an immutable user ID, as the platform token validator does (uid claim).
+type userIDRoleAuthorizer struct {
+	subject  string
+	userID   uint64
+	tenantID string
+}
+
+func (a userIDRoleAuthorizer) Authorize(_ context.Context, token, requiredPerm, _, _, _ string) (*platformtoken.AuthorizedContext, error) {
+	if token != updateUserAuthzToken {
+		return nil, &platformtoken.InvalidTokenError{Detail: "signature did not verify"}
+	}
+	if requiredPerm != "roles:assign" {
+		return nil, &platformtoken.ScopeDeniedError{Required: requiredPerm}
+	}
+	return &platformtoken.AuthorizedContext{Subject: a.subject, UserID: a.userID, TenantID: a.tenantID}, nil
+}
+
+// TestGRPC_UpdateUserRoleAssignMatchesTheCallerByUserID pins that a
+// certificate caller, named by its username, is matched to its own bearer
+// token by the immutable user ID, whatever subject string the token carries.
+func TestGRPC_UpdateUserRoleAssignMatchesTheCallerByUserID(t *testing.T) {
+	cases := []struct {
+		name    string
+		subject func(userID uint64) string
+	}{
+		{name: "token subject is the email", subject: func(uint64) string { return "ada@acme.test" }},
+		{name: "token subject is the decimal user id", subject: func(userID uint64) string { return strconv.FormatUint(userID, 10) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, mem := newRealIAMGRPCStack(t)
+			id, userID := seedUpdateUserAuthz(t, srv, mem)
+			srv.SetRoleAuthorizer(userIDRoleAuthorizer{subject: tc.subject(userID), userID: userID, tenantID: "acme"})
+
+			_, err := srv.UpdateUser(certCallerContext("ada", "acme", updateUserAuthzToken), &iampb.UpdateUserRequest{
+				TenantId: "acme", UserId: id, Roles: []string{"admin"}, Attributes: map[string]string{"department": "finance"},
+			})
+			require.NoError(t, err)
+
+			stored, err := mem.GetUser(context.Background(), "acme", userID)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"admin"}, stored.Roles)
+			assert.Equal(t, "finance", stored.Attributes["department"])
+		})
+	}
+}
+
+// TestGRPC_UpdateUserRoleAssignRefusesAnotherUserID pins that a token whose
+// user ID is not the caller's is refused, even when its subject string equals
+// the caller's name.
+func TestGRPC_UpdateUserRoleAssignRefusesAnotherUserID(t *testing.T) {
+	for _, subject := range []string{"ada", "mallory@acme.test"} {
+		t.Run(subject, func(t *testing.T) {
+			srv, mem := newRealIAMGRPCStack(t)
+			id, userID := seedUpdateUserAuthz(t, srv, mem)
+			srv.SetRoleAuthorizer(userIDRoleAuthorizer{subject: subject, userID: userID + 1000, tenantID: "acme"})
+
+			ctx := certCallerContext("ada", "acme", updateUserAuthzToken)
+			for _, req := range []*iampb.UpdateUserRequest{
+				{TenantId: "acme", UserId: id, Name: "Ada Two", Roles: []string{"admin"}},
+				{TenantId: "acme", UserId: id, Name: "Ada Two", Attributes: map[string]string{"department": "finance"}},
+			} {
+				_, err := srv.UpdateUser(ctx, req)
+				require.Error(t, err)
+				assert.Equal(t, codes.PermissionDenied, status.Code(err))
+			}
+
+			stored, err := mem.GetUser(context.Background(), "acme", userID)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"viewer"}, stored.Roles)
+			assert.NotContains(t, stored.Attributes, "department")
+			assert.Equal(t, "Ada One", stored.Name)
+		})
+	}
+}
+
+// TestGRPC_UpdateUserRoleAssignByUserIDKeepsTheTenantCheck pins that a
+// matching user ID does not lift the tenant check: the caller's own token in
+// another tenant is still refused.
+func TestGRPC_UpdateUserRoleAssignByUserIDKeepsTheTenantCheck(t *testing.T) {
+	srv, mem := newRealIAMGRPCStack(t)
+	id, userID := seedUpdateUserAuthz(t, srv, mem)
+	srv.SetRoleAuthorizer(userIDRoleAuthorizer{subject: "ada@acme.test", userID: userID, tenantID: "globex"})
+
+	_, err := srv.UpdateUser(certCallerContext("ada", "acme", updateUserAuthzToken), &iampb.UpdateUserRequest{
+		TenantId: "acme", UserId: id, Roles: []string{"admin"},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	stored, err := mem.GetUser(context.Background(), "acme", userID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"viewer"}, stored.Roles)
+}
