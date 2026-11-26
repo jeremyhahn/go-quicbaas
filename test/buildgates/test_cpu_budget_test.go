@@ -14,6 +14,7 @@
 package buildgates
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -118,9 +119,13 @@ func makePrint(t *testing.T, env []string, variable string, vars ...string) stri
 	args := append([]string{"-s", "--no-print-directory", "-C", repoRoot, "print-" + variable}, vars...)
 	cmd := exec.Command("make", args...)
 	cmd.Env = cmdEnv
-	out, err := cmd.CombinedOutput()
+	// Read stdout only: make may warn on stderr (for example whoami when the
+	// uid has no passwd entry), and that text must not end up in the value.
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("make -s print-%s %v (env %v): %v\n%s", variable, vars, env, err, out)
+		t.Fatalf("make -s print-%s %v (env %v): %v\nstdout:\n%s\nstderr:\n%s", variable, vars, env, err, out, stderr.String())
 	}
 	return strings.TrimSpace(string(out))
 }
