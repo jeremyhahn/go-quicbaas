@@ -48,19 +48,14 @@ type pivUser struct {
 // removes it. The view holds no gRPC connection, so closing it is a no-op.
 func (tc *testCluster) asResolver(t *testing.T, tenantID string) *testCluster {
 	t.Helper()
-	user := enrollPIVUser(t, tc, tenantID, "resolver")
-
-	binding := map[string]interface{}{"role_id": builtInRoleID(t, tenantID, qrdbsdk.RoleNameAdmin)}
-	require.NoError(t, tc.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/roles", tenantID, user.id), binding, nil),
-		"bind the Admin role to the resolver")
-
+	user := enrollPIVUser(t, tc, tenantID, "resolver", builtInRoleID(t, tenantID, qrdbsdk.RoleNameAdmin))
 	return pivUserView(t, tc, user)
 }
 
 // enrollPIVUser has the system admin create a PIV user named after label in
 // tenantID and binds a fixture-CA client certificate to it through the invite
 // flow. The user holds no role.
-func enrollPIVUser(t *testing.T, tc *testCluster, tenantID, label string) pivUser {
+func enrollPIVUser(t *testing.T, tc *testCluster, tenantID, label, roleID string) pivUser {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
@@ -88,6 +83,7 @@ func enrollPIVUser(t *testing.T, tc *testCluster, tenantID, label string) pivUse
 		"name":         label + " test user",
 		"enabled":      true,
 		"auth_methods": []string{"piv"},
+		"roles":        []string{roleID},
 	}, &user))
 	require.NotEmpty(t, user.ID, "%s user id", label)
 	require.NotEmpty(t, user.InviteToken, "%s user invite token", label)

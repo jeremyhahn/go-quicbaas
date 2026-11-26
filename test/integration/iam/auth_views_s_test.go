@@ -48,6 +48,6 @@ func sessionSelfIn(t *testing.T, tc *testCluster, tenantID, label string) (strin
 	t.Helper()
 	// One login, one session: every self-call reuses this bearer so the
 	// test's own calls add no sessions of their own.
-	user := enrollPIVUser(t, tc, tenantID, label)
+	user := enrollPIVUser(t, tc, tenantID, label, fixtureRoleID(tenantID))
 	return tenantID, user.id, pivUserView(t, tc, user)
 }
