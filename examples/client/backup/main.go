@@ -42,12 +42,6 @@
 //
 //	# Run with QUIC transport
 //	go run main.go -transport quic -address localhost:50052
-//
-//	# Specify backup destination
-//	go run main.go -destination /var/backups/quicbaas
-//
-//	# Enable encryption for backups
-//	go run main.go -encrypt
 package main
 
 import (
@@ -97,17 +91,11 @@ func main() {
 	// Parse command-line flags
 	transportType := flag.String("transport", "grpc", "Transport protocol (grpc, rest, quic)")
 	address := flag.String("address", "localhost:50051", "Server address")
-	destination := flag.String("destination", "/var/backups/quicbaas", "Backup destination path")
-	encrypt := flag.Bool("encrypt", false, "Enable backup encryption")
-	compress := flag.Bool("compress", true, "Enable backup compression")
 	flag.Parse()
 
 	fmt.Println("=== QuicBaaS Backup and Restore Example ===")
 	fmt.Printf("Transport:   %s\n", *transportType)
 	fmt.Printf("Address:     %s\n", *address)
-	fmt.Printf("Destination: %s\n", *destination)
-	fmt.Printf("Encrypt:     %v\n", *encrypt)
-	fmt.Printf("Compress:    %v\n", *compress)
 	fmt.Println()
 
 	// Create client with the specified transport
@@ -140,13 +128,13 @@ func main() {
 
 	// Step 2: Create a full backup
 	fmt.Println("Step 2: Creating full backup...")
-	fullBackup, err := createFullBackup(ctx, client, *destination, *encrypt, *compress)
+	fullBackup, err := createFullBackup(ctx, client)
 	if err != nil {
 		log.Fatalf("Failed to create full backup: %v", err)
 	}
 	fmt.Printf("  Backup ID:   %s\n", fullBackup.BackupID)
 	fmt.Printf("  Size:        %s\n", formatBytes(fullBackup.Size))
-	fmt.Printf("  Duration:    %v\n", fullBackup.Duration)
+	fmt.Printf("  Status:      %s\n", fullBackup.Status)
 	fmt.Printf("  Created:     %s\n", fullBackup.CreatedAt.Format(time.RFC3339))
 	fmt.Println()
 
@@ -160,13 +148,13 @@ func main() {
 
 	// Step 4: Create an incremental backup
 	fmt.Println("Step 4: Creating incremental backup...")
-	incrementalBackup, err := createIncrementalBackup(ctx, client, *destination, *encrypt, *compress)
+	incrementalBackup, err := createIncrementalBackup(ctx, client)
 	if err != nil {
 		log.Fatalf("Failed to create incremental backup: %v", err)
 	}
 	fmt.Printf("  Backup ID:   %s\n", incrementalBackup.BackupID)
 	fmt.Printf("  Size:        %s\n", formatBytes(incrementalBackup.Size))
-	fmt.Printf("  Duration:    %v\n", incrementalBackup.Duration)
+	fmt.Printf("  Status:      %s\n", incrementalBackup.Status)
 	fmt.Printf("  Created:     %s\n", incrementalBackup.CreatedAt.Format(time.RFC3339))
 	fmt.Println()
 
@@ -383,23 +371,15 @@ func modifySampleData(ctx context.Context, client quicbaas.Client) error {
 }
 
 // createFullBackup creates a full backup of the database.
-func createFullBackup(ctx context.Context, client quicbaas.Client, destination string, encrypt, compress bool) (*quicbaas.BackupResponse, error) {
-	return client.Backup().Create(ctx, &quicbaas.BackupRequest{
-		Destination: destination,
-		Compress:    compress,
-		Encrypt:     encrypt,
-	})
+func createFullBackup(ctx context.Context, client quicbaas.Client) (*quicbaas.BackupResponse, error) {
+	return client.Backup().Create(ctx, &quicbaas.BackupRequest{})
 }
 
-// createIncrementalBackup creates an incremental backup since the last backup.
-func createIncrementalBackup(ctx context.Context, client quicbaas.Client, destination string, encrypt, compress bool) (*quicbaas.BackupResponse, error) {
-	// Note: The server determines whether this is incremental based on
-	// the presence of previous backups in the destination
-	return client.Backup().Create(ctx, &quicbaas.BackupRequest{
-		Destination: destination,
-		Compress:    compress,
-		Encrypt:     encrypt,
-	})
+// createIncrementalBackup creates another backup after the full one.
+func createIncrementalBackup(ctx context.Context, client quicbaas.Client) (*quicbaas.BackupResponse, error) {
+	// Note: The server decides whether a backup is full or incremental;
+	// this client requests the service default.
+	return client.Backup().Create(ctx, &quicbaas.BackupRequest{})
 }
 
 // listBackups lists all available backups.

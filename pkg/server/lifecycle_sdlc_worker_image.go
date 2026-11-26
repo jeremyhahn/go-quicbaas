@@ -33,8 +33,9 @@ import (
 // =============================================================================
 //
 // THE BUILD RUNS ON THE DAEMON'S HOST, through the daemon's own container
-// engine (Server.orchContainerRuntime, the same ExecContainerRuntime the
-// orchestration service spawns sandboxes with), and not behind the agent RPC.
+// engine (Server.orchContainerRuntime, an ExecContainerRuntime kept for image
+// builds alone; sessions run on the co-located agent), and not behind the
+// agent RPC.
 // Three facts decide it:
 //
 //   - Worker images are not built anywhere else today: `make
@@ -43,7 +44,9 @@ import (
 //     at its own start).
 //   - The gate's smoke is an orchestrator session on a tenant's pooled
 //     credential, which only the control plane can spawn; building elsewhere
-//     would split one pass across two hosts with no shared engine.
+//     would split one pass across two hosts with no shared engine. The smoke
+//     names the candidate by its image ID, so only an agent whose engine
+//     holds the build can pass it.
 //   - Distribution to the rest of the fleet is the REGISTRY's job, not a
 //     build's: with sdlc.worker_image.registry set, the promoted image is
 //     pushed and bound by digest, and every agent running with --auto-pull

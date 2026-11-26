@@ -969,6 +969,46 @@ func (r *Runtime) SweepOrphanContainers(ctx context.Context) (orchestration.Cont
 	return sweeper.SweepOwned(ctx, r.workDir)
 }
 
+// legacyContainerSweepTimeout bounds each legacy owner's sweep, so an
+// engine that hangs cannot hold up startup.
+const legacyContainerSweepTimeout = 30 * time.Second
+
+// SweepLegacyContainers removes, once at startup, the containers an earlier
+// quicbaasd left under each of owners (Config.LegacyContainerOwners), and
+// reports the sweeps that ran. Each owner is claimed by its exact label
+// value. A blank owner, or this daemon's own work dir (SweepOrphanContainers
+// already swept it), is skipped. It is best effort: these containers are
+// not this daemon's, so a sweep that fails is logged and the next owner is
+// tried; startup never fails on it.
+func (r *Runtime) SweepLegacyContainers(ctx context.Context, owners []string) []orchestration.ContainerSweep {
+	if r.containerRuntime == nil || len(owners) == 0 {
+		return nil
+	}
+	sweeper, ok := r.containerRuntime.(orchestration.ContainerOwnerSweeper)
+	if !ok {
+		return nil
+	}
+	own := strings.TrimSpace(r.workDir)
+	var sweeps []orchestration.ContainerSweep
+	for _, owner := range owners {
+		if strings.TrimSpace(owner) == "" || strings.TrimSpace(owner) == own {
+			continue
+		}
+		sweepCtx, cancel := context.WithTimeout(ctx, legacyContainerSweepTimeout)
+		sweep, err := sweeper.SweepOwned(sweepCtx, owner)
+		cancel()
+		if err != nil {
+			r.logger.Warnf("fleet node daemon: leftover containers of earlier owner %q not removed: %v", owner, err)
+			continue
+		}
+		if len(sweep.Removed) > 0 {
+			r.logger.Infof("fleet node daemon: removed %d container(s) an earlier quicbaasd left under owner %q", len(sweep.Removed), owner)
+		}
+		sweeps = append(sweeps, sweep)
+	}
+	return sweeps
+}
+
 // ContainerReaper returns the running reaper for this daemon's sandbox
 // containers (orchestration.ContainerReaper): every container carrying this
 // daemon's owner label that none of its backends holds a live session for,

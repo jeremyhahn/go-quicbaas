@@ -1,19 +1,6 @@
-# QuicBaaS Development Container
-# Base image for all development, testing, and integration work
-# All integration test Dockerfiles should inherit from this image
-#
-# Hardware crypto emulators (swtpm TPM 2.0 simulator + SoftHSM2 PKCS#11) are
-# built from source in dedicated alpine:3.22.1 builder stages — reusing the
-# EXACT recipes from test/integration/docker/{swtpm,softhsm}/Dockerfile — and
-# their artifacts are copied into the final golang:1.27-alpine image so that
-# `go test -tags 'integration tpm2 pkcs11'` can run IN the devcontainer against
-# real swtpm + SoftHSM2 (parity with the go-xkms devcontainer). The SoftHSM2
-# library is ABI-compatible with the Alpine pkcs11 CGO binary because both are
-# built on Alpine (same approach proven by test/integration/Dockerfile.seal-hardware).
+# QuicBaaS development container: the base image for development, testing and integration work.
 
-# ============================================================================
-# Stage: swtpm-builder — libtpms + swtpm from source (matches docker/swtpm)
-# ============================================================================
+# Stage swtpm-builder: libtpms and swtpm from source.
 FROM alpine:3.22.1 AS swtpm-builder
 
 RUN apk add --no-cache \
@@ -50,9 +37,7 @@ RUN git clone https://github.com/stefanberger/swtpm.git && \
     make -j$(nproc) && \
     make install DESTDIR=/build/swtpm-install
 
-# ============================================================================
-# Stage: softhsm-builder — SoftHSM2 v2.6.1 from source (matches docker/softhsm)
-# ============================================================================
+# Stage softhsm-builder: SoftHSM2 v2.6.1 from source.
 FROM alpine:3.22.1 AS softhsm-builder
 
 RUN apk add --no-cache \
@@ -79,9 +64,7 @@ RUN git clone https://github.com/opendnssec/SoftHSMv2.git && \
     make -j$(nproc) && \
     make install DESTDIR=/build/softhsm-install
 
-# ============================================================================
-# Final stage: the development container
-# ============================================================================
+# Final stage: the development container.
 FROM golang:1.27.4-alpine
 
 LABEL maintainer="QuicBaaS Team"
@@ -147,19 +130,13 @@ RUN apk add --no-cache \
 COPY --from=swtpm-builder /build/libtpms-install/usr /usr
 COPY --from=swtpm-builder /build/swtpm-install/usr /usr
 
-# Install SoftHSM2 (library + softhsm2-util) built from source. Library lands
-# at /usr/local/lib/softhsm/libsofthsm2.so, utility at /usr/local/bin/softhsm2-util.
+# SoftHSM2 library and softhsm2-util, built from source.
 COPY --from=softhsm-builder /build/softhsm-install/usr/local /usr/local
 RUN ldconfig /usr/local/lib 2>/dev/null || true && \
     swtpm --version && \
     softhsm2-util --version
 
-# Install Ollama for embedding tests (best-effort).
-# Alpine requires the glibc compatibility layer for Ollama. The Ollama release
-# layout moved from a bare binary to a .tgz on GitHub releases; this step is
-# wrapped best-effort so a download/layout change can NEVER block the image
-# build — the embedding/RAG tests are optional (rag build tag) and excluded
-# from the default test run.
+# Ollama for the embedding tests, best-effort.
 RUN apk add --no-cache libc6-compat && \
     ( wget -qO /tmp/ollama.tgz https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64.tgz \
         && tar -xzf /tmp/ollama.tgz -C /usr/local \
@@ -168,11 +145,7 @@ RUN apk add --no-cache libc6-compat && \
         && echo "ollama installed" ) \
     || echo "WARN: ollama download failed; embedding/RAG tests unavailable in this image"
 
-# Install Go development tools. golangci-lint and the protoc plugins are
-# installed at the repository's pins, read from the one copy of them
-# (pkg/version/toolchain.mk; the build context is the repository root), so the
-# devcontainer lints with the version CI does (go-quicbaas#391) and `make
-# proto-gen` accepts its plugins (go-quicbaas#481).
+# Go development tools; golangci-lint and the protoc plugins at the pins in pkg/version/toolchain.mk.
 COPY pkg/version/toolchain.mk /tmp/toolchain.mk
 RUN golangci_version=$(sed -n 's/^GOLANGCI_VERSION := //p' /tmp/toolchain.mk) && \
     test -n "$golangci_version" && \
@@ -196,9 +169,7 @@ RUN addgroup -g ${USER_GID} ${USERNAME} && \
     echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} && \
     chmod 0440 /etc/sudoers.d/${USERNAME}
 
-# SoftHSM2 config + token directory and swtpm state directory. The SoftHSM2
-# token is initialised at container start (post-start hook), not at build time,
-# so the token store lives on the writable container layer / volume.
+# SoftHSM2 config and token directory, and the swtpm state directory.
 RUN mkdir -p /etc/softhsm /var/lib/softhsm/tokens /var/lib/swtpm/tpmstate && \
     printf 'directories.tokendir = /var/lib/softhsm/tokens\nobjectstore.backend = file\nlog.level = INFO\nslots.removable = false\n' > /etc/softhsm/softhsm2.conf && \
     chown -R ${USERNAME}:${USERNAME} /etc/softhsm /var/lib/softhsm /var/lib/swtpm
@@ -219,8 +190,7 @@ RUN mkdir -p \
 # Set working directory
 WORKDIR /workspace
 
-# Copy go.mod and go.sum for dependency caching (if available)
-# These are copied at build time for caching; will be overwritten by mount
+# go.mod and go.sum for dependency caching; the mount overwrites them.
 COPY go.mod go.sum* ./
 
 # Download dependencies
@@ -236,8 +206,7 @@ ENV GOPATH=/home/${USERNAME}/go \
     QUICBAAS_LOG_FORMAT=console \
     QUICBAAS_DATA_DIR=/data \
     QUICBAAS_TEST_MODE=development \
-    # Hardware crypto emulator wiring (swtpm runs in-container on localhost:2321;
-    # SoftHSM2 token store + library for the pkcs11 build tag).
+    # Hardware crypto emulators: swtpm on localhost:2321, SoftHSM2 token store and library for the pkcs11 tag.
     SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf \
     SOFTHSM2_LIB=/usr/local/lib/softhsm/libsofthsm2.so \
     PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so \
@@ -249,13 +218,7 @@ ENV GOPATH=/home/${USERNAME}/go \
 # Switch to non-root user
 USER ${USERNAME}
 
-# Expose common ports
-# 8080: HTTP/REST API
-# 9090: Metrics/Prometheus
-# 50051: gRPC API
-# 4433: QUIC
-# 63001-63010: Raft cluster communication
-# 2345: Delve debugger
+# Ports: 8080 REST, 9090 metrics, 50051 gRPC, 4433 QUIC, 63001-63010 Raft, 2345 Delve.
 EXPOSE 8080 9090 50051 4433 63001-63010 2345
 
 # Default to bash shell

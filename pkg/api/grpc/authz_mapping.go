@@ -183,6 +183,27 @@ type methodPermission struct {
 // permissions, and quicbaas already maps the identical verbs on its own
 // quicbaas.ceremony.v1.Ceremony surface to those permissions, so the qrdb.v1
 // mirror carries the same (strictly narrower than qrdb) scope requirement.
+// systemTenantOnlyGRPCMethods are the gRPC methods only a system-tenant
+// identity may call, whatever permissions a token carries. go-qrdb registers
+// the backup permissions as cross-tenant scope: a qrdb backup holds every
+// tenant's shard data and a restore rolls back every tenant, so a tenant that
+// grants itself backup:read or backup:restore must still be refused.
+var systemTenantOnlyGRPCMethods = map[string]struct{}{
+	"/qrdb.v1.QRDBService/BackupCreate":  {},
+	"/qrdb.v1.QRDBService/BackupList":    {},
+	"/qrdb.v1.QRDBService/BackupGet":     {},
+	"/qrdb.v1.QRDBService/BackupDelete":  {},
+	"/qrdb.v1.QRDBService/BackupRestore": {},
+	"/qrdb.v1.QRDBService/BackupVerify":  {},
+}
+
+// isSystemTenantOnlyGRPCMethod reports whether fullMethod may only be called
+// by a system-tenant identity.
+func isSystemTenantOnlyGRPCMethod(fullMethod string) bool {
+	_, ok := systemTenantOnlyGRPCMethods[fullMethod]
+	return ok
+}
+
 var qrdbIdentityGatedMethods = map[string]bool{
 	"/qrdb.v1.QRDBService/BarrierShareClaimBegin":            true,
 	"/qrdb.v1.QRDBService/BarrierShareClaimComplete":         true,
@@ -1061,9 +1082,9 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// identically on a direct qrdb node and through the broker.
 	//
 	// Scope: ONLY the families whose servicers buildQRDBRegisterOptions
-	// actually wires — barrier, ceremony, credential, user, user-auth-factor,
-	// timeseries — plus Health (public, above) and Status. Every other
-	// qrdb.v1 method (KV, lease, lock, index, vector, ...) dispatches to
+	// actually wires — barrier, backup, ceremony, credential, user,
+	// user-auth-factor, timeseries — plus Health (public, above) and Status.
+	// Every other qrdb.v1 method (KV, lease, lock, index, vector, ...) dispatches to
 	// codes.Unimplemented server-side and stays default-denied here; the
 	// quicbaas-namespaced services are the canonical broker surface for
 	// those capabilities.
@@ -1164,6 +1185,16 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/qrdb.v1.QRDBService/ListUsers":               {"users", "list"},
 	"/qrdb.v1.QRDBService/EnableUser":              {"users", "enable"},
 	"/qrdb.v1.QRDBService/DisableUser":             {"users", "disable"},
+
+	// ---- qrdb.v1.QRDBService: backup ----
+	// The same permissions the quicbaas.v1 backup RPCs (above) and go-qrdb's
+	// own transports use for these verbs.
+	"/qrdb.v1.QRDBService/BackupCreate":  {"backup", "create"},
+	"/qrdb.v1.QRDBService/BackupList":    {"backup", "list"},
+	"/qrdb.v1.QRDBService/BackupGet":     {"backup", "read"},
+	"/qrdb.v1.QRDBService/BackupDelete":  {"backup", "delete"},
+	"/qrdb.v1.QRDBService/BackupRestore": {"backup", "restore"},
+	"/qrdb.v1.QRDBService/BackupVerify":  {"backup", "verify"},
 
 	// ---- qrdb.v1.UserAuthFactorService (user-login factor surface) ----
 	// Registered as a separate proto service by qrdbsdk.RegisterGRPCService

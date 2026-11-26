@@ -1,24 +1,5 @@
 #!/bin/sh
-# touched-packages.sh names the per-package unit targets (`make test-<stem>`)
-# a change must run: the packages it changed and their direct importers.
-#
-# Usage: scripts/touched-packages.sh BASE TIP
-#
-# TIP must be the checked-out commit: importers are read from the working tree
-# with `go list`. A changed file belongs to the nearest directory at or above
-# it, within its top-level directory, that holds a .go file (so testdata and
-# embedded files count for their package); a file outside every package names
-# none. A directory that held a .go file at BASE counts as a package too, so
-# deleting a package still selects its importers. Stems follow the Makefile's targets: pkg/api/grpc -> api-grpc (test-%),
-# sdk/go/x/y -> sdk-go-x-y (test-sdk-go-%), scripts/... and test/buildgates/...
-# -> tooling (test-tooling). A package with no unit target is reported on
-# stderr only. go list runs with TOUCHED_TAGS when set, else the Makefile's
-# TEST_TAGS.
-#
-# It prints the stems, one per line, sorted. Exit 0 on success, 2 on a bad
-# argument, a TIP that is not checked out, a go list failure or a package that
-# fails to load (a .Error, or a .DepsErrors entry that names no package the
-# change deleted); nothing is printed on stdout then.
+# touched-packages.sh: the per-package unit targets a change must run, for the changed packages and their direct importers.
 set -euf
 
 usage() {

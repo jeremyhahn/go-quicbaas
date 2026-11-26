@@ -14,8 +14,10 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 
+	"github.com/jeremyhahn/go-quicbaas/internal/inprocessruntime"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -31,6 +33,72 @@ type containerRuntimeFactory struct {
 	// detect probes the engines this host has, in preference order, and
 	// fails when it finds none.
 	detect func(logger interfaces.Logger) (orchestration.ContainerRuntime, error)
+
+	// inProcess builds the in-process runtime, or is nil when this binary
+	// has none (see internal/inprocessruntime).
+	inProcess func(logger interfaces.Logger) (orchestration.ContainerRuntime, error)
+}
+
+// pkg/fleet never imports internal/containerruntime itself: quicbaasd links
+// this package and must stay CGO_ENABLED=0.
+
+// containerRuntimeInProcess keys the in-process runtime (internal/containerruntime:
+// runc libcontainer in this process, with no runtime binary and no daemon
+// socket) in the resolver table. It is not a --container-runtime value and no
+// exported call takes it: Config.Validate, ResolveContainerRuntime and
+// ResolveContainerRuntimeIn refuse it, and "auto" never takes the in-process
+// runtime.
+const containerRuntimeInProcess ContainerRuntimeSelector = "libcontainer"
+
+// errInProcessRuntimeUnavailable reports the in-process runtime resolved on a
+// binary without one: not the agent, or not linux with cgo.
+var errInProcessRuntimeUnavailable = errors.New("agent: the in-process container runtime is not built into this binary")
+
+// errInProcessRuntimeNoRoot reports an in-process runtime asked for with no
+// directory to keep its state in.
+var errInProcessRuntimeNoRoot = errors.New("agent: the in-process container runtime needs a state directory")
+
+// ErrContainerRuntimeNetworkUnsupported reports a container runtime that
+// cannot give a sandbox the network this agent is configured to give it.
+// The agent refuses to start rather than enrol and then refuse every spawn.
+var ErrContainerRuntimeNetworkUnsupported = errors.New("agent: the container runtime cannot give the sandbox network")
+
+// SandboxNetworkSupporter is implemented by a container runtime that can give
+// a sandbox only some networks. A runtime without it is taken to give any.
+type SandboxNetworkSupporter interface {
+	SupportsSandboxNetwork(network orchestration.SandboxNetwork) bool
+}
+
+// CheckContainerRuntimeNetwork reports whether rt can give a sandbox network.
+// A nil runtime, or one that does not implement SandboxNetworkSupporter,
+// passes; otherwise a network rt cannot give is an error wrapping
+// ErrContainerRuntimeNetworkUnsupported that names the network.
+func CheckContainerRuntimeNetwork(rt orchestration.ContainerRuntime, network orchestration.SandboxNetwork) error {
+	if rt == nil {
+		return nil
+	}
+	supporter, ok := rt.(SandboxNetworkSupporter)
+	if !ok || supporter.SupportsSandboxNetwork(network) {
+		return nil
+	}
+	return fmt.Errorf("%w: --sandbox-network %q", ErrContainerRuntimeNetworkUnsupported, string(network))
+}
+
+// withInProcess returns factory with the in-process runtime registered
+// through internal/inprocessruntime bound to root, or factory unchanged when
+// none is registered.
+func (factory containerRuntimeFactory) withInProcess(root string) containerRuntimeFactory {
+	build := inprocessruntime.Registered()
+	if build == nil {
+		return factory
+	}
+	factory.inProcess = func(logger interfaces.Logger) (orchestration.ContainerRuntime, error) {
+		if root == "" {
+			return nil, errInProcessRuntimeNoRoot
+		}
+		return build(root, logger)
+	}
+	return factory
 }
 
 // execContainerRuntimeFactory is the production factory: it resolves to
@@ -60,8 +128,13 @@ var execContainerRuntimeFactory = containerRuntimeFactory{
 //     under sandbox policy "preferred" or "opt-in" that is a serviceable daemon,
 //     and under "required" NewRuntime refuses to start on the operator's behalf.
 //   - "auto" (and the empty selector) take the first engine detection finds,
-//     and resolve to no runtime when the host has none.
+//     and resolve to no runtime when the host has none. They never take the
+//     in-process runtime, which has no networking or seccomp/AppArmor
+//     confinement yet; no --container-runtime value selects it.
 //   - "none" resolves to no runtime without probing anything.
+//
+// ResolveContainerRuntime resolves without a state directory; the fleet node
+// agent resolves through ResolveContainerRuntimeIn.
 //
 // The outcome is logged at INFO because it decides whether this daemon can run
 // a container at all, and an operator must be able to read that from the boot
@@ -69,8 +142,35 @@ var execContainerRuntimeFactory = containerRuntimeFactory{
 //
 // An unknown selector is a typed error: it is a misconfiguration, and guessing
 // on the operator's behalf is how a daemon ends up sandboxing nothing.
+//
+// It refuses the in-process runtime's key as Config.Validate does: no
+// exported call takes it.
 func ResolveContainerRuntime(selector ContainerRuntimeSelector, logger interfaces.Logger) (orchestration.ContainerRuntime, error) {
+	if err := refuseInProcessSelector(selector); err != nil {
+		return nil, err
+	}
 	return resolveContainerRuntime(selector, logger, execContainerRuntimeFactory)
+}
+
+// ResolveContainerRuntimeIn is ResolveContainerRuntime for the fleet node
+// agent, with root as the agent's own container state directory. root must
+// belong to this agent alone. Like ResolveContainerRuntime, it accepts only
+// the --container-runtime values Config.Validate accepts.
+func ResolveContainerRuntimeIn(selector ContainerRuntimeSelector, root string, logger interfaces.Logger) (orchestration.ContainerRuntime, error) {
+	if err := refuseInProcessSelector(selector); err != nil {
+		return nil, err
+	}
+	return resolveContainerRuntime(selector, logger, execContainerRuntimeFactory.withInProcess(root))
+}
+
+// refuseInProcessSelector gives the error Config.Validate gives for the
+// in-process runtime's key, so a caller that resolves without validating
+// cannot select that runtime either.
+func refuseInProcessSelector(selector ContainerRuntimeSelector) error {
+	if selector == containerRuntimeInProcess {
+		return &SentinelDetailError{Sentinel: ErrConfigUnknownRuntime, Detail: fmt.Sprintf("%q", selector)}
+	}
+	return nil
 }
 
 // containerRuntimeResolver builds the runtime for one selector value.
@@ -78,12 +178,14 @@ type containerRuntimeResolver func(logger interfaces.Logger, factory containerRu
 
 // containerRuntimeResolvers dispatches a selector to its resolver in constant
 // time. Every value Config.Validate accepts has an entry here; a selector that
-// is missing is by construction one Validate rejected.
+// is missing is by construction one Validate rejected. The in-process entry
+// is the one Validate does not accept.
 var containerRuntimeResolvers = map[ContainerRuntimeSelector]containerRuntimeResolver{
-	ContainerRuntimeNone:   resolveNoContainerRuntime,
-	ContainerRuntimeAuto:   resolveDetectedContainerRuntime,
-	ContainerRuntimeDocker: resolveNamedContainerRuntime(orchestration.RuntimeDocker),
-	ContainerRuntimePodman: resolveNamedContainerRuntime(orchestration.RuntimePodman),
+	ContainerRuntimeNone:      resolveNoContainerRuntime,
+	containerRuntimeInProcess: resolveInProcessContainerRuntime,
+	ContainerRuntimeAuto:      resolveDetectedContainerRuntime,
+	ContainerRuntimeDocker:    resolveNamedContainerRuntime(orchestration.RuntimeDocker),
+	ContainerRuntimePodman:    resolveNamedContainerRuntime(orchestration.RuntimePodman),
 }
 
 // resolveContainerRuntime is ResolveContainerRuntime with the factory injected.
@@ -113,6 +215,10 @@ func resolveNoContainerRuntime(logger interfaces.Logger, _ containerRuntimeFacto
 
 // resolveDetectedContainerRuntime implements "auto": first engine found wins,
 // none found is a runtime-less daemon rather than a failure.
+//
+// It never takes the in-process runtime: that one has no container networking
+// and no seccomp or AppArmor confinement yet, so no --container-runtime value
+// selects it.
 func resolveDetectedContainerRuntime(logger interfaces.Logger, factory containerRuntimeFactory) (orchestration.ContainerRuntime, error) {
 	rt, err := factory.detect(logger)
 	if err != nil {
@@ -120,6 +226,20 @@ func resolveDetectedContainerRuntime(logger interfaces.Logger, factory container
 		return nil, nil
 	}
 	logger.Infof("container runtime: %s (available)", containerRuntimeName(rt))
+	return rt, nil
+}
+
+// resolveInProcessContainerRuntime resolves the in-process runtime, or an
+// error naming why there is none.
+func resolveInProcessContainerRuntime(logger interfaces.Logger, factory containerRuntimeFactory) (orchestration.ContainerRuntime, error) {
+	if factory.inProcess == nil {
+		return nil, errInProcessRuntimeUnavailable
+	}
+	rt, err := factory.inProcess(logger)
+	if err != nil {
+		return nil, fmt.Errorf("container runtime libcontainer: %w", err)
+	}
+	logger.Infof("container runtime: libcontainer (in-process)")
 	return rt, nil
 }
 
