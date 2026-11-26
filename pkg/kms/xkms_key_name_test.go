@@ -17,11 +17,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
 	"github.com/stretchr/testify/require"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
@@ -82,91 +85,86 @@ func TestXKMSKeyName_IsInjectiveAndKeepsValidNames(t *testing.T) {
 	}
 }
 
-// TestXKMSKeyName_ValidNamesWithoutTheEncodedShapeMapToThemselves pins the
-// upgrade contract: a name go-xkms accepts that does not have the encoded
-// shape is its own go-xkms name, including one that starts with the
-// encoding's prefix, and ListKeys reads it back unchanged.
-func TestXKMSKeyName_ValidNamesWithoutTheEncodedShapeMapToThemselves(t *testing.T) {
+// TestXKMSKeyName_EveryValidNameMapsToItself pins the upgrade contract: a
+// name go-xkms accepts is the go-xkms name, always, including one that
+// starts with the encoding's prefix, and ListKeys reads it back unchanged.
+// The one exception is a literal that is the canonical encoding of a
+// rejected ID: the backend refuses it (refuseReservedKeyName).
+func TestXKMSKeyName_EveryValidNameMapsToItself(t *testing.T) {
 	for _, id := range []string{
 		"qbx.production", "qbx.", "qbx.cHJvZA", "qbx.production.sign", "qbx-x", "QBX.prod",
-		// Untagged encodings of "a/b" and "tenant/acme/k": names a key may
-		// have been stored under before the encoding existed.
-		"qbx.YS9i", "qbx.dGVuYW50L2FjbWUvaw",
 	} {
 		require.NoError(t, validation.ValidateKeyID(id), "fixture %q must be a valid go-xkms name", id)
 		require.Equal(t, id, xkmsKeyName(id), "a valid name maps to itself")
+		if id == "qbx.YS9i" {
+			// The one shape that is ambiguous by construction: the
+			// canonical encoding of the rejected ID "a/b". The backend
+			// refuses it as a literal.
+			require.ErrorIs(t, refuseReservedKeyName("t", id), ErrReservedKeyName)
+			continue
+		}
+		require.NoError(t, refuseReservedKeyName("t", id))
 		require.Equal(t, id, keyIDFromXKMSName(id), "ListKeys reads a literal name unchanged")
 	}
 }
 
-// TestXKMSKeyName_ALiteralOfTheEncodedShapeDoesNotAliasTheIDItEncodes pins
-// injectivity: a valid ID spelled like the encoding of a rejected ID gets a
-// go-xkms name of its own, and each name reads back as its own ID.
-func TestXKMSKeyName_ALiteralOfTheEncodedShapeDoesNotAliasTheIDItEncodes(t *testing.T) {
-	for _, rejected := range []string{"tenant/acme/k", "a/b"} {
-		pair := struct{ literal, rejected string }{xkmsKeyName(rejected), rejected}
-		require.NoError(t, validation.ValidateKeyID(pair.literal), "fixture %q must be a valid go-xkms name", pair.literal)
-		require.Equal(t, pair.literal, xkmsKeyName(pair.rejected), "the rejected ID keeps its encoding")
-		require.NotEqual(t, xkmsKeyName(pair.literal), xkmsKeyName(pair.rejected),
-			"%q and %q must not share a go-xkms name", pair.literal, pair.rejected)
-		require.Equal(t, pair.literal, keyIDFromXKMSName(xkmsKeyName(pair.literal)))
-		require.Equal(t, pair.rejected, keyIDFromXKMSName(xkmsKeyName(pair.rejected)))
-		require.NoError(t, validation.ValidateKeyID(xkmsKeyName(pair.literal)), "the encoded name must be a valid go-xkms name")
-	}
+// TestXKMSKeyName_EncodedOutputsAreReserved: an ID spelled as an encoded
+// output is itself encoded, so a literal ID never shares a go-xkms name with
+// a tenant-scoped one.
+func TestXKMSKeyName_EncodedOutputsAreReserved(t *testing.T) {
+	tenantName := xkmsKeyName("tenant/acme/k")
+	require.NoError(t, validation.ValidateKeyID(tenantName))
+	require.NotEqual(t, tenantName, xkmsKeyName(tenantName),
+		"the literal ID %q must not resolve to tenant acme's key", tenantName)
+	require.Equal(t, tenantName, keyIDFromXKMSName(xkmsKeyName(tenantName)), "the escaped literal round-trips")
+	require.Equal(t, "tenant/acme/k", keyIDFromXKMSName(tenantName))
 
-	n2 := xkmsKeyName(xkmsKeyName("a/b"))
-	require.NotEqual(t, xkmsKeyName("a/b"), n2, "an encoding of an encoding is a name of its own")
-	require.Equal(t, xkmsKeyName("a/b"), keyIDFromXKMSName(n2))
+	// Every level of nesting stays distinct and round-trips.
+	seen := map[string]string{}
+	id := "a/b"
+	for i := 0; i < 4; i++ {
+		name := xkmsKeyName(id)
+		require.NoError(t, validation.ValidateKeyID(name))
+		if prev, ok := seen[name]; ok {
+			t.Fatalf("%q and %q map to the same go-xkms name %q", prev, id, name)
+		}
+		seen[name] = id
+		require.Equal(t, id, keyIDFromXKMSName(name))
+		id = name
+	}
 }
 
-// TestXKMSBackend_TenantKeyAndSystemKeyOfTheEncodedShapeAreDistinct proves on
-// the real backend that a tenant key and a system key whose ID is the
-// tenant ID's encoding are two keys: one cannot decrypt the other's
-// ciphertext, and ListKeys labels each with its own ID.
-func TestXKMSBackend_TenantKeyAndSystemKeyOfTheEncodedShapeAreDistinct(t *testing.T) {
+// TestXKMSBackend_LiteralEncodedNameIsNotTheTenantKey is the isolation
+// regression: a system key whose literal ID is the encoding of a tenant's
+// key ID is a different go-xkms key, so the tenant cannot address it.
+func TestXKMSBackend_LiteralEncodedNameIsNotTheTenantKey(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
 	backend := newRealXKMSBackendForTest(t)
 	ctx := context.Background()
 
-	// A valid system ID equal to the tenant ID's encoded name.
-	var systemID = xkmsKeyName("tenant/acme/k")
-	const tenantID = "tenant/acme/k"
-	_, err := backend.CreateKey(ctx, backend.algorithmToKeyAttributes(systemID, AlgAES256GCM))
-	require.NoError(t, err)
-	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(tenantID, AlgAES256GCM))
-	require.NoError(t, err)
+	// The literal spelled as tenant acme's encoded key name is refused
+	// (refuseReservedKeyName), so it can never be written and later read
+	// back as the tenant's key.
+	const tenantKeyID = "tenant/acme/k"
+	literal := xkmsKeyName(tenantKeyID)
+	_, err := backend.CreateKey(ctx, backend.algorithmToKeyAttributes(literal, AlgAES256GCM))
+	require.ErrorIs(t, err, ErrReservedKeyName, "the encoded-shaped literal must be refused")
 
-	ciphertext, err := backend.Encrypt(ctx, tenantID, []byte("tenant-secret"), nil)
-	require.NoError(t, err)
-	_, err = backend.Decrypt(ctx, systemID, ciphertext, nil)
-	require.Error(t, err, "a system key must not decrypt a tenant key's ciphertext")
-	plaintext, err := backend.Decrypt(ctx, tenantID, ciphertext, nil)
-	require.NoError(t, err)
-	require.Equal(t, []byte("tenant-secret"), plaintext)
+	_, err = backend.GetKeyMetadata(ctx, tenantKeyID)
+	require.ErrorIs(t, err, ErrKeyNotFound, "the tenant ID must not resolve to a refused literal")
+	_, err = backend.Encrypt(ctx, tenantKeyID, []byte("secret"), nil)
+	require.Error(t, err, "the tenant ID must not encrypt under a refused literal")
 
-	// A new backend has an empty metadata cache, so its ListKeys reads only
-	// go-xkms names.
-	fresh := newRealXKMSBackendForTest(t)
-	listIDs := func(prefix string) []string {
-		keys, _, err := fresh.ListKeys(ctx, prefix, 0)
-		require.NoError(t, err)
-		var ids []string
-		for _, k := range keys {
-			ids = append(ids, k.KeyID)
-		}
-		return ids
+	keys, _, err := backend.ListKeys(ctx, "", 0)
+	require.NoError(t, err)
+	var listed []string
+	for _, k := range keys {
+		listed = append(listed, k.KeyID)
 	}
-	all := listIDs("")
-	require.Contains(t, all, systemID)
-	require.Contains(t, all, tenantID)
-	acme := listIDs("tenant/acme/")
-	require.Contains(t, acme, tenantID)
-	require.NotContains(t, acme, systemID, "the system key must not list as acme's")
-
-	require.NoError(t, backend.DeleteKey(ctx, systemID))
-	require.NoError(t, backend.DeleteKey(ctx, tenantID))
+	require.NotContains(t, listed, literal)
+	require.NotContains(t, listed, tenantKeyID)
 }
 
 // TestXKMSKeyName_DecodesOnlyEncodedOutputs: keyIDFromXKMSName decodes a name
@@ -182,20 +180,6 @@ func TestXKMSKeyName_DecodesOnlyEncodedOutputs(t *testing.T) {
 	// encoded output (a valid ID is not encoded), so it reads literally.
 	literal := xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte("plain"))
 	require.Equal(t, literal, keyIDFromXKMSName(literal))
-	// Even with the payload's tag, a payload that decodes to a valid ID is
-	// not an encoded output.
-	tagged := xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte("plain")) + "." + xkmsKeyNameTag("plain")
-	require.Equal(t, tagged, keyIDFromXKMSName(tagged))
-	// A name whose tag does not match its payload reads literally.
-	encoded := xkmsKeyName("a/b")
-	last := encoded[len(encoded)-1]
-	swap := byte('A')
-	if last == swap {
-		swap = 'B'
-	}
-	wrongTag := encoded[:len(encoded)-1] + string(swap)
-	require.NotEqual(t, encoded, wrongTag)
-	require.Equal(t, wrongTag, keyIDFromXKMSName(wrongTag), "a name with a wrong tag is a literal")
 	// A non-canonical payload is not an encoded output either.
 	require.Equal(t, "qbx.production", keyIDFromXKMSName("qbx.production"))
 }
@@ -247,57 +231,119 @@ func TestXKMSBackend_LegacyQBXKeyName_StillWorks(t *testing.T) {
 	require.NoError(t, backend.DeleteKey(ctx, signKeyID), "the legacy key must still delete")
 }
 
-// TestXKMSBackend_LegacyLiteralOfTheUntaggedEncodedShape_StillWorks stores a
-// key under "qbx.YS9i" as the pre-mapping code did. The name is the untagged
-// base64url of "a/b", so it must keep naming its own key, and a new "a/b" key
-// must get a go-xkms name of its own.
-func TestXKMSBackend_LegacyLiteralOfTheUntaggedEncodedShape_StillWorks(t *testing.T) {
+// TestXKMSKeyName_RefusesAmbiguousLiteral: the literal go-xkms name of an
+// encoded tenant key ID is refused as invalid input; every other name passes.
+func TestXKMSKeyName_RefusesAmbiguousLiteral(t *testing.T) {
+	const literal = "qbx.dGVuYW50L2FjbWUvaw"
+	require.Equal(t, literal, xkmsKeyName("tenant/acme/k"), "the literal is the tenant key's go-xkms name")
+
+	err := refuseReservedKeyName("t", literal)
+	require.ErrorIs(t, err, ErrReservedKeyName)
+	var qbErr *qberrors.QBError
+	require.True(t, errors.As(err, &qbErr), "the refusal is a QBError")
+	require.Equal(t, qberrors.ErrInvalidInput, qbErr.Code)
+
+	for _, id := range []string{
+		"tenant/acme/k", "plain-key", "qbx.production", "",
+		xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte("plain")),
+	} {
+		require.NoError(t, refuseReservedKeyName("t", id), "%q is not ambiguous", id)
+	}
+}
+
+// TestXKMSBackend_ReservedLiteralAndTenantKey_StayIsolated holds both
+// identities: a tenant key and the literal name that shares its go-xkms name.
+// The literal is refused everywhere, and the tenant key is untouched.
+func TestXKMSBackend_ReservedLiteralAndTenantKey_StayIsolated(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
 	backend := newRealXKMSBackendForTest(t)
 	ctx := context.Background()
 
-	const legacyID = "qbx.YS9i"
-	_, err := xkms.GenerateSymmetricKey(ctx, string(backend.backendType),
-		backend.algorithmToKeyAttributes(legacyID, AlgAES256GCM))
-	require.NoError(t, err)
+	const (
+		tenantKey = "tenant/acme/k"
+		literal   = "qbx.dGVuYW50L2FjbWUvaw"
+		systemKey = "sys-k"
+		signKey   = "tenant/acme/s"
+	)
 
-	legacyCiphertext, err := backend.Encrypt(ctx, legacyID, []byte("legacy-secret"), nil)
-	require.NoError(t, err, "the legacy key must still encrypt through its own ID")
-	plaintext, err := backend.Decrypt(ctx, legacyID, legacyCiphertext, nil)
-	require.NoError(t, err, "the legacy key must still decrypt through its own ID")
-	require.Equal(t, []byte("legacy-secret"), plaintext)
-
-	const otherID = "a/b"
-	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(otherID, AlgAES256GCM))
-	require.NoError(t, err, "the ID the legacy name decodes to gets a key of its own")
-	otherCiphertext, err := backend.Encrypt(ctx, otherID, []byte("other-secret"), nil)
-	require.NoError(t, err)
-	_, err = backend.Decrypt(ctx, legacyID, otherCiphertext, nil)
-	require.Error(t, err, "the legacy key must not decrypt the a/b key's ciphertext")
-	_, err = backend.Decrypt(ctx, otherID, legacyCiphertext, nil)
-	require.Error(t, err, "the a/b key must not decrypt the legacy key's ciphertext")
-
-	// A new backend has an empty metadata cache, so its ListKeys reads only
-	// go-xkms names.
-	fresh := newRealXKMSBackendForTest(t)
-	listIDs := func(prefix string) []string {
-		keys, _, err := fresh.ListKeys(ctx, prefix, 0)
+	// a. Both identities' neighbours exist.
+	for _, id := range []string{tenantKey, systemKey} {
+		_, err := backend.CreateKey(ctx, backend.algorithmToKeyAttributes(id, AlgAES256GCM))
 		require.NoError(t, err)
-		var ids []string
+	}
+	ciphertext, err := backend.Encrypt(ctx, tenantKey, []byte("secret"), nil)
+	require.NoError(t, err)
+
+	// b. Every entry point refuses the literal.
+	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(literal, AlgAES256GCM))
+	require.ErrorIs(t, err, ErrReservedKeyName, "CreateKey")
+	_, err = backend.ImportKey(ctx, literal, make([]byte, 32), AlgAES256GCM, nil)
+	require.ErrorIs(t, err, ErrReservedKeyName, "ImportKey")
+	_, err = backend.GetKeyMetadata(ctx, literal)
+	require.ErrorIs(t, err, ErrReservedKeyName, "GetKeyMetadata")
+	_, err = backend.Encrypt(ctx, literal, []byte("x"), nil)
+	require.ErrorIs(t, err, ErrReservedKeyName, "Encrypt")
+	_, err = backend.Decrypt(ctx, literal, ciphertext, nil)
+	require.ErrorIs(t, err, ErrReservedKeyName, "Decrypt")
+	_, _, err = backend.GenerateDataKey(ctx, literal, 32)
+	require.ErrorIs(t, err, ErrReservedKeyName, "GenerateDataKey")
+	_, err = backend.RotateKey(ctx, literal)
+	require.ErrorIs(t, err, ErrReservedKeyName, "RotateKey")
+	require.ErrorIs(t, backend.DisableKey(ctx, literal), ErrReservedKeyName, "DisableKey")
+	require.ErrorIs(t, backend.EnableKey(ctx, literal), ErrReservedKeyName, "EnableKey")
+	require.ErrorIs(t, backend.DeleteKey(ctx, literal), ErrReservedKeyName, "DeleteKey")
+
+	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(signKey, AlgECDSAP256))
+	require.NoError(t, err)
+	signLiteral := xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte(signKey))
+	digest := sha256.Sum256([]byte("msg"))
+	_, err = backend.Sign(ctx, signLiteral, digest[:], "SHA-256")
+	require.ErrorIs(t, err, ErrReservedKeyName, "Sign")
+	_, err = backend.Verify(ctx, signLiteral, digest[:], []byte("sig"), "SHA-256")
+	require.ErrorIs(t, err, ErrReservedKeyName, "Verify")
+	_, err = backend.ExportPublicKey(ctx, signLiteral)
+	require.ErrorIs(t, err, ErrReservedKeyName, "ExportPublicKey")
+
+	// c. The tenant key survives the refused delete.
+	plaintext, err := backend.Decrypt(ctx, tenantKey, ciphertext, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("secret"), plaintext)
+	meta, err := backend.GetKeyMetadata(ctx, tenantKey)
+	require.NoError(t, err)
+	require.Equal(t, tenantKey, meta.KeyID)
+
+	// d. Listings keep the namespaces apart.
+	listIDs := func(prefix string) []string {
+		keys, _, err := backend.ListKeys(ctx, prefix, 0)
+		require.NoError(t, err)
+		ids := make([]string, 0, len(keys))
 		for _, k := range keys {
 			ids = append(ids, k.KeyID)
 		}
 		return ids
 	}
 	all := listIDs("")
-	require.Contains(t, all, legacyID, "the legacy key lists under its own name")
-	require.Contains(t, all, otherID)
-	ab := listIDs("a/")
-	require.Contains(t, ab, otherID)
-	require.NotContains(t, ab, legacyID, "the legacy key must not list as a/b")
+	require.Contains(t, all, tenantKey)
+	require.Contains(t, all, systemKey)
+	require.NotContains(t, all, literal)
+	var system []string
+	for _, id := range all {
+		if !strings.HasPrefix(id, "tenant/") {
+			system = append(system, id)
+		}
+	}
+	require.Contains(t, system, systemKey)
+	require.NotContains(t, system, tenantKey)
+	require.NotContains(t, system, literal)
+	tenant := listIDs("tenant/acme/")
+	require.Contains(t, tenant, tenantKey)
+	require.NotContains(t, tenant, systemKey)
+	require.NotContains(t, tenant, literal)
 
-	require.NoError(t, backend.DeleteKey(ctx, legacyID))
-	require.NoError(t, backend.DeleteKey(ctx, otherID))
+	// e. Clean up.
+	for _, id := range []string{tenantKey, signKey, systemKey} {
+		require.NoError(t, backend.DeleteKey(ctx, id))
+	}
 }

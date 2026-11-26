@@ -157,8 +157,8 @@ func (f *agentOAuthFixture) registerWithCert(t *testing.T, peer *x509.Certificat
 func TestHandleAgentRegister_RepinsTheMTLSClientToTheCurrentCertificate(t *testing.T) {
 	f := newAgentOAuthFixture(t)
 
-	firstCert := agentOAuthSignedPeerCert(t, agentOAuthTestTenant, "agent-gpu-host")
-	renewedCert := agentOAuthSignedPeerCert(t, agentOAuthTestTenant, "agent-gpu-host")
+	firstCert := agentOAuthSignedPeerCert(t, agentOAuthTestTenant, "agent-gpu-01")
+	renewedCert := agentOAuthSignedPeerCert(t, agentOAuthTestTenant, "agent-gpu-01")
 	require.NotEqual(t, iam.CertThumbprintS256(firstCert), iam.CertThumbprintS256(renewedCert),
 		"the two certificates must differ for this test to mean anything")
 
@@ -215,7 +215,7 @@ func tokenEndpointContext(clientID string) context.Context {
 // regression: the round trip an enrolling agent performs, in order.
 func TestHandleAgentRegister_IssuesCredentialsTheTokenEndpointAccepts(t *testing.T) {
 	f := newAgentOAuthFixture(t)
-	resp := f.register(t, "agent-gpu-host")
+	resp := f.register(t, "agent-gpu-01")
 
 	require.NotEmpty(t, resp.ClientID, "register returned no client_id")
 	require.NotEmpty(t, resp.ClientSecret, "register returned no client_secret")
@@ -231,7 +231,7 @@ func TestHandleAgentRegister_IssuesCredentialsTheTokenEndpointAccepts(t *testing
 // context from the certificate's tenant, not from the client id.
 func TestHandleAgentRegister_IssuesAnMTLSClientTheTokenEndpointResolves(t *testing.T) {
 	f := newAgentOAuthFixture(t)
-	resp := f.register(t, "agent-gpu-host")
+	resp := f.register(t, "agent-gpu-01")
 
 	require.NotEmpty(t, resp.MTLSClientID, "register returned no mtls_client_id")
 
@@ -249,8 +249,8 @@ func TestHandleAgentRegister_IssuesAnMTLSClientTheTokenEndpointResolves(t *testi
 func TestHandleAgentRegister_IsIdempotentForTheSameIdentity(t *testing.T) {
 	f := newAgentOAuthFixture(t)
 
-	first := f.register(t, "agent-gpu-host")
-	second := f.register(t, "agent-gpu-host")
+	first := f.register(t, "agent-gpu-01")
+	second := f.register(t, "agent-gpu-01")
 
 	require.Equal(t, first.ClientID, second.ClientID,
 		"re-registration minted a new client id, orphaning the first")
@@ -287,7 +287,7 @@ func TestHandleAgentRegister_KeepsAgentsOfOtherTenantsOut(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/enroll", strings.NewReader(string(body)))
 	req.TLS = &tls.ConnectionState{
 		PeerCertificates: []*x509.Certificate{
-			agentRegisterTestPeerCert(t, "some-other-tenant", "agent-gpu-host"),
+			agentRegisterTestPeerCert(t, "some-other-tenant", "agent-gpu-01"),
 		},
 	}
 	w := httptest.NewRecorder()

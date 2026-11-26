@@ -3240,7 +3240,7 @@ func TestFilterFleetNodesByHostAffinity(t *testing.T) {
 
 	agents := []*FleetNode{
 		{ID: "a1", Name: "general-1", Host: "alpha", Backend: "ollama", Status: FleetNodeStatusIdle},
-		{ID: "a2", Name: "gpu-host", Host: "gpu-host.local", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a2", Name: "gpu-01", Host: "gpu-01.local", Backend: "ollama", Status: FleetNodeStatusIdle},
 		{ID: "a3", Name: "general-2", Host: "beta", Backend: "ollama", Status: FleetNodeStatusIdle},
 	}
 	tests := []struct {
@@ -3248,7 +3248,7 @@ func TestFilterFleetNodesByHostAffinity(t *testing.T) {
 		affinity string
 		wantIDs  []string
 	}{
-		{name: "name match", affinity: "gpu-host", wantIDs: []string{"a2"}},
+		{name: "name match", affinity: "gpu-01", wantIDs: []string{"a2"}},
 		{name: "host field match", affinity: "beta", wantIDs: []string{"a3"}},
 		{name: "no match returns the full list", affinity: "nonexistent-host", wantIDs: []string{"a1", "a2", "a3"}},
 	}
@@ -3276,13 +3276,13 @@ func TestControlLoop_HostAffinityFromWorkflow_FiltersAgents(t *testing.T) {
 
 	agents := []*FleetNode{
 		{ID: "a-generic", Name: "generic-node", Host: "server-x", Backend: "ollama", Status: FleetNodeStatusIdle},
-		{ID: "a-gpu", Name: "gpu-host", Host: "gpu-host.cluster", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a-gpu", Name: "gpu-01", Host: "gpu-01.cluster", Backend: "ollama", Status: FleetNodeStatusIdle},
 	}
 
 	item := &WorkItem{
 		Title:        "GPU task",
 		Backend:      "ollama",
-		HostAffinity: "gpu-host",
+		HostAffinity: "gpu-01",
 	}
 
 	agentID, _, _ := cl.matchFleetNodeForTask(item, agents, newTestBackends())

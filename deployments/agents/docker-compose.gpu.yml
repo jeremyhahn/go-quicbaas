@@ -1,6 +1,4 @@
-# GPU override for Ollama - applied automatically when NVIDIA GPU is detected.
-# Merged with docker-compose.yml via:
-#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+# GPU override for Ollama, applied when an NVIDIA GPU is detected.
 
 services:
   ollama:

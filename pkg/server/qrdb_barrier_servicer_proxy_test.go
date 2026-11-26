@@ -327,8 +327,8 @@ func TestUnifiedModuleServerOptions_BarrierProxyOnlyWhenSealDisabled(t *testing.
 	if got := s.nodeBarrierServerOptions(true); len(got) != 0 {
 		t.Fatalf("seal enabled: expected no barrier option, got %d", len(got))
 	}
-	if got := s.nodeBarrierServerOptions(false); len(got) != 2 {
-		t.Fatalf("seal disabled: expected the barrier proxy and sealed-window probe options, got %d", len(got))
+	if got := s.nodeBarrierServerOptions(false); len(got) != 3 {
+		t.Fatalf("seal disabled: expected the barrier proxy, sealed-window probe and credential proxy options, got %d", len(got))
 	}
 
 	srv := newModuleHostTestServer(t)
@@ -340,8 +340,8 @@ func TestUnifiedModuleServerOptions_BarrierProxyOnlyWhenSealDisabled(t *testing.
 	if err != nil {
 		t.Fatalf("unifiedModuleServerOptions(sealEnabled=false): %v", err)
 	}
-	if len(unsealed) != len(sealed)+2 {
-		t.Fatalf("seal disabled must add exactly the barrier proxy and sealed-window probe options: %d options sealed, %d unsealed", len(sealed), len(unsealed))
+	if len(unsealed) != len(sealed)+3 {
+		t.Fatalf("seal disabled must add exactly the barrier proxy, sealed-window probe and credential proxy options: %d options sealed, %d unsealed", len(sealed), len(unsealed))
 	}
 }
 
@@ -361,8 +361,8 @@ func TestNodeBarrierServerOptions_SealDisabledProbeArmsOnSealedBarrier(t *testin
 	if err != nil {
 		t.Fatalf("NewServer(seal disabled): %v", err)
 	}
-	if got := srv.nodeBarrierServerOptions(false); len(got) != 2 {
-		t.Fatalf("seal disabled: expected the barrier proxy and sealed-window probe options, got %d", len(got))
+	if got := srv.nodeBarrierServerOptions(false); len(got) != 3 {
+		t.Fatalf("seal disabled: expected the barrier proxy, sealed-window probe and credential proxy options, got %d", len(got))
 	}
 
 	_, barrier, _, closer, err := buildDataPlaneBarrierService(cfg, nil)

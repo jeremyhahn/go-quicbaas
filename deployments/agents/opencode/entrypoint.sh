@@ -1,8 +1,7 @@
 #!/bin/sh
 set -e
 
-# OpenCode agent entrypoint
-# Writes MCP server config and OpenCode settings from env vars, then execs the agent.
+# OpenCode agent entrypoint: writes the MCP and OpenCode settings from env vars, then execs the agent.
 
 CONFIG_DIR="/home/agent/.config/opencode"
 MCP_CONFIG="/workspace/.mcp.json"

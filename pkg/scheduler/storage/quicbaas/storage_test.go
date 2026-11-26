@@ -823,6 +823,92 @@ func TestGetJobsDueForExecution_IncludesTenantJobs(t *testing.T) {
 	}
 }
 
+// sortedScanKV is a mockKVStore whose Scan visits keys in ascending order,
+// as the real store's sorted index does.
+type sortedScanKV struct {
+	*mockKVStore
+}
+
+func (s *sortedScanKV) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	if s.scanErr != nil {
+		return s.scanErr
+	}
+	s.mu.RLock()
+	keys := make([]string, 0, len(s.data))
+	values := make(map[string][]byte, len(s.data))
+	for k, v := range s.data {
+		if strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+			values[k] = append([]byte(nil), v...)
+		}
+	}
+	s.mu.RUnlock()
+	sort.Strings(keys)
+	for _, k := range keys {
+		if err := fn(k, values[k]); err != nil {
+			if err == ErrLimitReached {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// TestGetJobsDueForExecution_RunnableJobBehindPinnedBatch checks that due
+// jobs the caller cannot run, here a full batch pinned to an offline node,
+// do not count against the limit and so do not hide a runnable job behind
+// them in index order.
+func TestGetJobsDueForExecution_RunnableJobBehindPinnedBatch(t *testing.T) {
+	ctx := context.Background()
+	storage := NewStorage(&sortedScanKV{mockKVStore: newMockKVStore()})
+	now := time.Now()
+
+	for i := 0; i < 5; i++ {
+		pinned := createTestJob("pinned", scheduler.OwnerTypeTenant, "aaa")
+		pinned.NextRun = now.Add(-time.Minute)
+		pinned.NodeAffinity = "node-offline"
+		if err := storage.CreateJob(ctx, pinned); err != nil {
+			t.Fatalf("CreateJob: %v", err)
+		}
+	}
+	runnable := createTestJob("runnable", scheduler.OwnerTypeTenant, "zzz")
+	runnable.NextRun = now.Add(-time.Minute)
+	if err := storage.CreateJob(ctx, runnable); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	unfiltered, err := storage.GetJobsDueForExecution(ctx, now, 5, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(unfiltered) != 5 {
+		t.Fatalf("unfiltered due jobs = %d, want 5", len(unfiltered))
+	}
+	for _, j := range unfiltered {
+		if j.ID == runnable.ID {
+			t.Fatal("the setup does not put the runnable job behind the pinned batch")
+		}
+	}
+
+	onNodeA := func(j *scheduler.Job) bool { return j.NodeAffinity == "" || j.NodeAffinity == "node-a" }
+	filtered, err := storage.GetJobsDueForExecution(ctx, now, 5, onNodeA)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].ID != runnable.ID {
+		t.Fatalf("filtered due jobs = %v, want only the runnable job %d", dueIDs(filtered), runnable.ID)
+	}
+}
+
+func dueIDs(jobs []*scheduler.Job) []uint64 {
+	ids := make([]uint64, 0, len(jobs))
+	for _, j := range jobs {
+		ids = append(ids, j.ID)
+	}
+	return ids
+}
+
 func TestSaveExecution_Success(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
@@ -845,6 +931,62 @@ func TestSaveExecution_Success(t *testing.T) {
 	// Verify ID was assigned
 	if exec.ID == 0 {
 		t.Error("expected execution ID to be assigned")
+	}
+}
+
+// TestSaveExecution_TenantExecutionIsReadInTenantKeyspace pins that a
+// tenant-owned execution is stored where tenant history is read, and that a
+// system execution stays in the system keyspace.
+func TestSaveExecution_TenantExecutionIsReadInTenantKeyspace(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	storage := NewStorage(kv)
+
+	const jobID uint64 = 7
+	tenantExec := &scheduler.JobExecution{
+		JobID:     jobID,
+		TenantID:  "acme",
+		Status:    scheduler.JobStatusCompleted,
+		StartedAt: time.Now().Add(-2 * time.Minute),
+		EndedAt:   time.Now().Add(-time.Minute),
+		Output:    "tenant",
+	}
+	if err := storage.SaveExecution(ctx, tenantExec); err != nil {
+		t.Fatalf("SaveExecution(tenant): %v", err)
+	}
+
+	tenantHistory, err := storage.GetExecutions(ctx, jobID, "acme", 10)
+	if err != nil {
+		t.Fatalf("GetExecutions(acme): %v", err)
+	}
+	if len(tenantHistory) != 1 || tenantHistory[0].ID != tenantExec.ID {
+		t.Fatalf("GetExecutions(acme) = %+v, want the tenant execution %d", tenantHistory, tenantExec.ID)
+	}
+
+	systemHistory, err := storage.GetExecutions(ctx, jobID, "", 10)
+	if err != nil {
+		t.Fatalf("GetExecutions(system): %v", err)
+	}
+	if len(systemHistory) != 0 {
+		t.Fatalf("GetExecutions(system) = %+v, want no tenant execution in the system keyspace", systemHistory)
+	}
+
+	systemExec := &scheduler.JobExecution{
+		JobID:     jobID,
+		Status:    scheduler.JobStatusCompleted,
+		StartedAt: time.Now().Add(-time.Minute),
+		EndedAt:   time.Now(),
+		Output:    "system",
+	}
+	if err := storage.SaveExecution(ctx, systemExec); err != nil {
+		t.Fatalf("SaveExecution(system): %v", err)
+	}
+	systemHistory, err = storage.GetExecutions(ctx, jobID, "", 10)
+	if err != nil {
+		t.Fatalf("GetExecutions(system): %v", err)
+	}
+	if len(systemHistory) != 1 || systemHistory[0].ID != systemExec.ID {
+		t.Fatalf("GetExecutions(system) = %+v, want the system execution %d", systemHistory, systemExec.ID)
 	}
 }
 

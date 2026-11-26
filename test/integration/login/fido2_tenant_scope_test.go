@@ -24,6 +24,8 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -132,7 +134,9 @@ func TestUnifiedLogin_FIDO2WithTenantIssuesChallenge(t *testing.T) {
 // the tenant all the way to the server: BeginLogin over each network transport
 // with TenantID set must be accepted, while the same call without it must be
 // rejected. This is the transport-parity guard — the tenant field has to
-// survive REST JSON, gRPC protobuf, QUIC frames, Unix (gRPC) and MCP tool args.
+// survive REST JSON, gRPC protobuf, QUIC frames and Unix (gRPC). Passkeys stay
+// off MCP: there the tenant-scoped passkey login is refused (the unified login
+// tools are not permitted on MCP).
 func TestUnifiedLogin_FIDO2SDKSendsTenant(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -145,6 +149,17 @@ func TestUnifiedLogin_FIDO2SDKSendsTenant(t *testing.T) {
 			defer c.Close()
 
 			auth := c.Security().Auth()
+			if tr == transportMCP {
+				_, merr := auth.BeginLogin(ctx, qrdbtransport.BeginLoginRequest{
+					Type:     qrdbtransport.FactorTypeFIDO2,
+					TenantID: systemTenantID,
+				})
+				require.Equal(t, sdkerrors.CodeForbidden, sdkerrors.Code(merr),
+					"[%s] passkey login must be refused over MCP, got %v", tr, merr)
+				require.ErrorContains(t, merr,
+					"tool not permitted (no permission registration): quicbaas_login_begin", "[%s]", tr)
+				return
+			}
 
 			begin, berr := auth.BeginLogin(ctx, qrdbtransport.BeginLoginRequest{
 				Type:     qrdbtransport.FactorTypeFIDO2,

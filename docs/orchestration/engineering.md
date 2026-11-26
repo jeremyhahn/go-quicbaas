@@ -897,7 +897,7 @@ resp, err := client.SpawnChildJob(ctx, &pb.SpawnChildJobRequest{
             RequiredBackend: "claude",
         },
     },
-    HostAffinity:       "gpu-host-02",
+    HostAffinity:       "gpu-02",
     GPURequired:        true,
     HostAffinityStrict: false,
 })
@@ -3281,7 +3281,7 @@ image); revisit it when that pin moves a major version.
 
 There are two modes, `constrained` and `autonomous`; the lead decomposes the
 task in both. There is no `canned` mode: it was declared ("work items are
-predefined") but never built, and ruling 189 deleted it (issue #622). A
+predefined") but never built, and it was deleted (issue #622). A
 workflow with `mode: canned` is refused at validation like any unknown mode,
 and the refusal names the modes that exist.
 

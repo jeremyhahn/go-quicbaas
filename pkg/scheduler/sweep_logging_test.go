@@ -68,10 +68,20 @@ func (l *renderingLogger) all() []loggedRecord {
 }
 
 // followerLeader reports this node as never the leader, so due
-// cluster-wide jobs are found by the sweep but not dispatched.
+// cluster-wide jobs are not dispatched.
 type followerLeader struct{}
 
 func (followerLeader) IsLeader() (bool, error) { return false, nil }
+
+// unfilteredDueStorage returns every due job whatever filter the sweep
+// passes, so a follower's sweep finds cluster-wide jobs it will not dispatch.
+type unfilteredDueStorage struct {
+	*mockJobStorage
+}
+
+func (s unfilteredDueStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, _ DueJobFilter) ([]*Job, error) {
+	return s.mockJobStorage.GetJobsDueForExecution(ctx, before, limit, nil)
+}
 
 func newSweepLoggingEngine(storage JobStorage) (*SchedulerEngine, *renderingLogger) {
 	logger := &renderingLogger{}
@@ -108,7 +118,7 @@ func TestProcessDueJobs_FoundJobsEmitsOneRecordWithCount(t *testing.T) {
 			NodeAffinity: "node-a",
 		}
 	}
-	engine, logger := newSweepLoggingEngine(storage)
+	engine, logger := newSweepLoggingEngine(unfilteredDueStorage{storage})
 
 	engine.processDueJobs(context.Background())
 

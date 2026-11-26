@@ -93,3 +93,13 @@ func (m *DefaultTenantManager) SetPromptSeeder(s TenantPromptSeeder) {
 func (m *DefaultTenantManager) PromptSeeder() TenantPromptSeeder {
 	return m.promptSeeder
 }
+
+// AddCreatedObserver registers an observer told after every successful
+// CreateTenant, once the tenant is fully seeded. A nil observer is ignored.
+// Call during server init, before the manager is shared.
+func (m *DefaultTenantManager) AddCreatedObserver(obs TenantCreatedObserver) {
+	if obs == nil {
+		return
+	}
+	m.createdObservers = append(m.createdObservers, obs)
+}
