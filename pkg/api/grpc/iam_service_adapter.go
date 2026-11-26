@@ -364,63 +364,20 @@ func (a *IAMServiceAdapter) UpdateUser(ctx context.Context, user *iam.User) (*ia
 		opts.Lifecycle = &user.Lifecycle
 	}
 
-	// Every requested role must exist BEFORE any write. The role sync below
-	// revokes roles absent from the request before it assigns the new ones,
-	// so a nonexistent replacement would otherwise strip the user's access and
-	// only then fail. REST validates the same way through opts.Roles.
-	for _, roleID := range user.Roles {
-		if _, err := a.identityStore.GetRole(ctx, user.TenantID, roleID); err != nil {
-			return nil, err
-		}
-	}
-
-	updated, err := a.identityStore.UpdateUser(ctx, user.TenantID, user.ID, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Update roles if provided - get current roles first
-	currentUser, err := a.identityStore.GetUser(ctx, user.TenantID, user.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Simple update: if roles are different, update them
+	// Roles are replaced in the same single write as every other field, the
+	// path REST uses. IdentityStore.UpdateUser resolves every requested role
+	// before it writes anything, so a nonexistent role fails with the stored
+	// roles untouched. A read followed by separate revokes and assigns let two
+	// concurrent replacements interleave and leave a union neither asked for.
+	// An empty list sends no Roles option: the roles are left as they are.
 	if len(user.Roles) > 0 {
-		// Remove old roles not in new set
-		roleMap := make(map[string]bool)
-		for _, r := range user.Roles {
-			roleMap[r] = true
-		}
-		for _, oldRole := range currentUser.Roles {
-			if !roleMap[oldRole] {
-				if err := a.identityStore.RevokeRole(ctx, user.TenantID, user.ID, oldRole); err != nil {
-					return nil, err
-				}
-			}
-		}
-		// Add new roles not in old set
-		oldRoleMap := make(map[string]bool)
-		for _, r := range currentUser.Roles {
-			oldRoleMap[r] = true
-		}
-		for _, newRole := range user.Roles {
-			if !oldRoleMap[newRole] {
-				if err := a.identityStore.AssignRole(ctx, user.TenantID, user.ID, newRole); err != nil {
-					return nil, err
-				}
-			}
-		}
-		// updated was captured before the role sync, so it carries the old
-		// role set; reload so the response reports the persisted roles.
-		reloaded, err := a.identityStore.GetUser(ctx, user.TenantID, user.ID)
-		if err != nil {
-			return nil, err
-		}
-		return reloaded, nil
+		roles := append([]string(nil), user.Roles...)
+		opts.Roles = &roles
 	}
 
-	return updated, nil
+	// The returned user is the record that was written, so it carries the
+	// persisted roles.
+	return a.identityStore.UpdateUser(ctx, user.TenantID, user.ID, opts)
 }
 
 // ApproveUser moves a pending user to active through the identity store,
