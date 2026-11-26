@@ -403,7 +403,9 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 	// handler. The SDK trust surface uses plain Go structs that don't
 	// implement proto.Message, so they must be converted to the generated
 	// TrustService proto types before calling gRPC.
-	if isTrustService(service) {
+	// quicbaas.TrustedCA shares the quicbaas.Trust prefix; it is dispatched
+	// by the CA branch below.
+	if isTrustService(service) && !isTrustedCAService(service) {
 		handler := newTrustHandler(conn)
 		return handler.handleRequest(ctx, service, method, req)
 	}
@@ -452,6 +454,18 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 	if isPIVService(service) {
 		handler := newPIVHandler(conn)
 		return handler.handleRequest(ctx, service, method, req)
+	}
+
+	// The re-exported go-xkms CAService and TCGCAService
+	// (Security().TrustedCA(), Security().TCGCA()). The node's TCP gRPC
+	// listener serves their verbs only on go-xkms's xkms.v1.KeystoreService;
+	// the Unix socket serves both the CA verbs and the TCG verbs on
+	// TrustedCAService.
+	if isTrustedCAService(service) || isTCGCAService(service) {
+		if onUnixSocket(t.cfg) {
+			return newTrustedCAHandler(conn).handleRequest(ctx, service, method, req)
+		}
+		return newKeystoreCAHandler(conn).handleRequest(ctx, service, method, req)
 	}
 
 	// Check if this is an Operations service request and route through the

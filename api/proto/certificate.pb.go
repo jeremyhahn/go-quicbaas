@@ -1673,9 +1673,12 @@ type IssueDeviceIdentityResponse struct {
 	// NotAfter is when the certificate expires.
 	NotAfter *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=not_after,json=notAfter,proto3" json:"not_after,omitempty"`
 	// Timestamp is when the request was processed.
-	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Timestamp *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	// IAKCertificatePEM is the PEM certificate of the IAK an IDevID issuance
+	// certifies; empty for the other identity kinds.
+	IakCertificatePem []byte `protobuf:"bytes,7,opt,name=iak_certificate_pem,json=iakCertificatePem,proto3" json:"iak_certificate_pem,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *IssueDeviceIdentityResponse) Reset() {
@@ -1746,6 +1749,13 @@ func (x *IssueDeviceIdentityResponse) GetNotAfter() *timestamppb.Timestamp {
 func (x *IssueDeviceIdentityResponse) GetTimestamp() *timestamppb.Timestamp {
 	if x != nil {
 		return x.Timestamp
+	}
+	return nil
+}
+
+func (x *IssueDeviceIdentityResponse) GetIakCertificatePem() []byte {
+	if x != nil {
+		return x.IakCertificatePem
 	}
 	return nil
 }
@@ -2185,7 +2195,7 @@ const file_api_proto_certificate_proto_rawDesc = "" +
 	"\x06ak_pub\x18\x05 \x01(\fR\x05akPub\x12'\n" +
 	"\x0fqualifying_data\x18\x06 \x01(\fR\x0equalifyingData\x12#\n" +
 	"\rvalidity_days\x18\a \x01(\x05R\fvalidityDays\x12\x1b\n" +
-	"\ttenant_id\x18\b \x01(\tR\btenantId\"\xb6\x02\n" +
+	"\ttenant_id\x18\b \x01(\tR\btenantId\"\xe6\x02\n" +
 	"\x1bIssueDeviceIdentityResponse\x12'\n" +
 	"\x0fcertificate_pem\x18\x01 \x01(\fR\x0ecertificatePem\x12\x1b\n" +
 	"\tchain_pem\x18\x02 \x01(\fR\bchainPem\x12#\n" +
@@ -2193,7 +2203,8 @@ const file_api_proto_certificate_proto_rawDesc = "" +
 	"\n" +
 	"not_before\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tnotBefore\x127\n" +
 	"\tnot_after\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\x128\n" +
-	"\ttimestamp\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\x1c\n" +
+	"\ttimestamp\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12.\n" +
+	"\x13iak_certificate_pem\x18\a \x01(\fR\x11iakCertificatePem\"\x1c\n" +
 	"\x1aCrossSignedRootPoolRequest\"t\n" +
 	"\x1bCrossSignedRootPoolResponse\x12\x1b\n" +
 	"\troot_pems\x18\x01 \x03(\fR\brootPems\x128\n" +
@@ -2223,7 +2234,7 @@ const file_api_proto_certificate_proto_rawDesc = "" +
 	"TLSVersion\x12\x1b\n" +
 	"\x17TLS_VERSION_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fTLS_VERSION_1_2\x10\x01\x12\x13\n" +
-	"\x0fTLS_VERSION_1_3\x10\x022\xc4\t\n" +
+	"\x0fTLS_VERSION_1_3\x10\x022\xc0\t\n" +
 	"\x12CertificateService\x12\x8b\x01\n" +
 	"\x10IssueCertificate\x120.quicbaas.certificate.v1.IssueCertificateRequest\x1a1.quicbaas.certificate.v1.IssueCertificateResponse\"\x12\xc2\xf3\x18\x0ecerts:generate\x12p\n" +
 	"\aSignCSR\x12'.quicbaas.certificate.v1.SignCSRRequest\x1a(.quicbaas.certificate.v1.SignCSRResponse\"\x12\xc2\xf3\x18\x0ecerts:generate\x12\x8c\x01\n" +
@@ -2234,8 +2245,8 @@ const file_api_proto_certificate_proto_rawDesc = "" +
 	"certs:read\x12{\n" +
 	"\fGetTLSConfig\x12,.quicbaas.certificate.v1.GetTLSConfigRequest\x1a-.quicbaas.certificate.v1.GetTLSConfigResponse\"\x0e\xc2\xf3\x18\n" +
 	"certs:read\x12q\n" +
-	"\tCrossSign\x12).quicbaas.certificate.v1.CrossSignRequest\x1a*.quicbaas.certificate.v1.CrossSignResponse\"\r\xc2\xf3\x18\tca:create\x12\x80\x01\n" +
-	"\x05Chain\x120.quicbaas.certificate.v1.CertificateChainRequest\x1a1.quicbaas.certificate.v1.CertificateChainResponse\"\x12\xc2\xf3\x18\x0ecerts:generate\x12\x94\x01\n" +
+	"\tCrossSign\x12).quicbaas.certificate.v1.CrossSignRequest\x1a*.quicbaas.certificate.v1.CrossSignResponse\"\r\xc2\xf3\x18\tca:create\x12}\n" +
+	"\x05Chain\x120.quicbaas.certificate.v1.CertificateChainRequest\x1a1.quicbaas.certificate.v1.CertificateChainResponse\"\x0f\xc2\xf3\x18\vtrust:write\x12\x94\x01\n" +
 	"\x13IssueDeviceIdentity\x123.quicbaas.certificate.v1.IssueDeviceIdentityRequest\x1a4.quicbaas.certificate.v1.IssueDeviceIdentityResponse\"\x12\xc2\xf3\x18\x0ecerts:generate2\x9d\x03\n" +
 	"\fTrustService\x12\x90\x01\n" +
 	"\x13CrossSignedRootPool\x123.quicbaas.certificate.v1.CrossSignedRootPoolRequest\x1a4.quicbaas.certificate.v1.CrossSignedRootPoolResponse\"\x0e\xc2\xf3\x18\n" +

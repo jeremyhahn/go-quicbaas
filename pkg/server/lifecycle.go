@@ -813,13 +813,37 @@ func (s *Server) initializeCA() error {
 // by NewServer takes it under its lock, so certificate logins already being
 // served (the unified listeners start before initializeCA) see either no CA
 // and fail closed, or this one. It also hands the CA to the composed XKMS
-// service through bindCAToXKMSService.
+// service through bindCAToXKMSService, and wireTrustedCA hands the QuicBaaS
+// facade the same CA.
 func (s *Server) adoptCA(ca xkmssdk.TrustedCA) {
 	s.xkmsCA = ca
 	if s.caAdapter != nil {
 		s.caAdapter.SetCA(ca)
 	}
 	s.bindCAToXKMSService()
+	s.wireTrustedCA()
+}
+
+// wireTrustedCA hands the QuicBaaS facade the go-xkms CA adapter the REST
+// and MCP transports serve, so the embedded transport's
+// Security().TrustedCA() reaches the same CA (#1330). It runs both when the
+// CA is adopted and when the facade is built, whichever comes second wins.
+func (s *Server) wireTrustedCA() {
+	s.mu.RLock()
+	svc := s.quicBaaSService
+	s.mu.RUnlock()
+	if svc == nil || s.xkmsCA == nil {
+		return
+	}
+	ca := s.trustedCAService()
+	if ca == nil {
+		return
+	}
+	if setter, ok := svc.(interface {
+		SetTrustedCA(service.TrustedCAService)
+	}); ok {
+		setter.SetTrustedCA(ca)
+	}
 }
 
 // bindCAToXKMSService hands the node's adopted CA to the composed XKMS
@@ -827,8 +851,11 @@ func (s *Server) adoptCA(ca xkmssdk.TrustedCA) {
 // on the node (SignCSR, which PIV enrollment over gRPC uses) sign with the
 // same CA as the quicbaas CA adapter. It is a no-op until both the CA is
 // adopted and the XKMS service resolves, and it is called from both places,
-// whichever comes last. The CA is wrapped so a CSR signed or a certificate
-// issued with no tenant is recorded for the authenticated caller's tenant.
+// whichever comes last. The configured SPIFFE trust domain is set on the
+// service, and the CA is wrapped by withCallerTenant: issuance is bound to the
+// authenticated caller's tenant, TCG issuance is refused to all but the system
+// tenant, and a tenant's certificate carries its SPIFFE SAN under the
+// configured trust domain.
 func (s *Server) bindCAToXKMSService() {
 	if s.xkmsCA == nil {
 		return
@@ -848,7 +875,8 @@ func (s *Server) bindCAToXKMSService() {
 	if s.config != nil {
 		trustDomain = s.config.IAM.SPIFFETrustDomain
 	}
-	x.SetCA(newTenantBoundXKMSCA(pc, trustDomain))
+	x.SetSPIFFETrustDomain(trustDomain)
+	x.SetCA(withCallerTenant(pc, s.xkmsCA, trustDomain))
 }
 
 // issueTLSCertFromExternalCA configures TLS using the externally injected CA.
@@ -2252,6 +2280,7 @@ func (s *Server) startService() error {
 	s.mu.Lock()
 	s.quicBaaSService = svc
 	s.mu.Unlock()
+	s.wireTrustedCA()
 	s.logger.Info("QuicBaaS facade initialized")
 
 	// Wire the unified secret resolver registry (built unconditionally by
@@ -2697,6 +2726,7 @@ func (s *Server) startGRPCServer() error {
 	// QUIC/MCP/Unix/embedded transports.
 	s.registerFIDO2Service(grpcServer, quicbaasService)
 	s.registerPIVService(grpcServer, quicbaasService)
+	s.registerTrustedCAService(grpcServer, quicbaasService)
 
 	// Register Barrier and Ceremony gRPC services. The handlers delegate to
 	// the embedded go-qrdb instance via the QuicBaaS service facade, keeping

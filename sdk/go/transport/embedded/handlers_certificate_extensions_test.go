@@ -146,3 +146,13 @@ func TestDeviceIdentityConversionRoundTrip(t *testing.T) {
 	assert.Equal(t, []byte("ch"), out.ChainPEM)
 	assert.Equal(t, "s", out.SerialNumber)
 }
+
+func TestDeviceIdentityClientResponse_CarriesTheIAK(t *testing.T) {
+	out := DeviceIdentityClientResponse(&service.IssueDeviceIdentityResponse{
+		CertificatePEM:    []byte("idevid-cert"),
+		IAKCertificatePEM: []byte("iak-cert"),
+	})
+	require.NotNil(t, out)
+	assert.Equal(t, []byte("idevid-cert"), out.CertificatePEM)
+	assert.Equal(t, []byte("iak-cert"), out.IAKCertificatePEM)
+}

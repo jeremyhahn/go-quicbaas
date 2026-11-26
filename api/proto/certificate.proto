@@ -62,7 +62,7 @@ service CertificateService {
   // Authority Information Access extension. The chain is ordered issuer-first
   // and root-last and excludes the leaf.
   rpc Chain(CertificateChainRequest) returns (CertificateChainResponse) {
-      option (qrdb.v1.permission) = "certs:generate";
+      option (qrdb.v1.permission) = "trust:write";
   }
 
   // IssueDeviceIdentity issues a TCG device identity certificate: an
@@ -485,6 +485,10 @@ message IssueDeviceIdentityResponse {
 
   // Timestamp is when the request was processed.
   google.protobuf.Timestamp timestamp = 6;
+
+  // IAKCertificatePEM is the PEM certificate of the IAK an IDevID issuance
+  // certifies; empty for the other identity kinds.
+  bytes iak_certificate_pem = 7;
 }
 
 // =============================================================================

@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyfields"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyloaderror"
+	"gopkg.in/yaml.v3"
 )
 
 // iamHandler handles IAM-specific request/response transformations for MCP transport.
@@ -391,14 +392,48 @@ func mapMCPServerPolicyToSDK(respMap map[string]interface{}) interface{} {
 		if effect, ok := spec["effect"]; ok {
 			result["effect"] = effect
 		}
-		if enabled, ok := spec["enabled"]; ok {
-			result["enabled"] = enabled
-		}
 	}
+	result["enabled"] = mcpServerPolicyEnabled(policyRaw)
 
 	policyloaderror.Copy(policyRaw, result)
 
 	return result
+}
+
+// mcpPolicySpecYAML is the part of a policy's spec_yaml that carries the
+// enabled flag.
+type mcpPolicySpecYAML struct {
+	Spec struct {
+		Enabled *bool `yaml:"enabled"`
+	} `yaml:"spec"`
+}
+
+// mcpServerPolicyEnabled reports whether a server-format policy is enabled.
+// The stored policy spec has no enabled field, so the rule matches REST and
+// gRPC: a policy is enabled unless its spec, the response or its spec_yaml
+// explicitly sets enabled to false. A spec_yaml that does not parse leaves
+// the policy enabled, as gRPC does.
+func mcpServerPolicyEnabled(policyRaw map[string]interface{}) bool {
+	if spec, ok := policyRaw["spec"].(map[string]interface{}); ok {
+		if enabled, ok := spec["enabled"].(bool); ok {
+			return enabled
+		}
+	}
+	if enabled, ok := policyRaw["enabled"].(bool); ok {
+		return enabled
+	}
+	specYAML, ok := policyRaw["spec_yaml"].(string)
+	if !ok {
+		return true
+	}
+	var parsed mcpPolicySpecYAML
+	if err := yaml.Unmarshal([]byte(specYAML), &parsed); err != nil {
+		return true
+	}
+	if parsed.Spec.Enabled == nil {
+		return true
+	}
+	return *parsed.Spec.Enabled
 }
 
 // mapMCPServerPolicyListToSDK converts a list of server-format policies to SDK format.

@@ -220,7 +220,7 @@ func TestServer_IssueDeviceIdentity_Errors(t *testing.T) {
 func TestCertificateExtensionGRPCPermissions(t *testing.T) {
 	cases := map[string]struct{ resource, action string }{
 		"/quicbaas.certificate.v1.CertificateService/CrossSign":           {"ca", "create"},
-		"/quicbaas.certificate.v1.CertificateService/Chain":               {"certs", "generate"},
+		"/quicbaas.certificate.v1.CertificateService/Chain":               {"trust", "write"},
 		"/quicbaas.certificate.v1.CertificateService/IssueDeviceIdentity": {"certs", "generate"},
 	}
 
@@ -243,4 +243,25 @@ func TestCrossSignRequiresCAAuthority(t *testing.T) {
 	assert.NotEqual(t, issue, crossSign,
 		"cross-signing must not share the leaf-issuance permission")
 	assert.Equal(t, "ca", crossSign.resource)
+}
+
+func TestServer_IssueDeviceIdentity_ReturnsTheIAK(t *testing.T) {
+	srv, mockSvc := createTestServerWithMockService(t)
+	mockSvc.CertificateSvc = &mockCertificateService{
+		IssueDeviceIdentityFunc: func(context.Context, *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error) {
+			return &service.IssueDeviceIdentityResponse{
+				CertificatePEM:    []byte("idevid-cert"),
+				IAKCertificatePEM: []byte("iak-cert"),
+			}, nil
+		},
+	}
+
+	resp, err := srv.IssueDeviceIdentity(context.Background(), &pb.IssueDeviceIdentityRequest{
+		Type:     "idevid",
+		DeviceId: "device-7",
+		CsrPem:   []byte("tcg-csr"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("idevid-cert"), resp.CertificatePem)
+	assert.Equal(t, []byte("iak-cert"), resp.IakCertificatePem)
 }

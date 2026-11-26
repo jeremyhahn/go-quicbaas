@@ -876,6 +876,52 @@ func TestExecuteKMSUnwrapKey_Success(t *testing.T) {
 	require.NotNil(t, result)
 }
 
+func TestExecuteKMSUnwrapKey_CarriesExportable(t *testing.T) {
+	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	tests := []struct {
+		name string
+		args map[string]interface{}
+		want bool
+	}{
+		{name: "exportable true", args: map[string]interface{}{"exportable": true}, want: true},
+		{name: "exportable false", args: map[string]interface{}{"exportable": false}, want: false},
+		{name: "exportable absent", args: map[string]interface{}{}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSvc := newTestQuicBaaSWithKMSOps()
+			registry := NewToolRegistry(mockSvc, log)
+			tt.args["key_id"] = "imported-key"
+			tt.args["wrapped_key"] = base64.StdEncoding.EncodeToString([]byte("wrapped-key-data"))
+			tt.args["wrapping_key_id"] = "wrap-key-1"
+			tt.args["algorithm"] = "AES-256-GCM"
+
+			_, err := registry.executeKMSUnwrapKey(context.Background(), tt.args)
+			require.NoError(t, err)
+			require.NotNil(t, mockSvc.kmsSvc.unwrapKeyReq)
+			require.NotNil(t, mockSvc.kmsSvc.unwrapKeyReq.KeyAttributes)
+			assert.Equal(t, tt.want, mockSvc.kmsSvc.unwrapKeyReq.KeyAttributes.Exportable)
+		})
+	}
+}
+
+func TestExecuteKMSUnwrapKey_InvalidRequestDoesNotReachService(t *testing.T) {
+	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	mockSvc := newTestQuicBaaSWithKMSOps()
+	registry := NewToolRegistry(mockSvc, log)
+
+	args := map[string]interface{}{
+		"key_id":          "k1",
+		"wrapped_key":     "not-valid-base64!@#$",
+		"wrapping_key_id": "w1",
+		"algorithm":       "AES-256-GCM",
+		"exportable":      true,
+	}
+	_, err := registry.executeKMSUnwrapKey(context.Background(), args)
+	require.Error(t, err)
+	assert.Nil(t, mockSvc.kmsSvc.unwrapKeyReq, "the KMS service must not be called")
+}
+
 func TestExecuteKMSUnwrapKey_MissingKeyID(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	mockSvc := newTestQuicBaaSWithKMSOps()

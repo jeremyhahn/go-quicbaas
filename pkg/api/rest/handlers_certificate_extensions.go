@@ -72,12 +72,14 @@ type DeviceIdentityRESTRequest struct {
 
 // DeviceIdentityRESTResponse is the issued device identity certificate.
 type DeviceIdentityRESTResponse struct {
-	CertificatePEM []byte    `json:"certificate_pem"`
-	ChainPEM       []byte    `json:"chain_pem"`
-	SerialNumber   string    `json:"serial_number"`
-	NotBefore      time.Time `json:"not_before"`
-	NotAfter       time.Time `json:"not_after"`
-	Timestamp      int64     `json:"timestamp"`
+	CertificatePEM []byte `json:"certificate_pem"`
+	ChainPEM       []byte `json:"chain_pem"`
+	// IAKCertificatePEM is the IAK certificate an IDevID issuance returns.
+	IAKCertificatePEM []byte    `json:"iak_certificate_pem,omitempty"`
+	SerialNumber      string    `json:"serial_number"`
+	NotBefore         time.Time `json:"not_before"`
+	NotAfter          time.Time `json:"not_after"`
+	Timestamp         int64     `json:"timestamp"`
 }
 
 // =============================================================================
@@ -187,12 +189,13 @@ func (s *Server) HandleCertificateDeviceIdentity(w http.ResponseWriter, r *http.
 	}
 
 	RespondJSON(w, r, http.StatusOK, &DeviceIdentityRESTResponse{
-		CertificatePEM: svcResp.CertificatePEM,
-		ChainPEM:       svcResp.ChainPEM,
-		SerialNumber:   svcResp.SerialNumber,
-		NotBefore:      svcResp.NotBefore,
-		NotAfter:       svcResp.NotAfter,
-		Timestamp:      time.Now().Unix(),
+		CertificatePEM:    svcResp.CertificatePEM,
+		ChainPEM:          svcResp.ChainPEM,
+		IAKCertificatePEM: svcResp.IAKCertificatePEM,
+		SerialNumber:      svcResp.SerialNumber,
+		NotBefore:         svcResp.NotBefore,
+		NotAfter:          svcResp.NotAfter,
+		Timestamp:         time.Now().Unix(),
 	})
 }
 

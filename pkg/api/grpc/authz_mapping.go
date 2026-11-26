@@ -55,6 +55,7 @@ var brokerServiceDescs = []grpc.ServiceDesc{
 	pb.RegistryService_ServiceDesc,
 	pb.FIDO2Service_ServiceDesc,
 	pb.PIVService_ServiceDesc,
+	pb.TrustedCAService_ServiceDesc,
 	pb.VectorDB_ServiceDesc,
 	pb.VectorAdmin_ServiceDesc,
 	pb.ObjectStorageService_ServiceDesc,
@@ -222,6 +223,8 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.v1.QuicBaaS/ScanIndex":      {"index", "scan"},
 	"/quicbaas.v1.QuicBaaS/Put":            {"kv", "put"},
 	"/quicbaas.v1.QuicBaaS/Delete":         {"kv", "delete"},
+	"/quicbaas.v1.QuicBaaS/CompareAndSwap": {"kv", "put"},
+	"/quicbaas.v1.QuicBaaS/PutIfAbsent":    {"kv", "put"},
 	"/quicbaas.v1.QuicBaaS/BatchGet":       {"batch", "execute"},
 	"/quicbaas.v1.QuicBaaS/BatchPut":       {"batch", "execute"},
 	"/quicbaas.v1.QuicBaaS/BatchDelete":    {"batch", "execute"},
@@ -306,6 +309,15 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential":  {"users", "delete"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials": {"users", "delete"},
 
+	// ---- quicbaas.iam.v1.AuditService ----
+	// The same permissions REST and MCP require for these verbs (#1751):
+	// GET /api/v1/iam/audit (audit:query) and GET /api/v1/iam/audit/{id}
+	// (audit:read). RecordAuditEvent stays unmapped, so it is
+	// default-denied on the node, as on main: no REST grant is copied
+	// onto it.
+	"/quicbaas.iam.v1.AuditService/QueryAuditEvents": {"audit", "query"},
+	"/quicbaas.iam.v1.AuditService/GetAuditEvent":    {"audit", "read"},
+
 	// ---- quicbaas.iam.v1.IAMService: built-in role reconciliation ----
 	//
 	// ReconcileRoles takes the role-create family rather than a verb of its
@@ -373,16 +385,6 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.SessionService/RevokeAllSessions": {"users", "update"},
 	// POST /api/v1/iam/sessions/revoke-others
 	"/quicbaas.iam.v1.SessionService/RevokeOtherSessions": {"users", "update"},
-
-	// ---- quicbaas.iam.v1.AuditService ----
-	//
-	// Each RPC takes the grant its REST twin requires. RecordAuditEvent stays
-	// unmapped, so it is default-denied on the node.
-	//
-	// GET /api/v1/iam/audit
-	"/quicbaas.iam.v1.AuditService/QueryAuditEvents": {"audit", "query"},
-	// GET /api/v1/iam/audit/{id}
-	"/quicbaas.iam.v1.AuditService/GetAuditEvent": {"audit", "read"},
 
 	// ---- quicbaas.iam.v1.PEPService ----
 	//
@@ -545,8 +547,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// IssueDeviceIdentity mints TCG EK / AK / IEEE 802.1AR IDevID
 	// certificates. Those are END-ENTITY certificates, so they stay in the
 	// leaf-issuance family: certs:generate.
-	"/quicbaas.certificate.v1.CertificateService/CrossSign":           {"ca", "create"},
-	"/quicbaas.certificate.v1.CertificateService/Chain":               {"certs", "generate"},
+	"/quicbaas.certificate.v1.CertificateService/CrossSign": {"ca", "create"},
+	// Chain's AIA walk fetches and imports issuer certificates, the mutation
+	// TrustService/AutoImportAIA performs, so it takes the same trust:write.
+	"/quicbaas.certificate.v1.CertificateService/Chain":               {"trust", "write"},
 	"/quicbaas.certificate.v1.CertificateService/IssueDeviceIdentity": {"certs", "generate"},
 
 	// ---- quicbaas.attestation.v1.AttestationService ----
@@ -626,6 +630,23 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.piv.v1.PIVService/DeletePIVCertificate": {"piv", "delete"},
 	"/quicbaas.piv.v1.PIVService/GeneratePIVKey":       {"piv", "write"},
 	"/quicbaas.piv.v1.PIVService/GeneratePIVCSR":       {"piv", "use"},
+
+	// ---- quicbaas.trustedca.v1.TrustedCAService ----
+	//
+	// The re-exported go-xkms CAService (#1330): the same permissions the
+	// MCP xkms.ca.* tools enforce (pkg/api/mcp authz_qrdb.go).
+	"/quicbaas.trustedca.v1.TrustedCAService/GetCABundle":       {"ca", "read"},
+	"/quicbaas.trustedca.v1.TrustedCAService/GetCACertificate":  {"ca", "read"},
+	"/quicbaas.trustedca.v1.TrustedCAService/IsRevoked":         {"certs", "read"},
+	"/quicbaas.trustedca.v1.TrustedCAService/SignCSR":           {"certs", "generate"},
+	"/quicbaas.trustedca.v1.TrustedCAService/IssueCertificate":  {"certs", "generate"},
+	"/quicbaas.trustedca.v1.TrustedCAService/RevokeCertificate": {"certs", "revoke"},
+	"/quicbaas.trustedca.v1.TrustedCAService/GenerateCRL":       {"certs", "revoke"},
+	// The TCG verbs take certs:generate, the permission REST uses for them.
+	"/quicbaas.trustedca.v1.TrustedCAService/IssueEKCertificate": {"certs", "generate"},
+	"/quicbaas.trustedca.v1.TrustedCAService/IssueAKCertificate": {"certs", "generate"},
+	"/quicbaas.trustedca.v1.TrustedCAService/SignTCGCSR":         {"certs", "generate"},
+	"/quicbaas.trustedca.v1.TrustedCAService/EnrollDevice":       {"certs", "generate"},
 
 	// ---- quicbaas.barrier.v1.Barrier (system barrier lifecycle) ----
 	"/quicbaas.barrier.v1.Barrier/BarrierStatus":             {"tenant_barrier", "status"},

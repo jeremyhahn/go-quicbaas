@@ -103,9 +103,10 @@ func (h *certificateHandler) handleIssueDeviceIdentity(ctx context.Context, clie
 	}
 
 	resp := &certificate.DeviceIdentityResponse{
-		CertificatePEM: pbResp.CertificatePem,
-		ChainPEM:       pbResp.ChainPem,
-		SerialNumber:   pbResp.SerialNumber,
+		CertificatePEM:    pbResp.CertificatePem,
+		ChainPEM:          pbResp.ChainPem,
+		IAKCertificatePEM: pbResp.IakCertificatePem,
+		SerialNumber:      pbResp.SerialNumber,
 	}
 	if pbResp.NotBefore != nil {
 		resp.NotBefore = pbResp.NotBefore.AsTime()

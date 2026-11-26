@@ -19,6 +19,8 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // trustDomain is the SPIFFE trust domain these tests issue under.
@@ -223,7 +225,7 @@ func TestIssueClient_CarriesTheTenantSPIFFESAN(t *testing.T) {
 	}
 
 	cert := issued.Certificate
-	want := "spiffe://" + trustDomain + "/tenant/system/user/admin@certfixture.test"
+	want := "spiffe://" + trustDomain + "/tenant/system/user/" + service.SPIFFEWorkloadName("admin@certfixture.test")
 	var uris []string
 	for _, u := range cert.URIs {
 		uris = append(uris, u.String())

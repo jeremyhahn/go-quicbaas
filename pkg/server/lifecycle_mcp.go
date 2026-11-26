@@ -16,6 +16,7 @@
 package server
 
 import (
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/caadapter"
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
 	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 )
@@ -83,6 +84,12 @@ func (s *Server) buildMCPServer() (*mcpapi.Server, error) {
 	mcpServer.SetUserService(newQRDBUserServicerProxy(s))
 	mcpServer.SetUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s))
 	s.logger.Info("User and UserAuthFactor services wired into MCP server")
+
+	// The xkms.ca.* tools serve the same go-xkms CA adapter as the REST
+	// /api/v1/xkms/ca/* routes (#1330).
+	if s.xkmsCA != nil {
+		mcpServer.SetCAService(caadapter.NewXKMSCAService(s.xkmsCA, s.config.IAM.SPIFFETrustDomain))
+	}
 
 	return mcpServer, nil
 }

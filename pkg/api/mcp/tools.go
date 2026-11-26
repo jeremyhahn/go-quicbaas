@@ -33,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // ToolRegistry manages MCP tools and their execution.
@@ -46,6 +47,9 @@ type ToolRegistry struct {
 	// is online; nil during early boot and unit tests, in which case the
 	// barrier dispatcher returns BarrierServiceUnavailableError.
 	barrierSvc service.BarrierServicer
+	// caSvc is the go-xkms CA the xkms.ca.* tools serve (#1330); nil until
+	// SetCAService, when those tools report "operation not supported".
+	caSvc xkmstransport.CAService
 
 	// ceremonySvc backs every quicbaas_ceremony_* tool. Wired
 	// post-construction via SetCeremonyService once the qrdb SDK
@@ -294,6 +298,37 @@ func (r *ToolRegistry) registerTools() {
 		},
 	})
 
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_kv_compare_and_swap",
+		Description: "Replace an entity's value only when it currently holds the expected value; answers {swapped: bool}",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
+				"id":         map[string]interface{}{"type": "string", "description": "Entity ID as a decimal string"},
+				"shard_id":   map[string]interface{}{"type": "string", "description": "Target shard ID as a decimal string (default 0: the service routes)"},
+				"expected":   map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) value the entity must hold"},
+				"next":       map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) value stored when it does"},
+			},
+			"required": []string{"entityType", "id", "expected", "next"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_kv_put_if_absent",
+		Description: "Store an entity's value only when the entity is absent; answers {stored: bool}",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
+				"id":         map[string]interface{}{"type": "string", "description": "Entity ID as a decimal string"},
+				"shard_id":   map[string]interface{}{"type": "string", "description": "Target shard ID as a decimal string (default 0: the service routes)"},
+				"value":      map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) value"},
+			},
+			"required": []string{"entityType", "id", "value"},
+		},
+	})
+
 	r.addKVEntityTool("get", ToolDefinition{
 		Description: "Retrieve a value by key from QuicBaaS",
 		InputSchema: map[string]interface{}{
@@ -398,6 +433,31 @@ func (r *ToolRegistry) registerTools() {
 							"id":         map[string]interface{}{"type": "integer"},
 						},
 						"required": []string{"entityType", "id"},
+					},
+				},
+				"shardID": map[string]interface{}{"type": "integer"},
+			},
+			"required": []string{"operations"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_batch_execute",
+		Description: "Commit a mixed batch of puts and deletes atomically",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"operations": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"type":        map[string]interface{}{"type": "string", "enum": []string{"PUT", "DELETE"}},
+							"entity_type": map[string]interface{}{"type": "string"},
+							"key":         map[string]interface{}{"type": "string"},
+							"value":       map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) data a put writes; a delete ignores it"},
+						},
+						"required": []string{"type", "entity_type", "key"},
 					},
 				},
 				"shardID": map[string]interface{}{"type": "integer"},
@@ -896,6 +956,11 @@ func (r *ToolRegistry) SetBarrierService(svc service.BarrierServicer) {
 	r.barrierSvc = svc
 }
 
+// SetCAService wires the go-xkms CA the xkms.ca.* tools serve (#1330).
+func (r *ToolRegistry) SetCAService(svc xkmstransport.CAService) {
+	r.caSvc = svc
+}
+
 // SetCeremonyService installs the CeremonyServicer used by every
 // quicbaas_ceremony_* tool. Pass nil to take the surface offline; tools will
 // then return CeremonyServiceUnavailableError.
@@ -1085,6 +1150,10 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeDelete(ctx, args)
 	case "qrdb_list", kvEntityToolPrefix + "list":
 		return r.executeList(ctx, args)
+	case "quicbaas_kv_compare_and_swap":
+		return r.executeKVCompareAndSwap(ctx, args)
+	case "quicbaas_kv_put_if_absent":
+		return r.executeKVPutIfAbsent(ctx, args)
 
 	// Batch Operations
 	case "quicbaas_batch_put":
@@ -1093,6 +1162,8 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeBatchGet(ctx, args)
 	case "quicbaas_batch_delete":
 		return r.executeBatchDelete(ctx, args)
+	case "quicbaas_batch_execute":
+		return r.executeBatchExecute(ctx, args)
 
 	// Transaction Operations
 	case "quicbaas_transaction":
@@ -1730,6 +1801,67 @@ func (r *ToolRegistry) executePut(ctx context.Context, args map[string]interface
 	return marshalEntityResult(resp)
 }
 
+// executeKVCompareAndSwap is the conditional form of executePut: it names the
+// entity the same way, so it compares the record qrdb_put wrote.
+func (r *ToolRegistry) executeKVCompareAndSwap(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	entityType := getStringAlt(args, "entityType", "entity_type")
+	shardID, err := parseDecimalArg(args, "shard_id", false)
+	if err != nil {
+		return nil, err
+	}
+	expect, err := decodeConditionalArg(args, "expected")
+	if err != nil {
+		return nil, err
+	}
+	next, err := decodeConditionalArg(args, "next")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := r.service.CompareAndSwap(ctx, &service.CompareAndSwapRequest{
+		EntityType: entityType,
+		ID:         getIDOrHashKey(entityType, args),
+		Expect:     expect,
+		Set:        next,
+		ShardID:    shardID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"swapped": resp.Applied}, nil
+}
+
+// executeKVPutIfAbsent is the conditional form of executePut.
+func (r *ToolRegistry) executeKVPutIfAbsent(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	entityType := getStringAlt(args, "entityType", "entity_type")
+	shardID, err := parseDecimalArg(args, "shard_id", false)
+	if err != nil {
+		return nil, err
+	}
+	value, err := decodeConditionalArg(args, "value")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := r.service.PutIfAbsent(ctx, &service.PutIfAbsentRequest{
+		EntityType: entityType,
+		ID:         getIDOrHashKey(entityType, args),
+		Data:       value,
+		ShardID:    shardID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"stored": resp.Applied}, nil
+}
+
+// decodeConditionalArg decodes a base64 argument of the KV conditional tools.
+func decodeConditionalArg(args map[string]interface{}, name string) ([]byte, error) {
+	data, err := base64.StdEncoding.DecodeString(getString(args, name))
+	if err != nil {
+		return nil, &UserToolInvalidArgumentError{Arg: name, Err: err}
+	}
+	return data, nil
+}
+
 // decodePutData decodes the data argument of the KV put tools (qrdb_put and
 // quicbaas_batch_put), whose schemas declare it standard base64. The value
 // alias carries the same encoding.
@@ -2049,6 +2181,96 @@ func (r *ToolRegistry) executeBatchDelete(ctx context.Context, args map[string]i
 	}
 
 	return marshalResult(resp)
+}
+
+// batchExecuteOpTypes maps the operation type strings quicbaas_batch_execute
+// accepts to the service operation kinds, matching the REST batch endpoint.
+var batchExecuteOpTypes = map[string]service.BatchExecuteOpType{
+	"PUT":    service.BatchExecutePut,
+	"DELETE": service.BatchExecuteDelete,
+}
+
+// executeBatchExecute commits a mixed batch of puts and deletes atomically.
+func (r *ToolRegistry) executeBatchExecute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	ops, err := parseBatchOperationsArray(args)
+	if err != nil {
+		return nil, err
+	}
+
+	operations := make([]*service.BatchExecuteOperation, 0, len(ops))
+	for i, op := range ops {
+		opMap, ok := op.(map[string]interface{})
+		if !ok {
+			return nil, &BatchOperationParseError{
+				Index:   i,
+				Field:   "operation",
+				Message: "expected object",
+			}
+		}
+
+		opType, ok := batchExecuteOpTypes[getString(opMap, "type")]
+		if !ok {
+			return nil, &BatchOperationParseError{
+				Index:   i,
+				Field:   "type",
+				Message: "type must be PUT or DELETE",
+			}
+		}
+
+		entityType := getStringAlt(opMap, "entityType", "entity_type")
+		if entityType == "" {
+			return nil, &BatchOperationParseError{
+				Index:   i,
+				Field:   "entityType",
+				Message: "entity_type is required",
+			}
+		}
+
+		key := getString(opMap, "key")
+		if key == "" {
+			return nil, &BatchOperationParseError{
+				Index:   i,
+				Field:   "key",
+				Message: "key is required",
+			}
+		}
+
+		var value []byte
+		if data := getString(opMap, "value"); data != "" {
+			value, err = decodePutData(data)
+			if err != nil {
+				return nil, &BatchOperationParseError{
+					Index:   i,
+					Field:   "value",
+					Message: "value must be base64-encoded",
+				}
+			}
+		}
+
+		operations = append(operations, &service.BatchExecuteOperation{
+			Type:       opType,
+			EntityType: entityType,
+			Key:        key,
+			Value:      value,
+		})
+	}
+
+	resp, err := r.service.BatchExecute(ctx, &service.BatchExecuteRequest{
+		Operations: operations,
+		ShardID:    getUint64(args, "shardID"),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]map[string]interface{}, len(resp.Results))
+	for i, result := range resp.Results {
+		results[i] = map[string]interface{}{"success": result.Succeeded}
+	}
+	return marshalResult(map[string]interface{}{
+		"success": true,
+		"results": results,
+	})
 }
 
 // parseBatchOperationsArray extracts and validates the "operations" array from batch tool args.

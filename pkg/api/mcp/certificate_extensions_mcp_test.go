@@ -62,7 +62,7 @@ func TestCertificateExtensionToolsAreRegistered(t *testing.T) {
 func TestCertificateExtensionToolsHaveAuthzMapping(t *testing.T) {
 	cases := map[string]struct{ resource, action string }{
 		"quicbaas_certificate_cross_sign":            {"ca", "create"},
-		"quicbaas_certificate_chain":                 {"certs", "generate"},
+		"quicbaas_certificate_chain":                 {"trust", "write"},
 		"quicbaas_certificate_issue_device_identity": {"certs", "generate"},
 	}
 
@@ -247,4 +247,54 @@ func TestCertificateExtensionTools_ServiceNotConfigured(t *testing.T) {
 			assert.Error(t, err)
 		})
 	}
+}
+
+func TestExecuteCertificateDeviceIdentityTool_ReturnsTheIAK(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("an IDevID issuance returns the IAK", func(t *testing.T) {
+		registry := newCertExtRegistry(t, &MockCertificateService{
+			IssueDeviceIdentityFunc: func(context.Context, *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error) {
+				return &service.IssueDeviceIdentityResponse{
+					CertificatePEM:    []byte("idevid-cert"),
+					IAKCertificatePEM: []byte("iak-cert"),
+				}, nil
+			},
+		})
+
+		result, err := registry.executeCertificateTool(ctx, "quicbaas_certificate_issue_device_identity",
+			map[string]interface{}{
+				"type":      "idevid",
+				"device_id": "device-mcp",
+				"csr_pem":   base64.StdEncoding.EncodeToString([]byte("tcg-csr")),
+			})
+		require.NoError(t, err)
+
+		m, ok := result.(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, "idevid-cert", m["certificate_pem"])
+		assert.Equal(t, "iak-cert", m["iak_certificate_pem"])
+	})
+
+	t.Run("an EK issuance has no IAK key", func(t *testing.T) {
+		registry := newCertExtRegistry(t, &MockCertificateService{
+			IssueDeviceIdentityFunc: func(context.Context, *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error) {
+				return &service.IssueDeviceIdentityResponse{CertificatePEM: []byte("ek-cert")}, nil
+			},
+		})
+
+		result, err := registry.executeCertificateTool(ctx, "quicbaas_certificate_issue_device_identity",
+			map[string]interface{}{
+				"type":      "ek",
+				"device_id": "device-mcp",
+				"ek_pub":    base64.StdEncoding.EncodeToString([]byte("ek-pub")),
+			})
+		require.NoError(t, err)
+
+		m, ok := result.(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, "ek-cert", m["certificate_pem"])
+		_, has := m["iak_certificate_pem"]
+		assert.False(t, has)
+	})
 }

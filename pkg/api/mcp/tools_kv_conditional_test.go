@@ -1,0 +1,139 @@
+//go:build mcp
+
+package mcp
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+)
+
+// b64 is the standard base64 form of s.
+func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+
+func (s *kvStoreService) CompareAndSwap(_ context.Context, req *service.CompareAndSwapRequest) (*service.ConditionalPutResponse, error) {
+	s.shards = append(s.shards, req.ShardID)
+	key := kvStoreKey(req.EntityType, req.ID)
+	held, ok := s.entries[key]
+	if !ok || !bytes.Equal(held, req.Expect) {
+		return &service.ConditionalPutResponse{Applied: false}, nil
+	}
+	s.entries[key] = req.Set
+	return &service.ConditionalPutResponse{Applied: true}, nil
+}
+
+func (s *kvStoreService) PutIfAbsent(_ context.Context, req *service.PutIfAbsentRequest) (*service.ConditionalPutResponse, error) {
+	s.shards = append(s.shards, req.ShardID)
+	key := kvStoreKey(req.EntityType, req.ID)
+	if _, ok := s.entries[key]; ok {
+		return &service.ConditionalPutResponse{Applied: false}, nil
+	}
+	s.entries[key] = req.Data
+	return &service.ConditionalPutResponse{Applied: true}, nil
+}
+
+// TestKVConditionalTools_ShareQRDBPutsKeyspace pins the keyspace: a value
+// written by qrdb_put is the one the conditional tools compare and see.
+func TestKVConditionalTools_ShareQRDBPutsKeyspace(t *testing.T) {
+	registry, store := newKVStoreRegistry(t)
+	ctx := context.Background()
+
+	_, err := registry.ExecuteTool(ctx, "qrdb_put", map[string]interface{}{
+		"entityType": "locks", "id": float64(7), "data": b64("v1"),
+	})
+	require.NoError(t, err)
+
+	out, err := registry.ExecuteTool(ctx, "quicbaas_kv_put_if_absent", map[string]interface{}{
+		"entityType": "locks", "id": float64(7), "value": b64("other"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]interface{}{"stored": false}, out)
+
+	out, err = registry.ExecuteTool(ctx, "quicbaas_kv_compare_and_swap", map[string]interface{}{
+		"entityType": "locks", "id": float64(7), "expected": b64("stale"), "next": b64("v2"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]interface{}{"swapped": false}, out)
+
+	out, err = registry.ExecuteTool(ctx, "quicbaas_kv_compare_and_swap", map[string]interface{}{
+		"entityType": "locks", "id": float64(7), "expected": b64("v1"), "next": b64("v2"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]interface{}{"swapped": true}, out)
+	assert.Equal(t, []byte("v2"), store.entries[kvStoreKey("locks", 7)])
+}
+
+// TestKVConditionalTools_DecimalStringIDAbove2To53 proves the conditional
+// tools address an ID above 2^53 exactly when it arrives as a decimal string,
+// as the SDK sends it: 2^53+1 must not round to 2^53.
+func TestKVConditionalTools_DecimalStringIDAbove2To53(t *testing.T) {
+	registry, store := newKVStoreRegistry(t)
+	ctx := context.Background()
+	const id = "9007199254740993"
+
+	_, err := registry.ExecuteTool(ctx, "quicbaas_kv_put", map[string]interface{}{
+		"entity_type": "locks", "id": id, "data": b64("v1"),
+	})
+	require.NoError(t, err)
+
+	out, err := registry.ExecuteTool(ctx, "quicbaas_kv_put_if_absent", map[string]interface{}{
+		"entityType": "locks", "id": id, "value": b64("other"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]interface{}{"stored": false}, out)
+
+	out, err = registry.ExecuteTool(ctx, "quicbaas_kv_compare_and_swap", map[string]interface{}{
+		"entityType": "locks", "id": id, "expected": b64("v1"), "next": b64("v2"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]interface{}{"swapped": true}, out)
+	assert.Equal(t, []byte("v2"), store.entries[kvStoreKey("locks", 9007199254740993)])
+	_, rounded := store.entries[kvStoreKey("locks", 9007199254740992)]
+	assert.False(t, rounded, "the 2^53 key must not exist")
+}
+
+// TestKVConditionalTools_CarryShardID pins that the conditional tools target
+// the shard the caller names, as quicbaas_kv_put does, instead of dropping it.
+func TestKVConditionalTools_CarryShardID(t *testing.T) {
+	registry, store := newKVStoreRegistry(t)
+	ctx := context.Background()
+
+	_, err := registry.ExecuteTool(ctx, "quicbaas_kv_put_if_absent", map[string]interface{}{
+		"entityType": "locks", "id": "7", "shard_id": "3", "value": b64("v1"),
+	})
+	require.NoError(t, err)
+	_, err = registry.ExecuteTool(ctx, "quicbaas_kv_compare_and_swap", map[string]interface{}{
+		"entityType": "locks", "id": "7", "shard_id": "3", "expected": b64("v1"), "next": b64("v2"),
+	})
+	require.NoError(t, err)
+	_, err = registry.ExecuteTool(ctx, "quicbaas_kv_put_if_absent", map[string]interface{}{
+		"entityType": "locks", "id": "8", "value": b64("v1"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []uint64{3, 3, 0}, store.shards)
+
+	for _, tool := range []string{"quicbaas_kv_put_if_absent", "quicbaas_kv_compare_and_swap"} {
+		_, err = registry.ExecuteTool(ctx, tool, map[string]interface{}{
+			"entityType": "locks", "id": "7", "shard_id": "-1",
+			"value": b64("v"), "expected": b64("v"), "next": b64("v"),
+		})
+		var argErr *UserToolInvalidArgumentError
+		require.ErrorAs(t, err, &argErr, tool)
+		assert.Equal(t, "shard_id", argErr.Arg, tool)
+	}
+}
+
+func TestKVConditionalTools_RefuseNonBase64(t *testing.T) {
+	registry, _ := newKVStoreRegistry(t)
+	_, err := registry.ExecuteTool(context.Background(), "quicbaas_kv_compare_and_swap", map[string]interface{}{
+		"entityType": "locks", "id": float64(7), "expected": "%%%", "next": b64("v2"),
+	})
+	var argErr *UserToolInvalidArgumentError
+	require.ErrorAs(t, err, &argErr)
+}

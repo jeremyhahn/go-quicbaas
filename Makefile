@@ -5220,6 +5220,10 @@ bench-attestation: ## Run attestation Verifier benchmarks
 integration-test-attestation: ## Run attestation Verifier CLI integration tests (all transports, in the devcontainer)
 	@$(MAKE) integration-test WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 QUICBAAS_TEST_FILTER="-run TestAttestationVerifier ./test/integration/cli/..."
 
+.PHONY: integration-test-certificate-authority
+integration-test-certificate-authority: ## Run certificate-authority CLI integration tests (trusted-ca, ca, trust; all transports, in the devcontainer)
+	@$(MAKE) integration-test WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 QUICBAAS_TEST_FILTER="-run TestTrustedCA|TestTCGCA|TestTrust|TestCA ./test/integration/cli/..."
+
 .PHONY: integration-test-account
 integration-test-account: ## Run pooled provider account CLI integration tests (all transports, in the devcontainer)
 	@$(MAKE) integration-test WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 QUICBAAS_TEST_FILTER="-run TestAgentAccount ./test/integration/cli/..."

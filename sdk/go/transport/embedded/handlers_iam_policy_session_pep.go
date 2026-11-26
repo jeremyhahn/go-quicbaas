@@ -14,7 +14,7 @@
 package embedded
 
 // Policy Simulate and PEP Check and CheckBatch handlers (go-quicbaas#1564,
-// go-quicbaas#2564).
+// go-quicbaas#1814, go-quicbaas#2564).
 //
 // Both route to the policy engine the other transports already call: the
 // gRPC and REST transports map Simulate onto the TestPolicy RPC, which

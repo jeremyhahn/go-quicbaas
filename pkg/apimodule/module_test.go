@@ -54,7 +54,7 @@ type stubKMSManager struct{}
 func (stubKMSManager) GenerateKey(context.Context, *xkmstypes.KeyAttributes) (interface{}, error) {
 	return nil, nil
 }
-func (stubKMSManager) ImportKey(context.Context, string, []byte, string) (interface{}, error) {
+func (stubKMSManager) ImportKey(context.Context, string, []byte, string, bool) (interface{}, error) {
 	return nil, nil
 }
 func (stubKMSManager) GetKey(context.Context, string) (interface{}, error)  { return nil, nil }
@@ -290,6 +290,8 @@ func TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly(t *testing.T) {
 		assert.True(t, unixOnly[name], "service %s must be unixOnly: TCP callers use go-xkms's canonical surface", name)
 	}
 	assert.False(t, unixOnly[pb.Crypto_ServiceDesc.ServiceName], "Crypto is served to every peer: go-xkms serves no quicbaas.kms.v1 name")
+	_, ok := info[pb.TrustedCAService_ServiceDesc.ServiceName]
+	assert.False(t, ok, "TrustedCAService is served on the node's Unix server, not by the quicbaas module")
 }
 
 // startBufconnModule registers the module on a bufconn-backed gRPC server and

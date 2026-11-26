@@ -368,6 +368,7 @@ POST /api/v1/barrier/shamir/unseal-share permission barrier:unseal-share
 POST /api/v1/barrier/shamir/unseal-shares permission barrier:unseal-share
 POST /api/v1/barrier/unseal permission tenant_barrier:unseal
 POST /api/v1/batch/delete permission batch:execute
+POST /api/v1/batch/execute permission batch:execute
 POST /api/v1/batch/get permission batch:execute
 POST /api/v1/batch/put permission batch:execute
 POST /api/v1/bootstrap/auto permission trust:write
@@ -375,7 +376,7 @@ POST /api/v1/bootstrap/dane permission trust:write
 POST /api/v1/bootstrap/noise permission trust:write
 POST /api/v1/bootstrap/spki permission trust:write
 POST /api/v1/cache/clear permission admin:capabilities
-POST /api/v1/certificate/chain permission certs:generate
+POST /api/v1/certificate/chain permission trust:write
 POST /api/v1/certificate/cross-sign permission ca:create
 POST /api/v1/certificate/device-identity permission certs:generate
 POST /api/v1/certificate/issue permission certs:generate
@@ -442,6 +443,8 @@ POST /api/v1/kms/keys/{name}/export permission keys:create
 POST /api/v1/kms/keys/{name}/revoke permission keys:delete
 POST /api/v1/kms/keys/{name}/rotate permission keys:create
 POST /api/v1/kv/{type}/{key} permission kv:put
+POST /api/v1/kv/{type}/{key}/compare-and-swap permission kv:put
+POST /api/v1/kv/{type}/{key}/put-if-absent permission kv:put
 POST /api/v1/messaging/channels permission messaging:channel_create
 POST /api/v1/messaging/publish-delta/{channel} permission messaging:publish
 POST /api/v1/messaging/publish/{channel} permission messaging:publish
@@ -559,6 +562,10 @@ POST /api/v1/xkms/ca/crl permission certs:revoke
 POST /api/v1/xkms/ca/issue permission certs:generate
 POST /api/v1/xkms/ca/revoke permission certs:revoke
 POST /api/v1/xkms/ca/sign permission certs:generate
+POST /api/v1/xkms/ca/tcg/ak permission certs:generate
+POST /api/v1/xkms/ca/tcg/ek permission certs:generate
+POST /api/v1/xkms/ca/tcg/enroll permission certs:generate
+POST /api/v1/xkms/ca/tcg/sign-csr permission certs:generate
 POST /api/v1/xkms/certs permission certs:generate
 POST /api/v1/xkms/fido2/authenticate/begin permission user_authfactors:get
 POST /api/v1/xkms/fido2/authenticate/finish permission user_authfactors:get

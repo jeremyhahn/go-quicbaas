@@ -202,7 +202,13 @@ func xkmsKeyOwnerRecord(identity string) string { return xkmsKeyOwnerRecordPrefi
 func (kb *XKMSBackend) xkmsKeyIdentity(attrs *kctypes.KeyAttributes) string {
 	algorithm := kb.attrsToAlgorithmString(attrs)
 	if attrs.SymmetricAlgorithm != "" {
-		return string(kb.backendType) + ":encryption:" + kb.algorithmToKeyIDFormat(algorithm) + ":" + attrs.CN
+		// The same kid buildFullKeyID builds, under the type the key is
+		// stored under: the legacy type's segment only for a legacy key.
+		segment := symmetricKeyTypeSegment
+		if attrs.KeyType == legacySymmetricKeyType {
+			segment = legacySymmetricKeyTypeSegment
+		}
+		return string(kb.backendType) + ":" + segment + ":" + kb.algorithmToKeyIDFormat(algorithm) + ":" + attrs.CN
 	}
 	return string(kb.backendType) + ":signing:" + kb.signingAlgorithmToKeyIDFormat(algorithm) + ":" + attrs.CN
 }

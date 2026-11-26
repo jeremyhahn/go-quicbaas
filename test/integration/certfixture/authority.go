@@ -246,8 +246,8 @@ type ClientFixture struct {
 	File string `json:"file"`
 
 	// CommonName is the subject common name. For a login credential this is
-	// the principal's email, which is also what the SPIFFE SAN's name segment
-	// carries.
+	// the principal's email; the SPIFFE SAN's name segment carries it escaped
+	// by service.SPIFFEWorkloadName (so "@" becomes "_40").
 	CommonName string `json:"common_name"`
 
 	// Email, when set, is added as an rfc822Name SAN so a server-side identity

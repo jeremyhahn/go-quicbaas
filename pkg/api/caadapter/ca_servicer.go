@@ -1,0 +1,566 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package caadapter
+
+import (
+	"context"
+	"encoding/pem"
+	"errors"
+	"math/big"
+	"strings"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+)
+
+// XKMSCAServicer adapts an xkmssdk.TrustedCA (native Go types, used by the
+// embedded CA) to the transport-level CAService interface shape expected by
+// go-xkms's REST CA handlers. The adapter owns ZERO CA logic — every method
+// delegates straight to the embedded TrustedCA; only request/response types
+// are translated.
+//
+// This adapter exists because go-quicbaas embeds the CA in-process
+// (s.xkmsCA in pkg/server) while the go-xkms REST handlers
+// (pkg/api/rest/handlers_ca.go) operate on the transport.*Request/Response
+// shapes over the CAService interface. Structurally,
+// go-xkms/pkg/api/rest.CAHandlers accepts any type that matches the
+// 7-method CAService surface; XKMSCAServicer is that type.
+//
+// NOTE: We purposefully do NOT reimplement the handler HTTP layer —
+// CAHandlers from go-xkms handles validation, error mapping, logging, and
+// status codes. Instantiating CAHandlers with this adapter reuses all of
+// that production-tested code.
+type XKMSCAServicer struct {
+	ca xkmssdk.TrustedCA
+
+	// spiffeTrustDomain is the operator-configured SPIFFE trust domain. When
+	// non-empty alongside a request TenantID, the adapter instructs the
+	// embedded CA to stamp a tenant-scoped SPIFFE URI SAN onto the issued
+	// leaf so mTLS/PIV login can derive the tenant from the verified peer
+	// certificate. Empty disables SPIFFE SAN synthesis.
+	spiffeTrustDomain string
+}
+
+// Compile-time guarantee that the adapter satisfies the exported
+// CAService interface. Because go-xkms's unexported caServicer interface
+// (pkg/api/rest/handlers_ca.go) has the IDENTICAL method set, Go's
+// structural interface satisfaction accepts this adapter for CAHandlers
+// construction.
+var _ xkmstransport.CAService = (*XKMSCAServicer)(nil)
+
+// NewXKMSCAServicer wires the adapter around an initialized TrustedCA.
+// Returns nil when ca is nil so callers can skip handler registration.
+func NewXKMSCAServicer(ca xkmssdk.TrustedCA, spiffeTrustDomain string) *XKMSCAServicer {
+	if ca == nil {
+		return nil
+	}
+	return &XKMSCAServicer{ca: ca, spiffeTrustDomain: spiffeTrustDomain}
+}
+
+// NewXKMSCAService returns the go-xkms CAService adapter the REST
+// /api/v1/xkms/ca/* routes serve, so the server's other transports (MCP
+// xkms.ca.*) serve the same go-xkms CA with the same tenant and SPIFFE rules
+// (#1330). It returns nil when ca is nil.
+func NewXKMSCAService(ca xkmssdk.TrustedCA, spiffeTrustDomain string) xkmstransport.CAService {
+	s := NewXKMSCAServicer(ca, spiffeTrustDomain)
+	if s == nil {
+		return nil
+	}
+	return s
+}
+
+// GetCABundle returns the CA bundle as PEM bytes plus individual DER
+// certificates, matching the go-xkms REST contract.
+func (a *XKMSCAServicer) GetCABundle(_ context.Context, _ *xkmstransport.GetCABundleRequest) (*xkmstransport.GetCABundleResponse, error) {
+	bundlePEM, err := a.ca.CABundle()
+	if err != nil {
+		return nil, &XKMSCAOperationError{Op: "get bundle", Err: err}
+	}
+
+	// Decompose the PEM bundle into individual DER certificates so
+	// clients can inspect them without re-parsing PEM.
+	certs := make([][]byte, 0, 2)
+	rest := bundlePEM
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type == "CERTIFICATE" {
+			der := make([]byte, len(block.Bytes))
+			copy(der, block.Bytes)
+			certs = append(certs, der)
+		}
+	}
+
+	return &xkmstransport.GetCABundleResponse{
+		BundlePEM:    bundlePEM,
+		Certificates: certs,
+		ContentType:  "application/x-pem-file",
+	}, nil
+}
+
+// GetCACertificate returns the issuing CA certificate in PEM form along
+// with its subject, issuer, serial, and validity metadata.
+func (a *XKMSCAServicer) GetCACertificate(_ context.Context, _ *xkmstransport.GetCACertificateRequest) (*xkmstransport.GetCACertificateResponse, error) {
+	cert, err := a.ca.CACertificate()
+	if err != nil {
+		return nil, &XKMSCAOperationError{Op: "get certificate", Err: err}
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: cert.Raw,
+	})
+
+	return &xkmstransport.GetCACertificateResponse{
+		CertificatePEM: certPEM,
+		Subject:        cert.Subject.String(),
+		Issuer:         cert.Issuer.String(),
+		SerialNumber:   cert.SerialNumber.Text(16),
+		NotBefore:      cert.NotBefore.UTC().Format("2006-01-02T15:04:05Z"),
+		NotAfter:       cert.NotAfter.UTC().Format("2006-01-02T15:04:05Z"),
+		IsCA:           cert.IsCA,
+	}, nil
+}
+
+// SignCSR signs a CSR and returns the leaf and chain PEMs. Profile and
+// ValidityDays flow into SignOptions so the CA can apply the matching
+// certificate profile.
+func (a *XKMSCAServicer) SignCSR(ctx context.Context, req *xkmstransport.SignCSRRequest) (*xkmstransport.SignCSRResponse, error) {
+	if req == nil {
+		return nil, ErrXKMSCANilRequest
+	}
+	if len(req.CSRPEM) == 0 {
+		return nil, ErrXKMSCAMissingCSR
+	}
+	// go-xkms's XKMSService.SignCSR verifies a supplied attestation proof
+	// and refuses one it has no verifier for. This facade has no
+	// attestation verifier, so a request that carries a proof is refused,
+	// never signed as if the proof were absent.
+	if SignCSRCarriesAttestation(req) {
+		return nil, ErrXKMSCAAttestationUnsupported
+	}
+
+	tenantID, err := a.resolveTenant(ctx, "sign csr", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, tenantID, service.CSRCommonName(req.CSRPEM))
+
+	cert, err := a.ca.SignCSR(ctx, req.CSRPEM, opts)
+	if err != nil {
+		return nil, &XKMSCAOperationError{Op: "sign csr", Err: err}
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: cert.Raw,
+	})
+
+	// Include the issuing CA cert so the client can build a chain
+	// without issuing a second GetCACertificate request.
+	var chainPEM []byte
+	if caCert, caErr := a.ca.CACertificate(); caErr == nil {
+		chainPEM = pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: caCert.Raw,
+		})
+	}
+
+	return &xkmstransport.SignCSRResponse{
+		CertificatePEM: certPEM,
+		ChainPEM:       chainPEM,
+		SerialNumber:   cert.SerialNumber.Text(16),
+	}, nil
+}
+
+// applyKeypairSPIFFE folds the operator-configured SPIFFE trust domain, the
+// request tenant, and the profile-derived SPIFFE workload kind onto a keypair-
+// issuance CertificateRequest. It is the generate-and-distribute counterpart of
+// signOptionsWithSPIFFE: the CA forwards these request fields into the same
+// spiffe.BuildURI synthesis site SignCSR uses. When the trust domain or tenant
+// is empty no SPIFFE SAN is requested (single-domain / pre-broker mode).
+func (a *XKMSCAServicer) applyKeypairSPIFFE(certReq *xkmssdk.TrustedCACertificateRequest, profile, tenantID string) {
+	stampKeypairSPIFFE(certReq, profile, tenantID, a.spiffeTrustDomain)
+}
+
+// stampKeypairSPIFFE sets the issuing tenant on certReq and, when
+// spiffeTrustDomain and tenantID are both set, the tenant SPIFFE SAN fields.
+func stampKeypairSPIFFE(certReq *xkmssdk.TrustedCACertificateRequest, profile, tenantID, spiffeTrustDomain string) {
+	certReq.TenantID = tenantID
+	if spiffeTrustDomain == "" || tenantID == "" {
+		return
+	}
+	certReq.SPIFFETrustDomain = spiffeTrustDomain
+	certReq.SPIFFEKind = service.SPIFFEKindForProfile(profile)
+	// The subject CN is kept as requested; the SAN's workload name is derived
+	// from it as a valid SPIFFE path segment (#1894).
+	certReq.SPIFFEName = service.SPIFFEWorkloadName(certReq.Subject.CommonName)
+}
+
+// KeypairCertificateRequest builds the keypair-issuance request every
+// transport sends the CA: subject, prefixed SANs ("DNS:", "IP:", "Email:",
+// "URI:"), validity, the issuing tenant, and, when spiffeTrustDomain and
+// tenantID are both set, the tenant SPIFFE SAN fields (kind from the
+// profile, workload name from the common name).
+func KeypairCertificateRequest(commonName, organization string, sans []string, validityDays int, profile, tenantID, spiffeTrustDomain string) *xkmssdk.TrustedCACertificateRequest {
+	certReq := &xkmssdk.TrustedCACertificateRequest{
+		Subject: xkmssdk.TrustedCASubject{
+			CommonName:   commonName,
+			Organization: organization,
+		},
+		SANS:  parseSANs(sans),
+		Valid: validityDays,
+	}
+	stampKeypairSPIFFE(certReq, profile, tenantID, spiffeTrustDomain)
+	return certReq
+}
+
+// signOptionsWithSPIFFE builds the TrustedCASignOptions for a CSR signing
+// operation, folding in the operator-configured SPIFFE trust domain, the
+// request tenant, and the SPIFFE workload kind derived from the certificate
+// profile. When the trust domain or tenant is empty the CA omits the SPIFFE
+// SAN (single-domain / pre-broker mode).
+func (a *XKMSCAServicer) signOptionsWithSPIFFE(profile string, validityDays int, tenantID, commonName string) *xkmssdk.TrustedCASignOptions {
+	opts := &xkmssdk.TrustedCASignOptions{
+		Profile:      profile,
+		ValidityDays: validityDays,
+		TenantID:     tenantID,
+	}
+	if a.spiffeTrustDomain != "" && tenantID != "" {
+		opts.SPIFFETrustDomain = a.spiffeTrustDomain
+		opts.SPIFFEKind = service.SPIFFEKindForProfile(profile)
+		opts.SPIFFEName = service.SPIFFEWorkloadName(commonName)
+	}
+	return opts
+}
+
+// resolveTenant returns the tenant SignCSR and IssueCertificate stamp into
+// the SPIFFE URI SAN. The request's tenant_id is caller-supplied, so it is
+// resolved against the tenant bound to ctx (tenantctx.Target): empty means
+// the caller's own tenant, and a foreign one is refused. A request that
+// names no tenant while SPIFFE synthesis is off needs no tenant, because
+// nothing is stamped.
+func (a *XKMSCAServicer) resolveTenant(ctx context.Context, op, requested string) (string, error) {
+	if requested == "" && a.spiffeTrustDomain == "" {
+		// Nothing to stamp and no tenant named, so no tenant is required. A
+		// tenant that is bound is still recorded as the issuing tenant, so
+		// the revoke binding lets that tenant revoke the certificate later.
+		if tenantID, err := tenantctx.FromContext(ctx, op); err == nil {
+			return tenantID, nil
+		}
+		return "", nil
+	}
+	tenantID, err := tenantctx.Target(ctx, op, requested)
+	if err != nil {
+		return "", &XKMSCATenantError{Op: op, Err: err}
+	}
+	return tenantID, nil
+}
+
+// IssueCertificate asks the CA to generate a keypair and sign a certificate for
+// it. Mirrors XKMSService.IssueCertificate in go-xkms so REST clients see a
+// consistent surface — including the part that surprises people: the key is
+// generated INSIDE the CA's keystore as a non-exportable opaque handle, so
+// PrivateKeyPEM comes back EMPTY on every go-xkms backend. This route hands the
+// caller a certificate, not a credential.
+//
+// A caller that needs to hold the private key uses the CSR-sign route
+// (/api/v1/xkms/ca/sign-csr) with a key it generated itself, which is what
+// `quicbaas fleet deploy` does, or the quicbaas certificate service
+// (Security().Certificate().IssueCertificate), which owns the
+// generate-and-distribute contract. See pkg/xkms/keygen.go for why the split
+// exists (go-quicbaas#910).
+func (a *XKMSCAServicer) IssueCertificate(ctx context.Context, req *xkmstransport.IssueCertificateRequest) (*xkmstransport.IssueCertificateResponse, error) {
+	if req == nil {
+		return nil, ErrXKMSCANilRequest
+	}
+	if req.CommonName == "" {
+		return nil, ErrXKMSCAMissingCommonName
+	}
+	tenantID, err := a.resolveTenant(ctx, "issue certificate", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Stamp the tenant-scoped SPIFFE URI SAN on the generate-and-distribute
+	// (keypair) path, symmetric with signOptionsWithSPIFFE on the CSR-sign
+	// path. The CertificateRequest SPIFFE fields are forwarded by the CA into
+	// the same spiffe.BuildURI synthesis site SignCSR uses, so both paths emit
+	// the identical canonical SAN.
+	certReq := KeypairCertificateRequest(req.CommonName, req.Organization, req.SANs, req.ValidityDays, req.Profile, tenantID, a.spiffeTrustDomain)
+
+	// Route through IssueCertificateWithProfile when a profile is named so
+	// the CA picks up the profile's KeyUsage/ExtKeyUsage/validity defaults.
+	// Otherwise fall back to IssueCertificate, which uses the CA's
+	// built-in heuristics (server cert when DNS SANs exist, client when
+	// only email SANs, etc.).
+	var issued *xkmssdk.TrustedCAIssuedCertificate
+	if strings.TrimSpace(req.Profile) != "" {
+		issued, err = a.ca.IssueCertificateWithProfile(ctx, certReq, req.Profile)
+	} else {
+		issued, err = a.ca.IssueCertificate(ctx, certReq)
+	}
+	if err != nil {
+		return nil, &XKMSCAOperationError{Op: "issue certificate", Err: err}
+	}
+	if issued == nil {
+		return nil, &XKMSCAOperationError{Op: "issue certificate", Err: errors.New("ca returned nil certificate")}
+	}
+
+	// go-xkms reports the issuing chain in CACertificatePEM and leaves
+	// ChainPEM empty; use ChainPEM only when CACertificatePEM is absent, as
+	// the go-xkms service adapter does.
+	chain := issued.CACertificatePEM
+	if len(chain) == 0 {
+		chain = issued.ChainPEM
+	}
+
+	return &xkmstransport.IssueCertificateResponse{
+		CertificatePEM: append([]byte(nil), issued.CertificatePEM...),
+		ChainPEM:       append([]byte(nil), chain...),
+		PrivateKeyPEM:  append([]byte(nil), issued.PrivateKeyPEM...),
+		SerialNumber:   issued.SerialNumber.Text(16),
+	}, nil
+}
+
+// RevokeCertificate marks a serial as revoked using the RFC 5280 reason
+// code supplied by the caller.
+func (a *XKMSCAServicer) RevokeCertificate(ctx context.Context, req *xkmstransport.RevokeCertificateRequest) (*xkmstransport.RevokeCertificateResponse, error) {
+	if req == nil {
+		return nil, ErrXKMSCANilRequest
+	}
+	if req.SerialNumber == "" {
+		return nil, ErrXKMSCAMissingSerial
+	}
+
+	serial, err := parseHexSerial(req.SerialNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := service.BindToIssuingTenant(ctx, a.ca, serial); err != nil {
+		return nil, err
+	}
+
+	if err := a.ca.Revoke(ctx, serial, req.Reason); err != nil {
+		return nil, &XKMSCAOperationError{Op: "revoke", Err: err}
+	}
+
+	return &xkmstransport.RevokeCertificateResponse{
+		Success: true,
+		Message: "certificate " + req.SerialNumber + " revoked",
+	}, nil
+}
+
+// GenerateCRL produces a signed PEM-encoded CRL covering all currently
+// revoked certificates.
+func (a *XKMSCAServicer) GenerateCRL(ctx context.Context, _ *xkmstransport.GenerateCRLRequest) (*xkmstransport.GenerateCRLResponse, error) {
+	crlDER, err := a.ca.GenerateCRL(ctx)
+	if err != nil {
+		return nil, &XKMSCAOperationError{Op: "generate crl", Err: err}
+	}
+
+	crlPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "X509 CRL",
+		Bytes: crlDER,
+	})
+
+	return &xkmstransport.GenerateCRLResponse{
+		CRLPEM: crlPEM,
+	}, nil
+}
+
+// CRL returns the CA's current DER-encoded CRL. The CA regenerates and
+// persists it first only when none has been published yet or the published
+// one's NextUpdate has passed; otherwise it serves the persisted artifact
+// without signing.
+func (a *XKMSCAServicer) CRL(ctx context.Context) ([]byte, error) {
+	crlDER, err := a.ca.CRL(ctx)
+	if err != nil {
+		return nil, &XKMSCAOperationError{Op: "get crl", Err: err}
+	}
+	return crlDER, nil
+}
+
+// IsRevoked reports whether the given serial number has been revoked.
+func (a *XKMSCAServicer) IsRevoked(_ context.Context, req *xkmstransport.IsRevokedRequest) (*xkmstransport.IsRevokedResponse, error) {
+	if req == nil {
+		return nil, ErrXKMSCANilRequest
+	}
+	if req.SerialNumber == "" {
+		return nil, ErrXKMSCAMissingSerial
+	}
+
+	serial, err := parseHexSerial(req.SerialNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	revoked, err := a.ca.IsRevoked(serial)
+	if err != nil {
+		return nil, &XKMSCAOperationError{Op: "is revoked", Err: err}
+	}
+
+	resp := &xkmstransport.IsRevokedResponse{
+		Revoked: revoked,
+	}
+	if revoked {
+		resp.Message = "certificate is revoked"
+	} else {
+		resp.Message = "certificate is not revoked"
+	}
+	return resp, nil
+}
+
+// parseSANs splits prefixed SAN strings ("DNS:x", "IP:y", "Email:z",
+// "URI:u") into a TrustedCASubjectAlternativeNames struct. Entries with
+// no prefix default to DNS, matching the go-xkms behaviour.
+func parseSANs(raw []string) *xkmssdk.TrustedCASubjectAlternativeNames {
+	if len(raw) == 0 {
+		return nil
+	}
+	sans := &xkmssdk.TrustedCASubjectAlternativeNames{}
+	for _, s := range raw {
+		trimmed := strings.TrimSpace(s)
+		if trimmed == "" {
+			continue
+		}
+		if idx := strings.IndexByte(trimmed, ':'); idx > 0 {
+			kind := strings.ToLower(trimmed[:idx])
+			value := trimmed[idx+1:]
+			switch kind {
+			case "dns":
+				sans.DNS = append(sans.DNS, value)
+			case "ip":
+				sans.IPs = append(sans.IPs, value)
+			case "email":
+				sans.Email = append(sans.Email, value)
+			case "uri":
+				sans.URIs = append(sans.URIs, value)
+			default:
+				sans.DNS = append(sans.DNS, trimmed)
+			}
+			continue
+		}
+		sans.DNS = append(sans.DNS, trimmed)
+	}
+	return sans
+}
+
+// parseHexSerial parses a hex serial number string, stripping optional
+// 0x/0X prefix and returning a typed error on malformed input.
+func parseHexSerial(s string) (*big.Int, error) {
+	serialStr := strings.TrimPrefix(s, "0x")
+	serialStr = strings.TrimPrefix(serialStr, "0X")
+	serial := new(big.Int)
+	if _, ok := serial.SetString(serialStr, 16); !ok {
+		return nil, &XKMSCAInvalidSerialError{Value: s}
+	}
+	return serial, nil
+}
+
+// =============================================================================
+// Typed errors
+// =============================================================================
+
+// ErrXKMSCANilRequest is returned when a CA operation receives a nil request.
+var ErrXKMSCANilRequest = errors.New("xkms ca: request is required")
+
+// ErrXKMSCAMissingCSR is returned when SignCSR is called with empty CSR PEM.
+var ErrXKMSCAMissingCSR = errors.New("xkms ca: csr pem is required")
+
+// ErrXKMSCAAttestationUnsupported is returned when SignCSR is called with
+// an attestation proof: the node's CA facade has no attestation verifier,
+// so it refuses the request instead of signing without verifying it.
+var ErrXKMSCAAttestationUnsupported = errors.New("xkms ca: csr attestation is not supported by this CA")
+
+// SignCSRCarriesAttestation reports whether req carries any of go-xkms's
+// attestation fields.
+func SignCSRCarriesAttestation(req *xkmstransport.SignCSRRequest) bool {
+	return req != nil && (req.AttestationFormat != "" || len(req.AttestationChain) > 0 ||
+		len(req.AttestationData) > 0 || len(req.AttestationSig) > 0 || len(req.AttestationNonce) > 0)
+}
+
+// ErrXKMSCAMissingCommonName is returned when IssueCertificate is called
+// without a common name.
+var ErrXKMSCAMissingCommonName = errors.New("xkms ca: common name is required")
+
+// ErrXKMSCAMissingSerial is returned when a revocation operation is called
+// without a serial number.
+var ErrXKMSCAMissingSerial = errors.New("xkms ca: serial number is required")
+
+// XKMSCAOperationError wraps an underlying CA failure with the operation
+// name for operator diagnostics.
+type XKMSCAOperationError struct {
+	// Op is the short operation label ("sign csr", "issue certificate", ...).
+	Op string
+
+	// Err is the underlying CA error. Always non-nil.
+	Err error
+}
+
+// Error implements the error interface.
+func (e *XKMSCAOperationError) Error() string {
+	return "xkms ca: " + e.Op + ": " + e.Err.Error()
+}
+
+// Unwrap exposes the underlying error for errors.Is / errors.As.
+func (e *XKMSCAOperationError) Unwrap() error {
+	return e.Err
+}
+
+// XKMSCAInvalidSerialError is returned when a serial-number hex string
+// cannot be decoded.
+// XKMSCATenantError reports that SignCSR or IssueCertificate refused the
+// request's tenant: the caller named a tenant other than its own
+// (tenantctx.CrossTenantError), or no tenant is bound to the call
+// (tenantctx.MissingTenantError). Like go-xkms's own tenant binding it
+// renders and unwraps to qrdbsdk.ErrTenantMissing, which go-xkms's CA
+// handlers answer with their not-found status, so a probe cannot tell a
+// foreign tenant from a nonexistent one. The typed cause stays reachable
+// through errors.As.
+type XKMSCATenantError struct {
+	// Op is the short operation label ("sign csr", "issue certificate").
+	Op string
+
+	// Err is the tenantctx refusal. Always non-nil.
+	Err error
+}
+
+// Error returns qrdbsdk.ErrTenantMissing's message verbatim.
+func (e *XKMSCATenantError) Error() string {
+	return qrdbsdk.ErrTenantMissing.Error()
+}
+
+// Unwrap exposes both the tenantctx refusal and qrdbsdk.ErrTenantMissing.
+func (e *XKMSCATenantError) Unwrap() []error {
+	return []error{e.Err, qrdbsdk.ErrTenantMissing}
+}
+
+type XKMSCAInvalidSerialError struct {
+	// Value is the malformed serial string.
+	Value string
+}
+
+// Error implements the error interface.
+func (e *XKMSCAInvalidSerialError) Error() string {
+	return "xkms ca: invalid serial number format: " + e.Value
+}

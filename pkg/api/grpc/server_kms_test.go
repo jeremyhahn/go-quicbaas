@@ -67,7 +67,7 @@ func (m *mockKMSManager) GenerateKey(ctx context.Context, attrs *xkmssdk.KeyAttr
 	return nil, nil
 }
 
-func (m *mockKMSManager) ImportKey(ctx context.Context, keyID string, material []byte, algorithm string) (interface{}, error) {
+func (m *mockKMSManager) ImportKey(ctx context.Context, keyID string, material []byte, algorithm string, _ bool) (interface{}, error) {
 	if m.importKeyFunc != nil {
 		return m.importKeyFunc(ctx, keyID, material, algorithm)
 	}

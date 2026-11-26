@@ -1526,6 +1526,8 @@ func validateCreatePolicyRequest(tenantID string, req *CreatePolicyRequest) erro
 	if req.Name == "" {
 		return errors.NewInvalidInput("iam.Policy.Create", "policy name is required")
 	}
+	// gRPC and MCP carry the rules inside SpecYAML and refuse structured
+	// rules on create, so a create needs rules in either place.
 	if len(req.Rules) == 0 && len(req.SpecYAML) == 0 {
 		return errors.NewInvalidInput("iam.Policy.Create", "at least one rule or spec_yaml is required")
 	}

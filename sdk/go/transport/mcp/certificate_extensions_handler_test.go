@@ -161,3 +161,18 @@ func TestTransformIssueDeviceIdentityResponse(t *testing.T) {
 	assert.Equal(t, []byte("chain"), typed.ChainPEM)
 	assert.Equal(t, "0a", typed.SerialNumber)
 }
+
+func TestTransformIssueDeviceIdentityResponse_CarriesTheIAK(t *testing.T) {
+	h := &certificateHandler{}
+
+	resp, err := h.transformIssueDeviceIdentityResponse(map[string]interface{}{
+		"certificate_pem":     "idevid-cert",
+		"iak_certificate_pem": "iak-cert",
+	})
+	require.NoError(t, err)
+
+	typed, ok := resp.(*certificate.DeviceIdentityResponse)
+	require.True(t, ok, "got %T", resp)
+	assert.Equal(t, []byte("idevid-cert"), typed.CertificatePEM)
+	assert.Equal(t, []byte("iak-cert"), typed.IAKCertificatePEM)
+}
