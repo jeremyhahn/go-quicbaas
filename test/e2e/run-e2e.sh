@@ -65,8 +65,10 @@ if [ "${QUICBAAS_E2E_SANDBOX:-0}" = "1" ]; then
   fi
 fi
 
+printf 'iam:\n  spiffe_trust_domain: quicbaas.example.test\n' > "$DATA_DIR/e2e-config.yaml"
 echo "[run-e2e] starting quicbaasd (backend=$BACKEND ollama=$OLLAMA_URL project=$PROJECT sandbox=${QUICBAAS_E2E_SANDBOX:-0})"
 quicbaasd start \
+  --config "$DATA_DIR/e2e-config.yaml" \
   --http-port "$PORT" --grpc-port 0 \
   --unix-socket "$SOCK" \
   --data-dir "$DATA_DIR" \
