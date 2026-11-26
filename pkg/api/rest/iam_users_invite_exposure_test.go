@@ -64,6 +64,7 @@ func TestCreateUser_StillExposesInviteTokenOnce(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/",
 		strings.NewReader(`{"email":"bob@acme.com","username":"bob","name":"Bob","roles":["role-member"]}`))
 	req = req.WithContext(callerRouteContext(req.Context(), rctx))
+	req = withRoleAssignCallerIn(handler.server, req, "acme")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -212,6 +213,7 @@ func createPendingUser(t *testing.T, handler *IAMHandler, body string) map[strin
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/", strings.NewReader(body))
 	req = req.WithContext(callerRouteContext(req.Context(), rctx))
+	req = withRoleAssignCallerIn(handler.server, req, "acme")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
