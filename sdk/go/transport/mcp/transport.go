@@ -381,6 +381,10 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	if verb, ok := ollamaVerbs[method]; ok && isMCPOllamaService(service) {
 		return t.requestToolVerb(ctx, "mcp.ollama."+method, verb, reqBody)
 	}
+	// Health probes decode into the health client's response type.
+	if verb, ok := healthVerbs[method]; ok && isMCPHealthService(service) {
+		return t.requestToolVerb(ctx, "mcp.health."+method, verb, reqBody)
+	}
 
 	// These KMS verbs decode into the client types; the rest keep the
 	// generic path below.
@@ -1173,6 +1177,11 @@ func ToolName(service, method string) string {
 	}
 	if isMCPOllamaService(service) {
 		if verb, ok := ollamaVerbs[method]; ok {
+			return verb.tool
+		}
+	}
+	if isMCPHealthService(service) {
+		if verb, ok := healthVerbs[method]; ok {
 			return verb.tool
 		}
 	}
