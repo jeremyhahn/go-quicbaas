@@ -14790,7 +14790,7 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x19PROVIDER_TYPE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12PROVIDER_TYPE_OIDC\x10\x01\x12\x16\n" +
 	"\x12PROVIDER_TYPE_SAML\x10\x02\x12\x18\n" +
-	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\xb52\n" +
+	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\xd51\n" +
 	"\n" +
 	"IAMService\x12a\n" +
 	"\fCreateTenant\x12$.quicbaas.iam.v1.CreateTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\"\x12\xc2\xf3\x18\x0etenants:create\x12Y\n" +
@@ -14819,15 +14819,15 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\tGetInvite\x12!.quicbaas.iam.v1.GetInviteRequest\x1a\".quicbaas.iam.v1.GetInviteResponse\x12i\n" +
 	"\x12ActivateFIDO2Begin\x12&.quicbaas.iam.v1.ActivateInviteRequest\x1a+.quicbaas.iam.v1.ActivateFIDO2BeginResponse\x12k\n" +
 	"\x13ActivateFIDO2Finish\x12+.quicbaas.iam.v1.ActivateFIDO2FinishRequest\x1a'.quicbaas.iam.v1.ActivateInviteResponse\x12[\n" +
-	"\vActivatePIV\x12#.quicbaas.iam.v1.ActivatePIVRequest\x1a'.quicbaas.iam.v1.ActivateInviteResponse\x12[\n" +
+	"\vActivatePIV\x12#.quicbaas.iam.v1.ActivatePIVRequest\x1a'.quicbaas.iam.v1.ActivateInviteResponse\x12G\n" +
 	"\n" +
-	"CreateRole\x12\".quicbaas.iam.v1.CreateRoleRequest\x1a\x15.quicbaas.iam.v1.Role\"\x12\xc2\xf3\x18\x0etenants:create\x12S\n" +
-	"\aGetRole\x12\x1f.quicbaas.iam.v1.GetRoleRequest\x1a\x15.quicbaas.iam.v1.Role\"\x10\xc2\xf3\x18\ftenants:read\x12[\n" +
+	"CreateRole\x12\".quicbaas.iam.v1.CreateRoleRequest\x1a\x15.quicbaas.iam.v1.Role\x12A\n" +
+	"\aGetRole\x12\x1f.quicbaas.iam.v1.GetRoleRequest\x1a\x15.quicbaas.iam.v1.Role\x12G\n" +
 	"\n" +
-	"UpdateRole\x12\".quicbaas.iam.v1.UpdateRoleRequest\x1a\x15.quicbaas.iam.v1.Role\"\x12\xc2\xf3\x18\x0etenants:create\x12i\n" +
+	"UpdateRole\x12\".quicbaas.iam.v1.UpdateRoleRequest\x1a\x15.quicbaas.iam.v1.Role\x12U\n" +
 	"\n" +
-	"DeleteRole\x12\".quicbaas.iam.v1.DeleteRoleRequest\x1a#.quicbaas.iam.v1.DeleteRoleResponse\"\x12\xc2\xf3\x18\x0etenants:delete\x12d\n" +
-	"\tListRoles\x12!.quicbaas.iam.v1.ListRolesRequest\x1a\".quicbaas.iam.v1.ListRolesResponse\"\x10\xc2\xf3\x18\ftenants:read\x12g\n" +
+	"DeleteRole\x12\".quicbaas.iam.v1.DeleteRoleRequest\x1a#.quicbaas.iam.v1.DeleteRoleResponse\x12R\n" +
+	"\tListRoles\x12!.quicbaas.iam.v1.ListRolesRequest\x1a\".quicbaas.iam.v1.ListRolesResponse\x12g\n" +
 	"\n" +
 	"AssignRole\x12\".quicbaas.iam.v1.AssignRoleRequest\x1a#.quicbaas.iam.v1.AssignRoleResponse\"\x10\xc2\xf3\x18\froles:assign\x12i\n" +
 	"\n" +

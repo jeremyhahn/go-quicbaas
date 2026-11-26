@@ -94,26 +94,11 @@ service IAMService {
   rpc ActivatePIV(ActivatePIVRequest) returns (ActivateInviteResponse);
 
   // Role management
-  // CreateRole mirrors REST POST /api/v1/tenants/{tenant_id}/roles/ and takes its tenants:create grant.
-  rpc CreateRole(CreateRoleRequest) returns (Role) {
-      option (qrdb.v1.permission) = "tenants:create";
-  }
-  // GetRole mirrors REST GET /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:read grant.
-  rpc GetRole(GetRoleRequest) returns (Role) {
-      option (qrdb.v1.permission) = "tenants:read";
-  }
-  // UpdateRole mirrors REST PUT /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:create grant.
-  rpc UpdateRole(UpdateRoleRequest) returns (Role) {
-      option (qrdb.v1.permission) = "tenants:create";
-  }
-  // DeleteRole mirrors REST DELETE /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:delete grant.
-  rpc DeleteRole(DeleteRoleRequest) returns (DeleteRoleResponse) {
-      option (qrdb.v1.permission) = "tenants:delete";
-  }
-  // ListRoles mirrors REST GET /api/v1/tenants/{tenant_id}/roles/ and takes its tenants:read grant.
-  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse) {
-      option (qrdb.v1.permission) = "tenants:read";
-  }
+  rpc CreateRole(CreateRoleRequest) returns (Role);
+  rpc GetRole(GetRoleRequest) returns (Role);
+  rpc UpdateRole(UpdateRoleRequest) returns (Role);
+  rpc DeleteRole(DeleteRoleRequest) returns (DeleteRoleResponse);
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
   // AssignRole takes the tenant-scoped roles:assign grant, as the QuicBaaS
   // service's AssignRole does (REST's tenants:create grant is system-scope).
   rpc AssignRole(AssignRoleRequest) returns (AssignRoleResponse) {

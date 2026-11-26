@@ -55,16 +55,6 @@ var iamRESTParityGrants = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/TestPolicy": {"tenants", "create"},
 	// POST .../policies/validate
 	"/quicbaas.iam.v1.IAMService/ValidatePolicy": {"tenants", "create"},
-	// POST .../roles/
-	"/quicbaas.iam.v1.IAMService/CreateRole": {"tenants", "create"},
-	// GET .../roles/{role_id}
-	"/quicbaas.iam.v1.IAMService/GetRole": {"tenants", "read"},
-	// GET .../roles/
-	"/quicbaas.iam.v1.IAMService/ListRoles": {"tenants", "read"},
-	// PUT .../roles/{role_id}
-	"/quicbaas.iam.v1.IAMService/UpdateRole": {"tenants", "create"},
-	// DELETE .../roles/{role_id}
-	"/quicbaas.iam.v1.IAMService/DeleteRole": {"tenants", "delete"},
 	// POST .../users/{user_id}/roles. Differs from the REST route grant on
 	// purpose: REST's tenants:create is system-scope, so the gRPC RPC takes
 	// the tenant-scoped roles:assign grant a tenant admin holds.

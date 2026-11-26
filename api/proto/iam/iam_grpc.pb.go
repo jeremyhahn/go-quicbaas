@@ -135,19 +135,16 @@ type IAMServiceClient interface {
 	ActivateFIDO2Finish(ctx context.Context, in *ActivateFIDO2FinishRequest, opts ...grpc.CallOption) (*ActivateInviteResponse, error)
 	ActivatePIV(ctx context.Context, in *ActivatePIVRequest, opts ...grpc.CallOption) (*ActivateInviteResponse, error)
 	// Role management
-	// CreateRole mirrors REST POST /api/v1/tenants/{tenant_id}/roles/ and takes its tenants:create grant.
 	CreateRole(ctx context.Context, in *CreateRoleRequest, opts ...grpc.CallOption) (*Role, error)
-	// GetRole mirrors REST GET /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:read grant.
 	GetRole(ctx context.Context, in *GetRoleRequest, opts ...grpc.CallOption) (*Role, error)
-	// UpdateRole mirrors REST PUT /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:create grant.
 	UpdateRole(ctx context.Context, in *UpdateRoleRequest, opts ...grpc.CallOption) (*Role, error)
-	// DeleteRole mirrors REST DELETE /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:delete grant.
 	DeleteRole(ctx context.Context, in *DeleteRoleRequest, opts ...grpc.CallOption) (*DeleteRoleResponse, error)
-	// ListRoles mirrors REST GET /api/v1/tenants/{tenant_id}/roles/ and takes its tenants:read grant.
 	ListRoles(ctx context.Context, in *ListRolesRequest, opts ...grpc.CallOption) (*ListRolesResponse, error)
-	// AssignRole mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/roles and takes its tenants:create grant.
+	// AssignRole takes the tenant-scoped roles:assign grant, as the QuicBaaS
+	// service's AssignRole does (REST's tenants:create grant is system-scope).
 	AssignRole(ctx context.Context, in *AssignRoleRequest, opts ...grpc.CallOption) (*AssignRoleResponse, error)
-	// RevokeRole mirrors REST DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} and takes its tenants:delete grant.
+	// RevokeRole takes the tenant-scoped roles:unassign grant, as the QuicBaaS
+	// service's RevokeRole does (REST's tenants:delete grant is system-scope).
 	RevokeRole(ctx context.Context, in *RevokeRoleRequest, opts ...grpc.CallOption) (*RevokeRoleResponse, error)
 	// ReconcileRoles converges a tenant's stored built-in roles onto the
 	// definitions the running build carries. It takes the role-create family
@@ -901,19 +898,16 @@ type IAMServiceServer interface {
 	ActivateFIDO2Finish(context.Context, *ActivateFIDO2FinishRequest) (*ActivateInviteResponse, error)
 	ActivatePIV(context.Context, *ActivatePIVRequest) (*ActivateInviteResponse, error)
 	// Role management
-	// CreateRole mirrors REST POST /api/v1/tenants/{tenant_id}/roles/ and takes its tenants:create grant.
 	CreateRole(context.Context, *CreateRoleRequest) (*Role, error)
-	// GetRole mirrors REST GET /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:read grant.
 	GetRole(context.Context, *GetRoleRequest) (*Role, error)
-	// UpdateRole mirrors REST PUT /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:create grant.
 	UpdateRole(context.Context, *UpdateRoleRequest) (*Role, error)
-	// DeleteRole mirrors REST DELETE /api/v1/tenants/{tenant_id}/roles/{role_id} and takes its tenants:delete grant.
 	DeleteRole(context.Context, *DeleteRoleRequest) (*DeleteRoleResponse, error)
-	// ListRoles mirrors REST GET /api/v1/tenants/{tenant_id}/roles/ and takes its tenants:read grant.
 	ListRoles(context.Context, *ListRolesRequest) (*ListRolesResponse, error)
-	// AssignRole mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/roles and takes its tenants:create grant.
+	// AssignRole takes the tenant-scoped roles:assign grant, as the QuicBaaS
+	// service's AssignRole does (REST's tenants:create grant is system-scope).
 	AssignRole(context.Context, *AssignRoleRequest) (*AssignRoleResponse, error)
-	// RevokeRole mirrors REST DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} and takes its tenants:delete grant.
+	// RevokeRole takes the tenant-scoped roles:unassign grant, as the QuicBaaS
+	// service's RevokeRole does (REST's tenants:delete grant is system-scope).
 	RevokeRole(context.Context, *RevokeRoleRequest) (*RevokeRoleResponse, error)
 	// ReconcileRoles converges a tenant's stored built-in roles onto the
 	// definitions the running build carries. It takes the role-create family
