@@ -95,6 +95,45 @@ func TestLocalStorage_Close(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestObjstoreSettings_MapsSnakeCaseKeys: QuicBaaS backup configs use
+// snake_case keys (access_key, use_ssl, account_name, container, ...), while
+// go-objstore reads camelCase ones (accessKey, useSSL, accountName,
+// containerName). Without the mapping a MinIO target fails with "accessKey not
+// set" and S3/Azure silently drop credentials and path style.
+func TestObjstoreSettings_MapsSnakeCaseKeys(t *testing.T) {
+	got := objstoreSettings(map[string]string{
+		"bucket":            "b",
+		"access_key":        "ak",
+		"secret_access_key": "sk",
+		"use_ssl":           "false",
+		"use_path_style":    "true",
+		"account_name":      "acct",
+		"account_key":       "key",
+		"container":         "c",
+	})
+	want := map[string]string{
+		"accessKey":      "ak",
+		"secretKey":      "sk",
+		"useSSL":         "false",
+		"forcePathStyle": "true",
+		"accountName":    "acct",
+		"accountKey":     "key",
+		"containerName":  "c",
+		"bucket":         "b",
+	}
+	for k, v := range want {
+		assert.Equal(t, v, got[k], "key %q", k)
+	}
+
+	// An explicit go-objstore key wins over its snake_case alias, and the
+	// caller's map is not modified.
+	in := map[string]string{"accessKey": "explicit", "access_key": "alias"}
+	got = objstoreSettings(in)
+	assert.Equal(t, "explicit", got["accessKey"])
+	assert.NotContains(t, in, "secretKey")
+	assert.Len(t, in, 2)
+}
+
 func TestNewStorageBackend(t *testing.T) {
 	tests := []struct {
 		name        string
