@@ -61,6 +61,9 @@ func crossTransportRunners(t *testing.T) (mcpRunner, restRunner *TestRunner) {
 			}
 		case TransportREST:
 			restRunner = NewTestRunner(t, cfg.Transport, cfg.Address)
+			if err := restRunner.Authenticate(); err != nil {
+				t.Fatalf("REST authentication failed: %v", err)
+			}
 		}
 	}
 	if mcpRunner == nil || restRunner == nil {
