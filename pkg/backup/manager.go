@@ -638,7 +638,7 @@ func (m *BackupManager) restoreShardSnapshot(ctx context.Context, snapshot *Shar
 		if err := ctx.Err(); err != nil {
 			return api.NewOperationFailedError("restore key", err)
 		}
-		if err := m.storage.SetWithContext(ctx, kv.Key, kv.Value); err != nil {
+		if err := m.storage.Set(kv.Key, kv.Value); err != nil {
 			return api.NewOperationFailedError("restore key", err)
 		}
 	}
