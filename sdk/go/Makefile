@@ -1,12 +1,10 @@
-# QuicBaaS Go SDK Makefile
-# Build, test, and development targets
+# QuicBaaS Go SDK Makefile.
 
 .PHONY: all build test lint fmt vet clean \
         integration-test integration-test-up integration-test-down integration-test-logs \
         coverage coverage-html unit-test help
 
-# The repository's toolchain pins (GOLANGCI_VERSION, ...): the same file the
-# top-level Makefile and CI read, so the SDK lints with the same golangci-lint.
+# The repository's toolchain pins, so the SDK lints with the same golangci-lint.
 include $(dir $(lastword $(MAKEFILE_LIST)))../../pkg/version/toolchain.mk
 
 # Default target

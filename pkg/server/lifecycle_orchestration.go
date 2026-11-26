@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -517,60 +516,16 @@ func (s *Server) startOrchestration() error {
 			s.startOrchestrationSweeps(sweeper, leaseTTL/3)
 		}
 
-		// Wire container runtime if Docker/Podman is available.
-		containerRuntime, rtErr := orchestration.NewExecContainerRuntime(logAdapter)
-		if rtErr == nil {
-			s.orchContainerRuntime = containerRuntime
-			// The sandbox launches through the attestation service's own
-			// measured-launch runtime when there is one: a second instance
-			// over the same TPM and node measurement log would break replay.
-			// The sweep, the reaper and the worker-image build keep the exec
-			// engine.
-			sandboxRuntime := sandboxContainerRuntime(containerRuntime, service.MeasuredLaunchRuntime(s.Service()))
-			if sandboxRuntime != orchestration.ContainerRuntime(containerRuntime) {
-				s.logger.Info("Orchestration sandbox launches through the measured-launch runtime")
-			}
-			wirer.SetContainerRuntime(sandboxRuntime)
-			s.logger.Info("Container runtime attached to orchestration service")
-
-			// The shared per-tenant Go cache is the daemon's own mount, so no
-			// grant of the request mount policy may reach it.
-			goCache := orchestration.GoBuildCache{
-				Root: s.config.Orchestration.Sandbox.EffectiveGoCacheDir(s.config.Storage.DataDir),
-			}
-			if cacheErr := goCache.Validate(mountPolicy); cacheErr != nil {
-				return cacheErr
-			}
-			owner, ownerErr := orchestratorContainerOwner(s.config.Storage.DataDir)
-			if ownerErr != nil {
-				return ownerErr
-			}
-
-			// Give ACP backends access to the container runtime for sandboxed
-			// sessions, stamp their containers with this daemon's owner label
-			// and mount the shared Go cache into them.
-			for _, name := range []string{"claude", "codex", "opencode"} {
-				if b, ok := backends[name]; ok {
-					if acpBackend, ok := b.(*orchestration.ACPBackend); ok {
-						acpBackend.SetContainerRuntime(sandboxRuntime)
-						acpBackend.SetSandboxOwner(owner)
-						acpBackend.SetGoBuildCache(goCache)
-					}
-				}
-			}
-
-			// Nothing has spawned yet — jobs are recovered once every module
-			// has registered — so every container carrying this owner label
-			// is a previous run's orphan (go-quicbaas#750).
-			sweep, sweepErr := containerRuntime.SweepOwned(context.Background(), owner)
-			if sweepErr != nil {
-				return sweepErr
-			}
-			if len(sweep.Removed) > 0 {
-				s.logger.Infof("Swept %d orphaned worker container(s) left by a previous run", len(sweep.Removed))
-			}
-			if reapErr := s.startContainerReaper(containerRuntime, owner, backends); reapErr != nil {
-				return reapErr
+		// Sessions run in containers only on the fleet node agent co-located
+		// with this server, which holds the one in-process runtime. The
+		// orchestration service and its backends get no container engine: a
+		// sandboxed spawn is placed on the agent (resolveBackendForSpawn), and
+		// one left on a local backend fails closed under a Required policy.
+		// The worker image refresh keeps an engine for image builds alone,
+		// until those run in-process too.
+		if s.config.SDLC.WorkerImage.Enabled {
+			if engine, rtErr := orchestration.NewExecContainerRuntime(logAdapter); rtErr == nil {
+				s.orchContainerRuntime = engine
 			}
 		}
 
@@ -761,6 +716,7 @@ func (s *Server) startOrchestration() error {
 			// Shared with lifecycle_sdlc.go's attention inbox wiring — see
 			// Server.orchAccountStore.
 			s.orchAccountStore = accountStore
+			s.seedDefaultProviderAccounts(context.Background(), accountStore, accountProviders)
 			accountSecrets := orchestration.NewAccountSecretStore(s.secretsManager)
 			accountTokenOpts := []orchestration.AccountTokenManagerOption{
 				orchestration.WithAccountProviders(accountProviders),
@@ -1193,19 +1149,6 @@ func (s *Server) startOrchestrationSweeps(sweeper jobSweeper, interval time.Dura
 	s.logger.Infof("Job reaper and stall detector started (sweep=%s)", interval)
 }
 
-// orchestratorContainerOwner is the owner label the orchestrator's own
-// in-process backends stamp on their sandbox containers. It is distinct from
-// the embedded agent's (its data directory, unprefixed): the two hold
-// different backend sets, and a reaper asking one set about the other's
-// sessions would reap live workers.
-func orchestratorContainerOwner(dataDir string) (string, error) {
-	abs, err := filepath.Abs(dataDir)
-	if err != nil {
-		return "", &ServerCauseError{Message: "orchestration: container owner from data dir", Cause: err}
-	}
-	return "orchestrator:" + abs, nil
-}
-
 // sandboxContainerRuntime returns the runtime the orchestration sandbox (the
 // agent service and the ACP backends) launches through: the node's
 // measured-launch runtime when the service built one, else base. The
@@ -1216,61 +1159,6 @@ func sandboxContainerRuntime(base *orchestration.ExecContainerRuntime, measured 
 		return measured
 	}
 	return base
-}
-
-// startContainerReaper runs the container reaper over the orchestrator's own
-// sandbox containers until shutdown. A container is reaped once none of
-// backends holds its session and it is past the grace period.
-func (s *Server) startContainerReaper(
-	rt *orchestration.ExecContainerRuntime,
-	owner string,
-	backends map[string]orchestration.AgentBackend,
-) error {
-	reaper, err := orchestration.NewContainerReaper(orchestration.ContainerReaperConfig{
-		Runtime: rt,
-		Owner:   owner,
-		Live: func(sessionID string) bool {
-			for _, b := range backends {
-				if holder, ok := b.(interface{ HoldsSession(string) bool }); ok && holder.HoldsSession(sessionID) {
-					return true
-				}
-			}
-			return false
-		},
-		Logger: &logger.LoggerAdapter{Logger: s.logger},
-	})
-	if err != nil {
-		return err
-	}
-	ctx, stop := context.WithCancel(context.Background())
-	loop := &orchestrationSweeps{stop: stop, done: make(chan struct{})}
-	s.orchContainerReaper = loop
-	go func() {
-		defer close(loop.done)
-		ticker := time.NewTicker(orchestration.DefaultContainerReapInterval)
-		defer ticker.Stop()
-		reaper.Run(ctx, ticker.C, func(sweep orchestration.ContainerSweep, err error) {
-			if err != nil && ctx.Err() == nil {
-				s.logger.WithError(err).Warn("orchestration: container reap failed")
-			}
-			if len(sweep.Removed) > 0 {
-				s.logger.Infof("Reaped %d worker container(s) no live session held", len(sweep.Removed))
-			}
-		})
-	}()
-	s.logger.Infof("Container reaper started (owner=%s interval=%s grace=%s)",
-		owner, orchestration.DefaultContainerReapInterval, orchestration.DefaultContainerReapGrace)
-	return nil
-}
-
-// stopContainerReaper stops the container reaper and waits for it.
-func (s *Server) stopContainerReaper() {
-	if s.orchContainerReaper == nil {
-		return
-	}
-	s.orchContainerReaper.stop()
-	<-s.orchContainerReaper.done
-	s.orchContainerReaper = nil
 }
 
 // stopOrchestrationSweeps stops the sweep and waits for it.

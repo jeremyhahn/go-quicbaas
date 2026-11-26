@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -373,6 +374,10 @@ func runFleetServe(cmd *cobra.Command, args []string) error {
 	return waitForSignalAndStop(daemon)
 }
 
+// inProcessRuntimeDirName is the in-process container runtime's state
+// directory under the agent's work dir.
+const inProcessRuntimeDirName = "containers"
+
 // buildFleetRuntime constructs the daemon's Runtime over the supplied
 // backends, resolving --container-runtime into the engine that will host
 // sandboxed sessions. Without that resolution the runtime holds no engine and
@@ -383,9 +388,16 @@ func runFleetServe(cmd *cobra.Command, args []string) error {
 // usable engine — live in fleet.NewRuntime, so this path and the embedded
 // fleet node enforce one rule rather than two.
 func buildFleetRuntime(cfg *fleet.Config, backends map[string]orchestration.AgentBackend, logger interfaces.Logger) (*fleet.Runtime, error) {
-	containerRuntime, rtErr := fleet.ResolveContainerRuntime(cfg.EffectiveContainerRuntime(), logger)
+	// The in-process runtime keeps its state under this agent's own work dir,
+	// so two agents never share a runtime's state.
+	containerRuntime, rtErr := fleet.ResolveContainerRuntimeIn(cfg.EffectiveContainerRuntime(), filepath.Join(cfg.WorkDir, inProcessRuntimeDirName), logger)
 	if rtErr != nil {
 		return nil, rtErr
+	}
+	// A runtime that cannot give the sandbox network this agent is configured
+	// for would refuse every spawn, so the agent ends here, before it enrols.
+	if netErr := fleet.CheckContainerRuntimeNetwork(containerRuntime, cfg.EffectiveSandboxNetwork()); netErr != nil {
+		return nil, netErr
 	}
 	// A BACKEND THAT RUNS ITS OWN CONTAINERS NEEDS THE RUNTIME TOO, and this
 	// is the only place it exists. The CLI backends are handed one by
