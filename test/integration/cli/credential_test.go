@@ -20,8 +20,8 @@
 // The credential CLI delegates to Security().Credentials() over the
 // active SDK transport (rest / grpc / quic / mcp / unix / embedded —
 // every transport ships a real-wire implementation). Each server-touching
-// test first calls RequireCredentialAvailable, which skips after
-// validating the not-configured answer on a seal-off node.
+// test first calls RequireCredentialAvailable, which fails the leg if the
+// node answers not-configured.
 package cli
 
 import (

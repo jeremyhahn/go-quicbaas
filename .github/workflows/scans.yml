@@ -1,29 +1,4 @@
-# scans-template: v1.0.0 (customized) — the scans on main.
-# ci-template v1.42 makes the CI Gate hermetic (owner ruling 742 (1)), so
-# every check that fails on the state of the world rather than on a change
-# runs here, and only here: `make deps-check`, `make security` (gosec,
-# govulncheck, go mod verify, trivy fs) and `trivy image` of the integration
-# image. It never runs on a pull_request or a push, and it is not the
-# workflow named CI, so a finding never reads as a red main and never blocks
-# a PR. A finding opens or updates ONE issue, found by its fixed title
-# (SCAN_ISSUE_TITLE), with the run link, and fails this job, so the Actions
-# run is red; a run with no finding closes that issue.
-#
-# CUSTOMIZE (go-quicbaas), against the template:
-#   - workflow_dispatch on main only, no `schedule:`: no workflow here
-#     schedules itself (owner ruling 2026-10-11), and test/buildgates
-#     TestNoWorkflowRunsOnASchedule fails on one outside its exemptions. A
-#     schedule comes with that test's exemption, in a code PR.
-#   - The images are built as ci.yml's image job builds them: the toolchain
-#     image from the registry cache first, then `make docker-build` with the
-#     per-run IT_IMAGE name (no `make it-image`, no Alpine index sum), with an
-#     empty gomodauth file and no credential in the job.
-#   - No bump half yet: the Makefile has no `make deps-bump` (depscheck
-#     v1.1.0), so the template's deps-bump, the commit to ci/deps-bump, the
-#     fix PR and the CI dispatch on it are not taken. They come with the full
-#     ci-template catch-up (v1.39 to v1.42), which also brings deps-check's
-#     DEPS_CHECK_LAG and -vuln. Until then `make deps-check` runs as ci.yml
-#     v1.34.1 ran it.
+# scans-template: v1.0.0 (customized). Scheduled scans on main: `make deps-check`, `make security` and `trivy image` of the integration image.
 
 name: Scans
 
@@ -57,8 +32,7 @@ jobs:
       IN_IMAGE_MEMORY: none   # ci.yml's value on a hosted runner
       IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}-scans
     steps:
-      # No credential reaches a job. A runner that injects a git credential
-      # through GIT_CONFIG_* stops the job here; only the names are logged.
+      # No credential reaches a job.
       - name: Refuse injected forge credentials
         shell: bash
         run: |
@@ -75,8 +49,7 @@ jobs:
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      # A hosted runner starts with about 14 GB free, less than the two image
-      # builds and the stages' caches need.
+      # A hosted runner starts with about 14 GB free, less than the image builds and caches need.
       - name: Free runner disk
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
@@ -93,9 +66,7 @@ jobs:
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
 
-      # The checks that left ci.yml (ruling 742 (1)). Each runs to the end;
-      # FIRED lists the ones that fail, and the step's own log keeps their
-      # output. trivy image keeps ci.yml v1.34.1's flags (devops.md §8).
+      # The checks that run only on schedule.
       - name: Scans (deps-check, make security, trivy image)
         id: scans
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
@@ -116,10 +87,7 @@ jobs:
           echo "scans: ${fired:-none fired}"
           echo "fired=$fired" >> "$GITHUB_OUTPUT"
 
-      # ONE issue for the findings, found by its exact title among the open
-      # issues (pull requests excluded): created when none is open, its body
-      # replaced when one is, and closed with a comment by the first run with
-      # no finding.
+      # One issue for the findings: created, updated, or closed when a run finds nothing.
       - name: Open, update or close the scan issue
         if: ${{ !cancelled() && steps.scans.outcome == 'success' }}
         env:
@@ -149,8 +117,7 @@ jobs:
             echo "updated #$issue"
           fi
 
-      # A finding fails the run, after the issue is open, so it is seen and
-      # fixed. This is not CI: no PR and no main commit status reads it.
+      # A finding fails the run after the issue is updated.
       - name: Fail on a finding
         if: ${{ !cancelled() && steps.scans.outputs.fired != '' }}
         env:

@@ -1,19 +1,5 @@
 #!/usr/bin/env bash
-# interop-legs.sh - the external-implementation interop legs (go-quicbaas#203).
-#
-# Each leg drives our server with a client implementation that is not ours.
-# A leg runs its baseline test alone first, so a broken baseline is reported
-# as such and not as a vacuous pass, and then every test of the leg. A
-# failure is a finding, not a flake. The claims each leg enforces are listed
-# in docs/multiprotocol-api/engineering.md, "Interop claims audit".
-#
-#   interop-legs.sh list         one line per leg: leg pkg baseline tests
-#   interop-legs.sh run <leg>    baseline, then the leg's tests
-#
-# INTEROP_TAGS is the build tag list (`make interop-test` passes the unit
-# suite's TEST_TAGS); GO is the go binary (default: go).
-# test/buildgates/interop_legs_test.go checks that every leg and pattern
-# selects real tests.
+# interop-legs.sh: the external-implementation interop legs.
 set -euo pipefail
 
 # leg|package|baseline -run pattern|leg -run pattern
