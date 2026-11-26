@@ -213,6 +213,7 @@ func TestAuditEventQueryWithFilters(t *testing.T) {
 	createUserReq := map[string]interface{}{
 		"email":    email,
 		"username": generateUniqueUsername(),
+		"roles":    fixtureRoles(tenantID),
 		"name":     "Audit Filter Test User",
 	}
 	var user struct {
@@ -279,6 +280,7 @@ func TestAuditEventQueryPagination(t *testing.T) {
 		createUserReq := map[string]interface{}{
 			"email":    email,
 			"username": generateUniqueUsername(),
+			"roles":    fixtureRoles(tenantID),
 			"name":     fmt.Sprintf("Pagination Test User %d", i),
 		}
 		// The user create acts in the test's tenant as the system admin
@@ -330,6 +332,7 @@ func TestAuditEventQueryTimeRange(t *testing.T) {
 	createUserReq := map[string]interface{}{
 		"email":    email,
 		"username": generateUniqueUsername(),
+		"roles":    fixtureRoles(tenantID),
 		"name":     "Time Range Test User",
 	}
 	// The user create acts in the test's tenant as the system admin
@@ -440,6 +443,7 @@ func TestAuditEventDelete(t *testing.T) {
 		createUserReq := map[string]interface{}{
 			"email":    email,
 			"username": generateUniqueUsername(),
+			"roles":    fixtureRoles(tenantID),
 			"name":     fmt.Sprintf("Delete Test User %d", i),
 		}
 		// The user create acts in the test's tenant as the system admin
@@ -576,6 +580,7 @@ func TestAuditEventTenantIsolation(t *testing.T) {
 	createUserReq := map[string]interface{}{
 		"email":    email,
 		"username": generateUniqueUsername(),
+		"roles":    fixtureRoles(tenant1ID),
 		"name":     "Tenant 1 User",
 	}
 	var user1 struct {
@@ -647,6 +652,7 @@ func TestAuditEventGeneration(t *testing.T) {
 				createUserReq := map[string]interface{}{
 					"email":    email,
 					"username": generateUniqueUsername(),
+					"roles":    fixtureRoles(tenantID),
 					"name":     "Event Gen Test User",
 				}
 				// The user create acts in the test's tenant as the system admin

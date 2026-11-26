@@ -169,6 +169,7 @@ func TestTenantIsolation(t *testing.T) {
 	userReq := map[string]interface{}{
 		"email":    generateUniqueEmail(),
 		"username": generateUniqueUsername(),
+		"roles":    fixtureRoles(tenantA),
 		"name":     "Isolation Test User",
 	}
 
@@ -449,6 +450,7 @@ func TestTenantDeletionCascade(t *testing.T) {
 	userReq := map[string]interface{}{
 		"email":    generateUniqueEmail(),
 		"username": generateUniqueUsername(),
+		"roles":    fixtureRoles(tenantID),
 		"name":     "Cascade Test User",
 	}
 	var user struct {

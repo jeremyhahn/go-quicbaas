@@ -61,6 +61,7 @@ func setupUserForMFATests(t *testing.T, cluster *testCluster) (string, string) {
 	createUserReq := map[string]interface{}{
 		"email":    email,
 		"username": generateUniqueUsername(),
+		"roles":    fixtureRoles(tenantID),
 		"name":     "MFA Test User",
 	}
 

@@ -165,6 +165,7 @@ func (c *RESTClient) CreateUser(ctx context.Context, tenantID, email, name strin
 	req := map[string]interface{}{
 		"email":    email,
 		"username": fmt.Sprintf("user_%d", time.Now().UnixNano()%1000000),
+		"roles":    fixtureRoles(tenantID),
 		"name":     name,
 	}
 

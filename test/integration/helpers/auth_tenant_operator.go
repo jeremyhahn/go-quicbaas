@@ -72,16 +72,12 @@ func enrollTenantOperator(ctx context.Context, baseURL string) (*enrolledPrincip
 		return nil, &PrincipalAuthError{Principal: tenantOperatorName, Step: "system admin login", TenantID: tenantID, Cause: err}
 	}
 
-	userID, certPEM, keyPEM, err := enrollTenantPIVUser(ctx, baseURL, tenantID, systemBearer)
+	// The tenant is fresh, so its Operator role carries the identifier go-qrdb
+	// seeds it under. The user is created holding it.
+	operatorRoleID := qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameOperator)
+	_, certPEM, keyPEM, err := enrollTenantPIVUser(ctx, baseURL, tenantID, operatorRoleID, systemBearer)
 	if err != nil {
 		return nil, &PrincipalAuthError{Principal: tenantOperatorName, Step: "enroll PIV user", TenantID: tenantID, Cause: err}
-	}
-
-	// The tenant is fresh, so its Operator role carries the identifier go-qrdb
-	// seeds it under.
-	binding := map[string]interface{}{"role_id": qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameOperator)}
-	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/roles", systemBearer, binding); err != nil {
-		return nil, &PrincipalAuthError{Principal: tenantOperatorName, Step: "bind Operator role to user " + userID, TenantID: tenantID, Cause: err}
 	}
 
 	return &enrolledPrincipal{tenantID: tenantID, certPEM: certPEM, keyPEM: keyPEM}, nil

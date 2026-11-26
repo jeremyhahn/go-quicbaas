@@ -72,6 +72,7 @@ func TestUserCRUD(t *testing.T) {
 		createReq := map[string]interface{}{
 			"email":    email,
 			"username": "testuser",
+			"roles":    fixtureRoles(tenantID),
 			"name":     "Test User",
 			"attributes": map[string]interface{}{
 				"department": "engineering",
@@ -170,6 +171,7 @@ func TestUserEmailUniqueness(t *testing.T) {
 	createReq := map[string]interface{}{
 		"email":    email,
 		"username": generateUniqueUsername(),
+		"roles":    fixtureRoles(tenantID),
 		"name":     "User 1",
 	}
 	var user1 iam.User
@@ -180,6 +182,7 @@ func TestUserEmailUniqueness(t *testing.T) {
 	createReq2 := map[string]interface{}{
 		"email":    email,
 		"username": generateUniqueUsername(),
+		"roles":    fixtureRoles(tenantID),
 		"name":     "User 2",
 	}
 	var user2 iam.User
@@ -204,6 +207,7 @@ func TestUserRoleAssignment(t *testing.T) {
 	userReq := map[string]interface{}{
 		"email":    generateUniqueEmail(),
 		"username": generateUniqueUsername(),
+		"roles":    fixtureRoles(tenantID),
 		"name":     "Test User",
 	}
 	var user iam.User
@@ -332,6 +336,7 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 	userReq := map[string]interface{}{
 		"email":    generateUniqueEmail(),
 		"username": generateUniqueUsername(),
+		"roles":    fixtureRoles(tenantID),
 		"name":     "Test User",
 	}
 	var user iam.User
