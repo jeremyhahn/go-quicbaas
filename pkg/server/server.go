@@ -269,9 +269,10 @@ type Server struct {
 
 	// Backup manager - handles backup and restore operations
 	backupManager *backup.BackupManager
-	// backupStorage provides the interfaces.Storage needed by the backup manager.
-	// Created during startBackupManager and closed during stopBackupManager.
-	backupStorage *backupStorageAdapter
+	// backupStorage is the backup manager's data store: the embedded qrdb
+	// node's live platform-shard keyspace. Created during startBackupManager
+	// and cleared during stopBackupManager.
+	backupStorage *backupLiveStorage
 
 	// Object storage catalog components
 	catalogManager catalog.CatalogManager
@@ -2040,6 +2041,19 @@ func (s *Server) GetQRDBAdminServicer() qrdbsdk.AdminServicer {
 		return nil
 	}
 	return svcs.Admin
+}
+
+// GetQRDBBackupServicer returns the embedded qrdb node's backup service, or nil when the node is absent.
+func (s *Server) GetQRDBBackupServicer() qrdbservice.BackupServicer {
+	node := s.getQRDBNode()
+	if node == nil {
+		return nil
+	}
+	svcs := node.Services()
+	if svcs == nil {
+		return nil
+	}
+	return svcs.Backup
 }
 
 // GetQRDBUserServicer returns the qrdb user.UserServicer exposed by the
