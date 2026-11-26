@@ -10,7 +10,8 @@
  * in a test harness against a locally-run development daemon.
  */
 
-import { serverBase, authHeader, apiFetch, SYSTEM_TENANT_ID } from './_http.ts';
+import { serverBase, authHeader, apiFetch, factoryApiFetch, SYSTEM_TENANT_ID } from './_http.ts';
+import { factoryTenantID } from './auth.ts';
 
 export { SYSTEM_TENANT_ID };
 
@@ -79,8 +80,8 @@ interface FleetList {
 
 // listTestFleetNodes returns every fleet node registered for the given tenant.
 // Throws if the daemon is unreachable, so beforeAll will fail fast.
-export async function listTestFleetNodes(tenantID = SYSTEM_TENANT_ID): Promise<FleetList> {
-  return apiFetch<FleetList>(
+export async function listTestFleetNodes(tenantID = factoryTenantID()): Promise<FleetList> {
+  return factoryApiFetch<FleetList>(
     `${serverBase()}/api/v1/fleet?tenant_id=${encodeURIComponent(tenantID)}`,
   );
 }

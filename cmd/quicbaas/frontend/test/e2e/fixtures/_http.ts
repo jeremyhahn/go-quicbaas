@@ -25,7 +25,7 @@
  * process lifetime.
  */
 
-import { readAdminTokens } from './auth.ts';
+import { readAdminTokens, readFactoryTokens } from './auth.ts';
 
 // SYSTEM_TENANT_ID is the control-plane "system" tenant that qrdb always
 // provisions. The legacy "default" tenant was permanently retired by qrdb's
@@ -139,6 +139,88 @@ export async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(`API ${init?.method ?? 'GET'} ${url} failed ${resp.status}: ${body}`);
   }
   // Some endpoints return 204 No Content.
+  const ct = resp.headers.get('content-type') ?? '';
+  if (resp.status === 204 || !ct.includes('application/json')) {
+    return undefined as T;
+  }
+  return resp.json() as Promise<T>;
+}
+
+// Factory-principal token cache: the tenant admin the software-factory specs
+// act as. Kept apart from the system admin's cache so each worker refreshes
+// (and rotates) each principal's refresh token on its own.
+let _factoryAccessToken: string | null = null;
+let _factoryRefreshToken: string | null = null;
+
+function loadFactoryTokens(): void {
+  if (_factoryAccessToken !== null) return;
+  const t = readFactoryTokens();
+  _factoryAccessToken = t.access_token;
+  _factoryRefreshToken = t.refresh_token;
+}
+
+function factoryAuthHeader(): Record<string, string> {
+  loadFactoryTokens();
+  return _factoryAccessToken ? { Authorization: `Bearer ${_factoryAccessToken}` } : {};
+}
+
+async function refreshFactoryToken(): Promise<boolean> {
+  loadFactoryTokens();
+  if (!_factoryRefreshToken) return false;
+  const resp = await fetch(`${serverBase()}/api/v1/iam/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ refresh_token: _factoryRefreshToken }),
+  });
+  if (!resp.ok) return false;
+  const body = (await resp.json()) as { access_token?: string; refresh_token?: string };
+  if (!body.access_token) return false;
+  _factoryAccessToken = body.access_token;
+  // The server rotates on every redemption; keep the fresh refresh token.
+  if (body.refresh_token) _factoryRefreshToken = body.refresh_token;
+  return true;
+}
+
+/** authFetch for the factory principal: the raw Response, refreshed once on 401. */
+export async function factoryAuthFetch(url: string, init?: RequestInit): Promise<Response> {
+  const doFetch = (): Promise<Response> =>
+    fetch(url, {
+      ...init,
+      headers: {
+        Accept: 'application/json',
+        ...factoryAuthHeader(),
+        ...(init?.headers as Record<string, string> | undefined),
+      },
+    });
+
+  let resp = await doFetch();
+  if (resp.status === 401 && (await refreshFactoryToken())) {
+    resp = await doFetch();
+  }
+  return resp;
+}
+
+/** apiFetch for the factory principal: parsed JSON, throws on a non-2xx. */
+export async function factoryApiFetch<T>(url: string, init?: RequestInit): Promise<T> {
+  const doFetch = (): Promise<Response> =>
+    fetch(url, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...factoryAuthHeader(),
+        ...(init?.headers as Record<string, string> | undefined),
+      },
+    });
+
+  let resp = await doFetch();
+  if (resp.status === 401 && (await refreshFactoryToken())) {
+    resp = await doFetch();
+  }
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    throw new Error(`API ${init?.method ?? 'GET'} ${url} failed ${resp.status}: ${body}`);
+  }
   const ct = resp.headers.get('content-type') ?? '';
   if (resp.status === 204 || !ct.includes('application/json')) {
     return undefined as T;

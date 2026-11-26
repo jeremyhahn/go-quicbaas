@@ -26,13 +26,25 @@
  * page and produce meaningless red, so we want a loud, early failure instead.
  */
 
-import { chromium, type BrowserContext, type CDPSession, type FullConfig, type Page } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type CDPSession,
+  type FullConfig,
+  type Page,
+} from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   AUTH_DIR,
   ADMIN_STORAGE_STATE,
   ADMIN_TOKEN_FILE,
   ADMIN_EMAIL,
+  FACTORY_STORAGE_STATE,
+  FACTORY_TOKEN_FILE,
+  type FactoryTokens,
   TOKEN_KEY,
   REFRESH_TOKEN_KEY,
   readFirstBootAdminConfig,
@@ -114,6 +126,153 @@ async function loginFirstBootAdmin(page: Page, baseURL: string): Promise<Princip
   await page.reload({ waitUntil: 'networkidle' });
 
   return { email: ADMIN_EMAIL };
+}
+
+
+/** Tenant ids tried for the factory principal, in order. */
+const FACTORY_TENANT_CANDIDATES = ['e2e-factory', 'e2efactory'];
+
+interface FactoryPrincipal {
+  tenant: string;
+  email: string;
+  access_token: string;
+  refresh_token: string;
+}
+
+/**
+ * Provision a non-system tenant with a certificate-enrolled admin, then log
+ * that admin in over mTLS. Orchestrator, fleet and scheduler permissions are
+ * tenant-only, so the software-factory specs run as this principal.
+ *
+ * The key and CSR are made here with openssl; the server signs the CSR and
+ * returns the admin certificate, written beside the key under AUTH_DIR.
+ */
+async function provisionFactoryPrincipal(systemAccessToken: string): Promise<FactoryPrincipal> {
+  const admin = readFirstBootAdminConfig();
+  mkdirSync(AUTH_DIR, { recursive: true });
+
+  let lastError = '';
+  for (const tenant of FACTORY_TENANT_CANDIDATES) {
+    const keyPath = resolve(AUTH_DIR, `${tenant}-admin.key`);
+    const csrPath = resolve(AUTH_DIR, `${tenant}-admin.csr`);
+    const certPath = resolve(AUTH_DIR, `${tenant}-admin.crt`);
+
+    // Make the new key beside the saved pair, so a re-run whose tenant already
+    // exists still has the key that matches the saved certificate.
+    const newKeyPath = `${keyPath}.new`;
+    execFileSync('openssl', [
+      'ecparam', '-name', 'prime256v1', '-genkey', '-noout', '-out', newKeyPath,
+    ]);
+    execFileSync('openssl', [
+      'req', '-new', '-key', newKeyPath, '-subj', '/CN=admin', '-out', csrPath,
+    ]);
+    const csrPEM = readFileSync(csrPath, 'utf8');
+
+    const url = `${serverBase()}/api/v1/tenants/${encodeURIComponent(tenant)}/provision`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${systemAccessToken}`,
+      },
+      body: JSON.stringify({
+        isolation_type: 'prefix',
+        admin_enrollment: 'cert',
+        admin_csr_pem: csrPEM,
+      }),
+    });
+    const text = await resp.text().catch(() => '');
+
+    if (resp.ok) {
+      const body = JSON.parse(text) as { admin_cert_pem?: string };
+      if (!body.admin_cert_pem) {
+        throw new Error(`provision ${tenant}: response carries no admin_cert_pem`);
+      }
+      renameSync(newKeyPath, keyPath);
+      writeFileSync(certPath, body.admin_cert_pem);
+    } else if (resp.status === 409 && existsSync(certPath) && existsSync(keyPath)) {
+      // A re-run against the same daemon: the tenant exists and an earlier run
+      // saved its admin certificate and key. Log in with that pair.
+      rmSync(newKeyPath, { force: true });
+    } else if (resp.status === 400 && /tenant[ _]?id|invalid/i.test(text)) {
+      // The id format was refused; try the next candidate.
+      lastError = `provision ${tenant}: HTTP 400: ${text}`;
+      continue;
+    } else {
+      throw new Error(`provision ${tenant} at ${url} failed: HTTP ${resp.status}: ${text}`);
+    }
+
+    const cfg: LiveTenantConfig = {
+      tenant,
+      email: 'admin',
+      adminCert: certPath,
+      adminKey: keyPath,
+      ca: admin.ca,
+    };
+    const loginURL = `${serverBase()}/api/v1/iam/login/piv`;
+    const login = await mtlsRequest(loginURL, 'POST', cfg, { Accept: 'application/json' });
+    if (login.status < 200 || login.status >= 300) {
+      throw new Error(
+        `tenant ${tenant} admin mTLS login at ${loginURL} failed: HTTP ${login.status}: ${login.body}`,
+      );
+    }
+    const tokens = JSON.parse(login.body) as {
+      access_token?: string;
+      refresh_token?: string;
+      email?: string;
+      username?: string;
+    };
+    if (!tokens.access_token) {
+      throw new Error(`tenant ${tenant} admin mTLS login returned no access_token`);
+    }
+    return {
+      tenant,
+      email: tokens.email ?? tokens.username ?? `admin@${tenant}`,
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token ?? '',
+    };
+  }
+  throw new Error(`could not provision a factory tenant: ${lastError}`);
+}
+
+/**
+ * Save the factory principal's browser session: a fresh context whose
+ * localStorage holds its tokens, stripped of the refresh token like the admin
+ * state, plus the raw tokens for REST seeding.
+ */
+async function saveFactoryPrincipal(
+  browser: Browser,
+  contextOptions: Parameters<Browser['newContext']>[0],
+  baseURL: string,
+  principal: FactoryPrincipal,
+): Promise<void> {
+  const context = await browser.newContext(contextOptions);
+  try {
+    const page = await context.newPage();
+    await page.goto(baseURL, { waitUntil: 'networkidle' });
+    await page.evaluate(
+      ([tk, rk, access, refresh]) => {
+        window.localStorage.setItem(tk, access);
+        if (refresh !== '') window.localStorage.setItem(rk, refresh);
+      },
+      [TOKEN_KEY, REFRESH_TOKEN_KEY, principal.access_token, principal.refresh_token],
+    );
+    await page.reload({ waitUntil: 'networkidle' });
+    writeFileSync(
+      FACTORY_STORAGE_STATE,
+      JSON.stringify(withoutRefreshCredential(await context.storageState()), null, 2),
+    );
+  } finally {
+    await context.close();
+  }
+  const out: FactoryTokens = {
+    access_token: principal.access_token,
+    refresh_token: principal.refresh_token,
+    email: principal.email,
+    tenant: principal.tenant,
+  };
+  writeFileSync(FACTORY_TOKEN_FILE, JSON.stringify(out, null, 2));
 }
 
 /**
@@ -261,6 +420,25 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
       email: principal.email,
     };
     writeFileSync(ADMIN_TOKEN_FILE, JSON.stringify(out, null, 2));
+
+    // --- Step 5: the software-factory principal. ---
+    // The first-boot admin belongs to the system tenant, which is refused the
+    // tenant-only orchestrator, fleet and scheduler permissions; provision a
+    // tenant and sign its admin in. A live tenant user already is a tenant
+    // principal, so the factory session is a copy of the one just saved.
+    if (live === null) {
+      const factory = await provisionFactoryPrincipal(tokens.access_token);
+      await saveFactoryPrincipal(browser, { ignoreHTTPSErrors: true }, baseURL, factory);
+      // eslint-disable-next-line no-console
+      console.log(`[global-setup] factory session ready for tenant ${factory.tenant}`);
+    } else {
+      writeFileSync(
+        FACTORY_STORAGE_STATE,
+        JSON.stringify(withoutRefreshCredential(await context.storageState()), null, 2),
+      );
+      const factoryOut: FactoryTokens = { ...out, tenant: live.tenant };
+      writeFileSync(FACTORY_TOKEN_FILE, JSON.stringify(factoryOut, null, 2));
+    }
     // eslint-disable-next-line no-console
     console.log(
       `[global-setup] session ready for ${principal.email} (token ${tokens.access_token.slice(0, 12)}…)`,

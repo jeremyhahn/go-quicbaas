@@ -105,6 +105,38 @@ export function readAdminTokens(): AdminTokens {
   return JSON.parse(readFileSync(ADMIN_TOKEN_FILE, 'utf8')) as AdminTokens;
 }
 
+/**
+ * Playwright storageState file for the software-factory principal: an admin
+ * of a non-system tenant. Orchestrator, fleet and scheduler permissions are
+ * tenant-only and refused to the system tenant, so the factory specs sign in
+ * as this principal instead of the system admin.
+ */
+export const FACTORY_STORAGE_STATE = resolve(AUTH_DIR, 'factory.json');
+
+/** Raw factory-principal tokens (access + refresh + email + tenant). */
+export const FACTORY_TOKEN_FILE = resolve(AUTH_DIR, 'factory-token.json');
+
+/** Persisted factory-principal tokens shape. */
+export interface FactoryTokens extends AdminTokens {
+  /** Tenant the factory principal administers. */
+  tenant: string;
+}
+
+/** Read the factory-principal tokens global-setup wrote. */
+export function readFactoryTokens(): FactoryTokens {
+  if (!existsSync(FACTORY_TOKEN_FILE)) {
+    throw new Error(
+      `readFactoryTokens: ${FACTORY_TOKEN_FILE} missing — global-setup did not run or failed.`,
+    );
+  }
+  return JSON.parse(readFileSync(FACTORY_TOKEN_FILE, 'utf8')) as FactoryTokens;
+}
+
+/** Tenant id the software-factory specs seed and read their data in. */
+export function factoryTenantID(): string {
+  return readFactoryTokens().tenant;
+}
+
 // ---------------------------------------------------------------------------
 // Live-node tenant sign-in
 // ---------------------------------------------------------------------------
