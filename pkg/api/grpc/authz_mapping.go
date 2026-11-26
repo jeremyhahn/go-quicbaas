@@ -407,10 +407,12 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/UpdateRole": {"tenants", "create"},
 	// Mirrors REST DELETE .../roles/{role_id} (tenants:delete).
 	"/quicbaas.iam.v1.IAMService/DeleteRole": {"tenants", "delete"},
-	// Mirrors REST POST .../users/{user_id}/roles (tenants:create).
-	"/quicbaas.iam.v1.IAMService/AssignRole": {"tenants", "create"},
-	// Mirrors REST DELETE .../users/{user_id}/roles/{role} (tenants:delete).
-	"/quicbaas.iam.v1.IAMService/RevokeRole": {"tenants", "delete"},
+	// Takes the same tenant-scoped roles:assign grant as the QuicBaaS
+	// service's AssignRole (REST's tenants:create is a system-scope grant).
+	"/quicbaas.iam.v1.IAMService/AssignRole": {"roles", "assign"},
+	// Takes the same tenant-scoped roles:unassign grant as the QuicBaaS
+	// service's RevokeRole (REST's tenants:delete is a system-scope grant).
+	"/quicbaas.iam.v1.IAMService/RevokeRole": {"roles", "unassign"},
 
 	// Mirrors REST POST /api/v1/admin/impersonation/start (users:update).
 	"/quicbaas.iam.v1.IAMService/StartImpersonation": {"users", "update"},
