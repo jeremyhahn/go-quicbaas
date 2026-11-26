@@ -397,7 +397,7 @@ func TestSandboxSecurity_ClearsBrokerClassAndDevices(t *testing.T) {
 func TestOpenVINOBackend_TheToolContainerGetsThePolicy(t *testing.T) {
 	runtime := &mockContainerRuntime{available: true, runID: "ctr-sec"}
 	backend := NewOpenVINOBackend(OpenVINOBackendConfig{
-		BaseURL:         "http://gpu-host.invalid:9000",
+		BaseURL:         "http://gpu-01.invalid:9000",
 		DefaultModel:    "qwen3-8b",
 		SandboxSecurity: SandboxSecurity{PidsLimit: 2048},
 	})
@@ -433,7 +433,7 @@ func TestSpawnSession_TheDetachedSandboxKeepsTheBackendsConfiguredPolicy(t *test
 
 	cases := map[string]AgentBackend{
 		"OpenVINO": NewOpenVINOBackend(OpenVINOBackendConfig{
-			BaseURL:         "http://gpu-host.invalid:9000",
+			BaseURL:         "http://gpu-01.invalid:9000",
 			DefaultModel:    "qwen3-8b",
 			SandboxSecurity: configured,
 		}),

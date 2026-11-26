@@ -104,7 +104,7 @@ func workspace(t *testing.T) string {
 
 func TestCheckPassesOnThisRepository(t *testing.T) {
 	var stdout, stderr strings.Builder
-	failures, err := check(repoRoot, workspace(t), &stdout, &stderr)
+	failures, err := check(repoRoot, workspace(t), testTokenFile, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestCheckFailsOnEachWayTheContractCanBreak(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var stdout, stderr strings.Builder
-			failures, err := check(mutatedRepo(t, tc.file, tc.old, tc.replacement), workspace(t), &stdout, &stderr)
+			failures, err := check(mutatedRepo(t, tc.file, tc.old, tc.replacement), workspace(t), testTokenFile, &stdout, &stderr)
 			if err != nil {
 				t.Fatalf("check: %v", err)
 			}
@@ -211,12 +211,13 @@ func TestCheckFailsOnEachWayTheContractCanBreak(t *testing.T) {
 
 func TestCheckReportsAToolErrorWithoutAMakefile(t *testing.T) {
 	var stdout, stderr strings.Builder
-	if _, err := check(t.TempDir(), workspace(t), &stdout, &stderr); err == nil {
+	if _, err := check(t.TempDir(), workspace(t), testTokenFile, &stdout, &stderr); err == nil {
 		t.Fatal("a tree without a Makefile must be a tool error, not a verdict")
 	}
 }
 
 func TestRunReportsTheVerdictAndTheStatus(t *testing.T) {
+	t.Setenv(decoyPathEnv, testTokenFile)
 	t.Run("this repository", func(t *testing.T) {
 		var stdout, stderr strings.Builder
 		if status := run([]string{"-root", repoRoot}, &stdout, &stderr); status != gate.ExitClean {
@@ -251,6 +252,46 @@ func TestRunReportsTheVerdictAndTheStatus(t *testing.T) {
 			t.Fatalf("run exited %d, want %d", status, gate.ExitToolError)
 		}
 	})
+}
+
+// testTokenFile is where the tests plant the decoy tokens file, relative to
+// each case's throwaway HOME.
+const testTokenFile = ".gate/tokens.env"
+
+func TestDecoyTokenFileRefusesUnsetBlankAndNonLocal(t *testing.T) {
+	lookup := func(v string, set bool) func(string) (string, bool) {
+		return func(name string) (string, bool) {
+			if name != decoyPathEnv {
+				t.Fatalf("looked up %q, want %q", name, decoyPathEnv)
+			}
+			return v, set
+		}
+	}
+	if _, err := decoyTokenFile(lookup("", false)); err == nil {
+		t.Errorf("an unset %s was accepted", decoyPathEnv)
+	}
+	for _, v := range []string{"", "  ", "/abs/t.env", "../t.env"} {
+		if got, err := decoyTokenFile(lookup(v, true)); err == nil {
+			t.Errorf("%s=%q was accepted as %q", decoyPathEnv, v, got)
+		}
+	}
+	for _, v := range []string{"tokens.env", "a/b.env"} {
+		got, err := decoyTokenFile(lookup(v, true))
+		if err != nil || got != v {
+			t.Errorf("%s=%q: got %q, %v; want it accepted", decoyPathEnv, v, got, err)
+		}
+	}
+}
+
+func TestRunRefusesWithoutTheTokenFile(t *testing.T) {
+	t.Setenv(decoyPathEnv, "")
+	var stdout, stderr strings.Builder
+	if status := run([]string{"-root", repoRoot}, &stdout, &stderr); status != gate.ExitToolError {
+		t.Fatalf("run exited %d, want %d", status, gate.ExitToolError)
+	}
+	if !strings.Contains(stderr.String(), decoyPathEnv) {
+		t.Fatalf("stderr does not name %s: %q", decoyPathEnv, stderr.String())
+	}
 }
 
 func TestStripEnvDropsTheCallersCredentials(t *testing.T) {
@@ -371,7 +412,7 @@ func TestRunLeavesTheHostsGomodBackupsUntouched(t *testing.T) {
 	before := snapshot()
 
 	var stdout, stderr strings.Builder
-	failures, err := check(mutatedRepo(t, "Makefile", ".PHONY: stage-gomodauth", ".PHONY: stage-gomodauth"), workspace(t), &stdout, &stderr)
+	failures, err := check(mutatedRepo(t, "Makefile", ".PHONY: stage-gomodauth", ".PHONY: stage-gomodauth"), workspace(t), testTokenFile, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
@@ -391,7 +432,7 @@ func TestInterruptReportsATargetThatNeverReachesTheCall(t *testing.T) {
 	// A hang that never matches must not block the gate: make exits on its
 	// own, and the case reports the call as never reached.
 	ic := interruptCase{target: "stage-gomodauth", hang: "a docker call no recipe makes"}
-	out, reached, err := interrupt(repoRoot, workspace(t), ic, "")
+	out, reached, err := interrupt(repoRoot, workspace(t), testTokenFile, ic, "")
 	if err != nil {
 		t.Fatalf("interrupt: %v", err)
 	}

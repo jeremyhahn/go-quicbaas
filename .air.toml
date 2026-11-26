@@ -1,5 +1,4 @@
-# Air configuration for hot reloading during development
-# https://github.com/cosmtrek/air
+# Air configuration for hot reloading during development (https://github.com/cosmtrek/air).
 
 root = "."
 testdata_dir = "testdata"

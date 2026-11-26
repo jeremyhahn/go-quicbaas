@@ -87,8 +87,8 @@ func TestClientCredentialsGrant_AcceptsTheCredentialRegistrationIssued(t *testin
 	provider, mgr, _ := newTenantRoutedOIDCProvider(t, tenantID)
 
 	// Registration: the public route's context names no tenant.
-	app, err := mgr.RegisterAgentApp(context.Background(), tenantID, "agent-gpu-host",
-		agentAppOptions(tenantID, "agent-gpu-host"))
+	app, err := mgr.RegisterAgentApp(context.Background(), tenantID, "agent-gpu-01",
+		agentAppOptions(tenantID, "agent-gpu-01"))
 	if err != nil {
 		t.Fatalf("RegisterAgentApp: %v", err)
 	}
@@ -117,8 +117,8 @@ func TestClientCredentialsGrant_RefusesAWrongSecret(t *testing.T) {
 	const tenantID = "automatethethings"
 	provider, mgr, _ := newTenantRoutedOIDCProvider(t, tenantID)
 
-	app, err := mgr.RegisterAgentApp(context.Background(), tenantID, "agent-gpu-host",
-		agentAppOptions(tenantID, "agent-gpu-host"))
+	app, err := mgr.RegisterAgentApp(context.Background(), tenantID, "agent-gpu-01",
+		agentAppOptions(tenantID, "agent-gpu-01"))
 	if err != nil {
 		t.Fatalf("RegisterAgentApp: %v", err)
 	}

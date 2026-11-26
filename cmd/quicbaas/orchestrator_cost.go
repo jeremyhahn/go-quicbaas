@@ -75,7 +75,7 @@ Agent's own spend windows, which a spawn of it is checked against.
 
 Examples:
   quicbaas orchestrator cost
-  quicbaas orchestrator cost --host gpu-host:9091
+  quicbaas orchestrator cost --host gpu-01:9091
   quicbaas orchestrator cost --agent claude-coder
   quicbaas orchestrator cost --project p1 --from 2026-09-01T00:00:00Z`,
 		Args: cobra.NoArgs,

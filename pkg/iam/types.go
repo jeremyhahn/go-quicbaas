@@ -506,6 +506,9 @@ type Token struct {
 	// TenantID is the token tenant
 	TenantID string `json:"tenant_id" yaml:"tenant_id"`
 
+	// SessionID is the login session (sid claim) an access token was minted for.
+	SessionID string `json:"sid,omitempty" yaml:"sid,omitempty"`
+
 	// Scopes is the list of granted scopes
 	Scopes []string `json:"scopes" yaml:"scopes"`
 

@@ -74,6 +74,19 @@ type pivCachedToken struct {
 	ExpiresAt time.Time
 }
 
+// pivReuseMargin is how much life a cached bearer must still have to be
+// reused. The CLI drops a stored token with less than its refresh skew
+// (60 s) left, and the runner writes no refresh token, so a bearer reused
+// inside that window would reach the CLI as no credential at all. Two
+// minutes covers the skew plus a test's runtime.
+const pivReuseMargin = 2 * time.Minute
+
+// pivCachedTokenUsable reports whether tok may be reused at now: only while
+// it has more than pivReuseMargin left before its recorded expiry.
+func pivCachedTokenUsable(tok pivCachedToken, now time.Time) bool {
+	return tok.Bearer != "" && now.Add(pivReuseMargin).Before(tok.ExpiresAt)
+}
+
 // AuthPIV performs a PIV-cert-based login against the cluster's
 // /api/v1/iam/login/piv endpoint and returns the resulting bearer token.
 //
@@ -232,7 +245,7 @@ func authPIV(ctx context.Context, baseURL, certPath, keyPath, caPath string) (st
 	cacheKey := baseURL + "|" + certPath + "|" + keyPath + "|" + caPath
 
 	pivAuthCache.Lock()
-	if cached, ok := pivAuthCache.tokens[cacheKey]; ok && time.Now().Before(cached.ExpiresAt) {
+	if cached, ok := pivAuthCache.tokens[cacheKey]; ok && pivCachedTokenUsable(cached, time.Now()) {
 		pivAuthCache.Unlock()
 		return cached.Bearer, cached.ExpiresAt, nil
 	}

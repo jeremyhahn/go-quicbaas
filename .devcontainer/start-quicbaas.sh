@@ -1,6 +1,5 @@
 #!/bin/bash
-# QuicBaaS Devcontainer Startup Script
-# This script starts the QuicBaaS server with all services enabled
+# Start the QuicBaaS server with all services enabled.
 
 set -e
 

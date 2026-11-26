@@ -1124,15 +1124,15 @@ func TestCLIIAMRoleOperations(t *testing.T) {
 	_, _ = runCommand(ctx, binary, "iam", "tenant", "delete", tenantID,
 		"--yes", "--address", serverAddr, "--transport", "rest")
 
-	// Provision the tenant first - required for role operations - and act as
-	// its admin for the tenant-scoped verbs, as a production caller does.
-	// The tenant is deleted when the test ends.
-	admin := startTenantAdminSession(t, tenantID)
+	// Provision the tenant first, as role operations require. Role writes
+	// take tenants:create, which is system-tenant only, so the role verbs
+	// run as the system admin. The tenant is deleted when the test ends.
+	startTenantAdminSession(t, tenantID)
 
 	// Create role - name is a positional argument
 	// CLI: quicbaas iam role create <name> --tenant <tenant> --name <display_name>
 	// Note: The server generates the actual role ID
-	output, err := runCommandAs(ctx, admin, binary, "iam", "role", "create", roleName,
+	output, err := runCommand(ctx, binary, "iam", "role", "create", roleName,
 		"--tenant", tenantID,
 		"--name", "Test Role",
 		"--description", "Test role for integration tests",
@@ -1147,7 +1147,7 @@ func TestCLIIAMRoleOperations(t *testing.T) {
 	t.Logf("Parsed role ID: %s", roleID)
 
 	// Get role info - uses the server-generated ID
-	output, err = runCommandAs(ctx, admin, binary, "iam", "role", "get", roleID,
+	output, err = runCommand(ctx, binary, "iam", "role", "get", roleID,
 		"--tenant", tenantID,
 		"--address", serverAddr,
 		"--output", "json",
@@ -1156,7 +1156,7 @@ func TestCLIIAMRoleOperations(t *testing.T) {
 	t.Logf("IAM role get output: %s", output)
 
 	// List roles
-	output, err = runCommandAs(ctx, admin, binary, "iam", "role", "list",
+	output, err = runCommand(ctx, binary, "iam", "role", "list",
 		"--tenant", tenantID,
 		"--address", serverAddr,
 		"--transport", "rest")
@@ -1164,7 +1164,7 @@ func TestCLIIAMRoleOperations(t *testing.T) {
 	t.Logf("IAM role list output: %s", output)
 
 	// Delete role - uses the server-generated ID
-	output, err = runCommandAs(ctx, admin, binary, "iam", "role", "delete", roleID,
+	output, err = runCommand(ctx, binary, "iam", "role", "delete", roleID,
 		"--tenant", tenantID,
 		"--yes",
 		"--address", serverAddr,

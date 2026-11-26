@@ -397,7 +397,7 @@ Full distributed mode with Raft consensus. Multiple QuicBaaS nodes, agents on an
 A long-lived daemon (`quicbaas fleet serve`) runs on remote GPU hosts and exposes a FleetRuntime gRPC service. The central orchestrator calls this service to spawn sandboxed (containerized) sessions. This is the **sandbox-first** default.
 
 ```
-  CENTRAL QUICBAAS               REMOTE GPU HOST (gpu-host.example.com)
+  CENTRAL QUICBAAS               REMOTE GPU HOST (gpu-01.example.com)
 ┌────────────────────────┐     ┌──────────────────────────────────────┐
 │                        │     │                                       │
 │ BackendDispatcher      │     │  quicbaas fleet serve                 │
