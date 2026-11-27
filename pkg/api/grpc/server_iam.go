@@ -25,10 +25,13 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
 // IAMServer implements the IAM gRPC service.
@@ -40,6 +43,12 @@ type IAMServer struct {
 	// inviteOrigin is the origin activation links are built under: the one
 	// the WebAuthn relying party accepts. Empty leaves invite_url unset.
 	inviteOrigin string
+
+	// roleAuthorizer checks the request-dependent permissions the method
+	// annotation cannot carry (roles:assign when UpdateUser names roles), so
+	// the check holds on every gRPC listener, not only the legacy one. Nil
+	// refuses such requests (fail closed).
+	roleAuthorizer GRPCValidatorAuthorizer
 }
 
 // IAMService defines the interface for IAM operations.
@@ -140,6 +149,69 @@ func NewIAMServer(iamService IAMService, log *logger.Logger) *IAMServer {
 // and the ceremony is then refused.
 func (s *IAMServer) SetInviteOrigin(origin string) {
 	s.inviteOrigin = origin
+}
+
+// SetRoleAuthorizer sets the authorizer UpdateUser asks for roles:assign
+// when a request names roles. Without one such requests are refused.
+func (s *IAMServer) SetRoleAuthorizer(authorizer GRPCValidatorAuthorizer) {
+	s.roleAuthorizer = authorizer
+}
+
+// requireRoleAssign demands roles:assign of the caller's bearer token, as
+// the legacy interceptor does for the same request (grpcRequestPermissions),
+// so a caller holding only users:update cannot grant itself roles on a
+// listener whose interceptor checks only the method annotation.
+//
+// The grant is bound to the call: it is decided in tenantID, and the
+// principal the bearer token resolves to must be the authenticated caller
+// already on ctx (the one requireCallerTenant checked) in that same tenant.
+// Otherwise a caller authenticated as one principal (for example by its
+// certificate) could borrow another principal's or another tenant's
+// roles:assign by attaching that principal's token. A call with no bearer
+// token, or no authenticated caller on ctx, is refused.
+func (s *IAMServer) requireRoleAssign(ctx context.Context, tenantID string) error {
+	if s.roleAuthorizer == nil {
+		return status.Error(codes.PermissionDenied, "role assignment requires roles:assign and no authorizer is configured")
+	}
+	token := bearerFromContext(ctx)
+	if token == "" {
+		return status.Error(codes.Unauthenticated, "role assignment requires a bearer token carrying roles:assign")
+	}
+	granted, err := s.roleAuthorizer.Authorize(ctx, token, "roles:assign", "", "", "")
+	if err != nil {
+		return validatorGRPCStatus(err)
+	}
+	caller, ok := auth.SubjectFromContext(ctx)
+	if !ok || !caller.Authenticated || caller.ID == "" || granted == nil {
+		return status.Error(codes.PermissionDenied, "role assignment requires the authenticated caller to hold roles:assign")
+	}
+	if !s.samePrincipal(ctx, tenantID, caller, granted) {
+		return status.Error(codes.PermissionDenied, "role assignment requires the authenticated caller to hold roles:assign: the bearer token names another principal")
+	}
+	if tenantID == "" || granted.TenantID != tenantID || (caller.TenantID != "" && caller.TenantID != tenantID) {
+		return status.Error(codes.PermissionDenied, "role assignment requires roles:assign in the target tenant")
+	}
+	return nil
+}
+
+// samePrincipal reports whether the bearer token's principal is the
+// authenticated caller. The immutable user ID decides it: the subject strings
+// differ for one account across authenticators (a certificate caller is named
+// by its username, a session token by its email, a generated token by its
+// decimal user ID). A certificate caller carries no user ID, so its username
+// is resolved to one in the target tenant. When no user ID is known for both
+// sides, only equal subject strings match.
+func (s *IAMServer) samePrincipal(ctx context.Context, tenantID string, caller interfaces.Subject, granted *platformtoken.AuthorizedContext) bool {
+	callerUserID := caller.UserID
+	if callerUserID == 0 && caller.IDKind == interfaces.SubjectIDUsername && tenantID != "" && s.iamService != nil {
+		if user, err := s.iamService.GetUserByUsername(ctx, tenantID, caller.ID); err == nil && user != nil {
+			callerUserID = user.ID
+		}
+	}
+	if granted.UserID != 0 && callerUserID != 0 {
+		return granted.UserID == callerUserID
+	}
+	return granted.Subject == caller.ID
 }
 
 // =============================================================================
@@ -440,6 +512,13 @@ func (s *IAMServer) UpdateUser(ctx context.Context, req *iampb.UpdateUserRequest
 	userID, err := parseUserID("user_id", req.UserId)
 	if err != nil {
 		return nil, err
+	}
+	// Attributes are authorization data: writing them needs roles:assign
+	// exactly as naming roles does, checked before any write.
+	if len(req.GetRoles()) > 0 || len(req.GetAttributes()) > 0 {
+		if err := s.requireRoleAssign(ctx, req.TenantId); err != nil {
+			return nil, err
+		}
 	}
 
 	user := &iam.User{
@@ -1918,6 +1997,18 @@ func (s *IAMServer) RequestDeletion(ctx context.Context, req *iampb.RequestDelet
 	if err != nil {
 		return nil, err
 	}
+	// A grace period of zero makes the manager erase the user's data at once,
+	// which is ProcessDeletion's work and not this verb's. proto3 cannot tell
+	// an omitted grace_period_days from an explicit 0, so both take the
+	// default grace period, as an omitted field does over MCP; a negative
+	// value is refused.
+	if req.GracePeriodDays < 0 {
+		return nil, status.Error(codes.InvalidArgument, "grace_period_days must not be negative")
+	}
+	gracePeriodDays := int(req.GracePeriodDays)
+	if gracePeriodDays == 0 {
+		gracePeriodDays = iam.DefaultGracePeriodDays
+	}
 	deletionReq, err := s.iamService.RequestDeletion(
 		ctx,
 		req.TenantId,
@@ -1926,7 +2017,7 @@ func (s *IAMServer) RequestDeletion(ctx context.Context, req *iampb.RequestDelet
 		req.Reason,
 		req.DeleteCategories,
 		req.PreserveCategories,
-		int(req.GracePeriodDays),
+		gracePeriodDays,
 	)
 	if err != nil {
 		return nil, convertIAMError(err)

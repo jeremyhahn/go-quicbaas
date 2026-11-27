@@ -17,10 +17,15 @@ import (
 // userGrants is the grant of each quicbaas.iam.v1.IAMService user verb the
 // CLI calls over gRPC that is mapped by parity with the other gRPC user
 // surface. Unmapped, RequireAuthz refuses each one for every caller, so
-// `iam user create` over gRPC fails with "method not authorized".
+// `iam user create`, `iam user list` and `iam user delete` over gRPC fail
+// with "method not authorized".
 var userGrants = map[string]methodPermission{
 	// Mirrors /qrdb.v1.QRDBService/CreateUser (users:create).
 	"/quicbaas.iam.v1.IAMService/CreateUser": {"users", "create"},
+	// Mirrors /qrdb.v1.QRDBService/ListUsers (users:list).
+	"/quicbaas.iam.v1.IAMService/ListUsers": {"users", "list"},
+	// Mirrors /qrdb.v1.QRDBService/DeleteUser (users:delete).
+	"/quicbaas.iam.v1.IAMService/DeleteUser": {"users", "delete"},
 }
 
 func TestUserGRPCResourceAndAction(t *testing.T) {
@@ -36,10 +41,14 @@ func TestUserGRPCAuthorization(t *testing.T) {
 // grantEnforcedRequest is the request requireGRPCGrantEnforced sends for
 // method: a typed request whose fields demand nothing beyond the method's
 // grant when the method has a grpcRequestPermissions entry (which refuses a
-// nil request), and nil otherwise.
+// nil request), and nil otherwise. CreateUser and UpdateUser get a typed
+// request with no roles, so each needs only its method's grant.
 func grantEnforcedRequest(method string) interface{} {
-	if method == "/quicbaas.iam.v1.IAMService/CreateUser" {
+	switch method {
+	case "/quicbaas.iam.v1.IAMService/CreateUser":
 		return &iampb.CreateUserRequest{}
+	case "/quicbaas.iam.v1.IAMService/UpdateUser":
+		return &iampb.UpdateUserRequest{}
 	}
 	return nil
 }
@@ -48,6 +57,10 @@ type grantSetAuthorizer struct {
 	token   string
 	granted map[string]bool
 	asked   []string
+	// subject and tenantID are the principal the token resolves to; empty
+	// unless a test needs the granted identity bound to the caller.
+	subject  string
+	tenantID string
 }
 
 func (g *grantSetAuthorizer) Authorize(_ context.Context, token, requiredPerm, _, _, _ string) (*platformtoken.AuthorizedContext, error) {
@@ -58,7 +71,7 @@ func (g *grantSetAuthorizer) Authorize(_ context.Context, token, requiredPerm, _
 	if !g.granted[requiredPerm] {
 		return nil, &platformtoken.ScopeDeniedError{Required: requiredPerm}
 	}
-	return &platformtoken.AuthorizedContext{}, nil
+	return &platformtoken.AuthorizedContext{Subject: g.subject, TenantID: g.tenantID}, nil
 }
 
 // TestUserGRPCCreateWithRolesRequiresRolesAssign pins go-qrdb's native
@@ -117,6 +130,84 @@ func TestUserGRPCCreateWithRolesRequiresRolesAssign(t *testing.T) {
 
 	t.Run("request of another type", func(t *testing.T) {
 		_, called, err := run(t, []string{"users:create", "roles:assign"}, &iampb.GetUserRequest{})
+		require.Error(t, err)
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+		assert.False(t, called)
+	})
+}
+
+// TestUserGRPCUpdateWithRolesRequiresRolesAssign pins that an UpdateUser
+// request naming roles takes roles:assign on top of its users:update
+// grant (the users grant GetUser, ListUsers and DeleteUser also take), and that one without roles takes only users:update.
+func TestUserGRPCUpdateWithRolesRequiresRolesAssign(t *testing.T) {
+	const method = "/quicbaas.iam.v1.IAMService/UpdateUser"
+	info := &grpc.UnaryServerInfo{FullMethod: method}
+
+	run := func(t *testing.T, granted []string, req interface{}) (*grantSetAuthorizer, bool, error) {
+		t.Helper()
+		authz := &grantSetAuthorizer{token: "tok", granted: map[string]bool{}}
+		for _, p := range granted {
+			authz.granted[p] = true
+		}
+		called := false
+		handler := func(context.Context, interface{}) (interface{}, error) {
+			called = true
+			return "ok", nil
+		}
+		_, err := UnaryAuthorizationInterceptor(authz)(ctxWithBearer("tok"), req, info, handler)
+		return authz, called, err
+	}
+
+	t.Run("users:update only, roles named", func(t *testing.T) {
+		authz, called, err := run(t, []string{"users:update"},
+			&iampb.UpdateUserRequest{Roles: []string{"admin"}})
+		require.Error(t, err)
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+		assert.False(t, called, "handler must not run without roles:assign")
+		assert.Equal(t, []string{"users:update", "roles:assign"}, authz.asked)
+	})
+
+	t.Run("users:update only, no roles", func(t *testing.T) {
+		authz, called, err := run(t, []string{"users:update"}, &iampb.UpdateUserRequest{Name: "n"})
+		require.NoError(t, err)
+		assert.True(t, called)
+		assert.Equal(t, []string{"users:update"}, authz.asked)
+	})
+
+	t.Run("users:update only, attributes only", func(t *testing.T) {
+		authz, called, err := run(t, []string{"users:update"},
+			&iampb.UpdateUserRequest{Attributes: map[string]string{"department": "finance"}})
+		require.Error(t, err)
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+		assert.False(t, called, "handler must not run: attribute writes need roles:assign")
+		assert.Equal(t, []string{"users:update", "roles:assign"}, authz.asked)
+	})
+
+	t.Run("users:update and roles:assign, attributes only", func(t *testing.T) {
+		authz, called, err := run(t, []string{"users:update", "roles:assign"},
+			&iampb.UpdateUserRequest{Attributes: map[string]string{"department": "finance"}})
+		require.NoError(t, err)
+		assert.True(t, called)
+		assert.Equal(t, []string{"users:update", "roles:assign"}, authz.asked)
+	})
+
+	t.Run("users:update and roles:assign, roles named", func(t *testing.T) {
+		authz, called, err := run(t, []string{"users:update", "roles:assign"},
+			&iampb.UpdateUserRequest{Roles: []string{"admin"}})
+		require.NoError(t, err)
+		assert.True(t, called)
+		assert.Equal(t, []string{"users:update", "roles:assign"}, authz.asked)
+	})
+
+	t.Run("nil request", func(t *testing.T) {
+		_, called, err := run(t, []string{"users:update", "roles:assign"}, nil)
+		require.Error(t, err)
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+		assert.False(t, called)
+	})
+
+	t.Run("request of another type", func(t *testing.T) {
+		_, called, err := run(t, []string{"users:update", "roles:assign"}, &iampb.GetUserRequest{})
 		require.Error(t, err)
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 		assert.False(t, called)

@@ -230,6 +230,23 @@ var grpcRequestPermissions = map[string]func(req interface{}) ([]methodPermissio
 		}
 		return nil, nil
 	},
+	// An update that names roles replaces the user's role set, which is a
+	// role assignment, so it also needs roles:assign. The handler refuses any
+	// tenant but the caller's (requireCallerTenant), so the table's tenant
+	// rule holds.
+	"/quicbaas.iam.v1.IAMService/UpdateUser": func(req interface{}) ([]methodPermission, error) {
+		r, ok := req.(*iampb.UpdateUserRequest)
+		if !ok {
+			return nil, fmt.Errorf("unexpected request type %T for UpdateUser", req)
+		}
+		// Attributes carry authorization data (go-qrdb's
+		// AuthorizeRoleAssignmentWrite gates attribute writes on roles:assign
+		// too), so an attributes-only update needs it as well.
+		if len(r.GetRoles()) > 0 || len(r.GetAttributes()) > 0 {
+			return []methodPermission{{"roles", "assign"}}, nil
+		}
+		return nil, nil
+	},
 }
 
 // grpcMethodPermissions maps each protected gRPC FullMethod to the qrdb-canonical
@@ -312,8 +329,17 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// also outside brokerServiceDescs; they are mapped below by REST parity,
 	// each taking the grant its REST twin requires (go-quicbaas#1624).
 	//
-	// Every other IAMService method stays unmapped and default-denied; a
-	// method is mapped only by REST parity, taking its REST twin's grant.
+	// A method is mapped only by REST parity, taking exactly its REST twin's
+	// grant; every other IAMService method stays unmapped and default-denied.
+	// GenerateExport and ProcessDeletion stay unmapped by owner ruling: export
+	// generation and erasure processing are refused on every transport.
+	// RequestExport stays unmapped with them: the request starts export
+	// generation in the background with no further check.
+	// The delegated-admin assignment verbs, CheckAdminPermission,
+	// EndImpersonation, GetActiveImpersonations, GetExportStatus,
+	// CancelDeletion and GetDeletionStatus stay unmapped as well: each handler
+	// looks its object up by ID with no tenant check, so a grant would let a
+	// caller reach another tenant's record.
 	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
 	"/quicbaas.iam.v1.IAMService/ApproveUser": {"users", "enable"},
 	// Mirrors QRDBService CreateUser (users:create). A request naming roles
@@ -326,6 +352,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/ListWebAuthnCredentials":   {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential":  {"users", "delete"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials": {"users", "delete"},
+	// Mirror QRDBService ListUsers (users:list).
+	"/quicbaas.iam.v1.IAMService/ListUsers": {"users", "list"},
+	// Mirror QRDBService DeleteUser (users:delete).
+	"/quicbaas.iam.v1.IAMService/DeleteUser": {"users", "delete"},
 
 	// ---- quicbaas.iam.v1.IAMService: built-in role reconciliation ----
 	//
@@ -355,6 +385,67 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/ListTenants":  {"tenants", "list"},
 	"/quicbaas.iam.v1.IAMService/UpdateTenant": {"tenants", "create"},
 	"/quicbaas.iam.v1.IAMService/DeleteTenant": {"tenants", "delete"},
+
+	// ---- IAMService apps, policies, roles, delegated admin, gdpr, UpdateUser ----
+	//
+	// By owner ruling each takes exactly its REST route's grant
+	// (pkg/api/rest/routes_permissions_generated.go), nothing wider. Paths
+	// under .../ are /api/v1/tenants/{tenant_id}/.
+
+	// Mirrors REST POST .../apps/ (tenants:create).
+	"/quicbaas.iam.v1.IAMService/RegisterApp": {"tenants", "create"},
+	// Mirrors REST GET .../apps/{client_id} (tenants:read).
+	"/quicbaas.iam.v1.IAMService/GetApp": {"tenants", "read"},
+	// Mirrors REST GET .../apps/ (tenants:read).
+	"/quicbaas.iam.v1.IAMService/ListApps": {"tenants", "read"},
+	// Mirrors REST PUT .../apps/{client_id} (tenants:create).
+	"/quicbaas.iam.v1.IAMService/UpdateApp": {"tenants", "create"},
+	// Mirrors REST DELETE .../apps/{client_id} (tenants:delete).
+	"/quicbaas.iam.v1.IAMService/DeleteApp": {"tenants", "delete"},
+	// Mirrors REST POST .../apps/{client_id}/rotate-secret (tenants:create).
+	"/quicbaas.iam.v1.IAMService/RotateAppSecret": {"tenants", "create"},
+
+	// Mirrors REST POST .../policies/ (tenants:create).
+	"/quicbaas.iam.v1.IAMService/CreatePolicy": {"tenants", "create"},
+	// Mirrors REST GET .../policies/{policy_name} (tenants:read).
+	"/quicbaas.iam.v1.IAMService/GetPolicy": {"tenants", "read"},
+	// Mirrors REST GET .../policies/ (tenants:read).
+	"/quicbaas.iam.v1.IAMService/ListPolicies": {"tenants", "read"},
+	// Mirrors REST PUT .../policies/{policy_name} (tenants:create).
+	"/quicbaas.iam.v1.IAMService/UpdatePolicy": {"tenants", "create"},
+	// Mirrors REST DELETE .../policies/{policy_name} (tenants:delete).
+	"/quicbaas.iam.v1.IAMService/DeletePolicy": {"tenants", "delete"},
+	// Mirrors REST POST .../policies/test (tenants:create).
+	"/quicbaas.iam.v1.IAMService/TestPolicy": {"tenants", "create"},
+	// Mirrors REST POST .../policies/validate (tenants:create).
+	"/quicbaas.iam.v1.IAMService/ValidatePolicy": {"tenants", "create"},
+
+	// Takes the same tenant-scoped roles:assign grant as the QuicBaaS
+	// service's AssignRole (REST's tenants:create is a system-scope grant).
+	"/quicbaas.iam.v1.IAMService/AssignRole": {"roles", "assign"},
+	// Takes the same tenant-scoped roles:unassign grant as the QuicBaaS
+	// service's RevokeRole (REST's tenants:delete is a system-scope grant).
+	"/quicbaas.iam.v1.IAMService/RevokeRole": {"roles", "unassign"},
+
+	// Mirrors REST POST /api/v1/admin/impersonation/start (users:update).
+	"/quicbaas.iam.v1.IAMService/StartImpersonation": {"users", "update"},
+
+	// Mirrors REST POST .../users/{user_id}/gdpr/consent (tenants:create).
+	"/quicbaas.iam.v1.IAMService/GrantConsent": {"tenants", "create"},
+	// Mirrors REST PUT .../users/{user_id}/gdpr/consent/{purpose}/withdraw (tenants:create).
+	"/quicbaas.iam.v1.IAMService/WithdrawConsent": {"tenants", "create"},
+	// Mirrors REST GET .../users/{user_id}/gdpr/consent/{purpose} (tenants:read).
+	"/quicbaas.iam.v1.IAMService/GetConsent": {"tenants", "read"},
+	// Mirrors REST GET .../users/{user_id}/gdpr/consents (tenants:read).
+	"/quicbaas.iam.v1.IAMService/ListUserConsents": {"tenants", "read"},
+
+	// Mirrors REST POST .../users/{user_id}/gdpr/deletion (tenants:create).
+	"/quicbaas.iam.v1.IAMService/RequestDeletion": {"tenants", "create"},
+
+	// UpdateUser takes users:update, as GetUser takes users:read, ListUsers
+	// users:list and DeleteUser users:delete. A request naming roles also
+	// takes roles:assign (grpcRequestPermissions).
+	"/quicbaas.iam.v1.IAMService/UpdateUser": {"users", "update"},
 
 	// ---- quicbaas.iam.v1.FederationService: providers and account links ----
 	//

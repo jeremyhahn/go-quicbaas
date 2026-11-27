@@ -96,11 +96,15 @@ type IAMServiceClient interface {
 	ListTenants(ctx context.Context, in *ListTenantsRequest, opts ...grpc.CallOption) (*ListTenantsResponse, error)
 	ProvisionTenant(ctx context.Context, in *ProvisionTenantRequest, opts ...grpc.CallOption) (*ProvisionTenantResponse, error)
 	// User management
+	// CreateUser takes users:create, the grant QRDBService's CreateUser takes.
 	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*User, error)
 	// GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
 	GetUser(ctx context.Context, in *GetUserRequest, opts ...grpc.CallOption) (*User, error)
+	// UpdateUser takes users:update, as GetUser, ListUsers and DeleteUser take their users grant. A request naming roles also takes roles:assign.
 	UpdateUser(ctx context.Context, in *UpdateUserRequest, opts ...grpc.CallOption) (*User, error)
+	// DeleteUser takes users:delete, the grant QRDBService's DeleteUser takes.
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
+	// ListUsers takes users:list, the grant QRDBService's ListUsers takes.
 	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
 	// GetUserByUsername is the tenant-scoped username lookup. Like GetUser it
 	// takes users:read, the grant QRDBService's user reads take.
@@ -136,7 +140,11 @@ type IAMServiceClient interface {
 	UpdateRole(ctx context.Context, in *UpdateRoleRequest, opts ...grpc.CallOption) (*Role, error)
 	DeleteRole(ctx context.Context, in *DeleteRoleRequest, opts ...grpc.CallOption) (*DeleteRoleResponse, error)
 	ListRoles(ctx context.Context, in *ListRolesRequest, opts ...grpc.CallOption) (*ListRolesResponse, error)
+	// AssignRole takes the tenant-scoped roles:assign grant, as the QuicBaaS
+	// service's AssignRole does (REST's tenants:create grant is system-scope).
 	AssignRole(ctx context.Context, in *AssignRoleRequest, opts ...grpc.CallOption) (*AssignRoleResponse, error)
+	// RevokeRole takes the tenant-scoped roles:unassign grant, as the QuicBaaS
+	// service's RevokeRole does (REST's tenants:delete grant is system-scope).
 	RevokeRole(ctx context.Context, in *RevokeRoleRequest, opts ...grpc.CallOption) (*RevokeRoleResponse, error)
 	// ReconcileRoles converges a tenant's stored built-in roles onto the
 	// definitions the running build carries. It takes the role-create family
@@ -148,43 +156,74 @@ type IAMServiceClient interface {
 	// TestGRPCPermissions_ProtoOptionMatchesAuthzMapping.
 	ReconcileRoles(ctx context.Context, in *ReconcileRolesRequest, opts ...grpc.CallOption) (*ReconcileRolesResponse, error)
 	// Application (OAuth client) management
+	// RegisterApp mirrors REST POST /api/v1/tenants/{tenant_id}/apps/ and takes its tenants:create grant.
 	RegisterApp(ctx context.Context, in *RegisterAppRequest, opts ...grpc.CallOption) (*Application, error)
+	// GetApp mirrors REST GET /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:read grant.
 	GetApp(ctx context.Context, in *GetAppRequest, opts ...grpc.CallOption) (*Application, error)
+	// UpdateApp mirrors REST PUT /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:create grant.
 	UpdateApp(ctx context.Context, in *UpdateAppRequest, opts ...grpc.CallOption) (*Application, error)
+	// DeleteApp mirrors REST DELETE /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:delete grant.
 	DeleteApp(ctx context.Context, in *DeleteAppRequest, opts ...grpc.CallOption) (*DeleteAppResponse, error)
+	// ListApps mirrors REST GET /api/v1/tenants/{tenant_id}/apps/ and takes its tenants:read grant.
 	ListApps(ctx context.Context, in *ListAppsRequest, opts ...grpc.CallOption) (*ListAppsResponse, error)
+	// RotateAppSecret mirrors REST POST /api/v1/tenants/{tenant_id}/apps/{client_id}/rotate-secret and takes its tenants:create grant.
 	RotateAppSecret(ctx context.Context, in *RotateAppSecretRequest, opts ...grpc.CallOption) (*Application, error)
 	// Policy management
+	// CreatePolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/ and takes its tenants:create grant.
 	CreatePolicy(ctx context.Context, in *CreatePolicyRequest, opts ...grpc.CallOption) (*Policy, error)
+	// GetPolicy mirrors REST GET /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:read grant.
 	GetPolicy(ctx context.Context, in *GetPolicyRequest, opts ...grpc.CallOption) (*Policy, error)
+	// UpdatePolicy mirrors REST PUT /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:create grant.
 	UpdatePolicy(ctx context.Context, in *UpdatePolicyRequest, opts ...grpc.CallOption) (*Policy, error)
+	// DeletePolicy mirrors REST DELETE /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:delete grant.
 	DeletePolicy(ctx context.Context, in *DeletePolicyRequest, opts ...grpc.CallOption) (*DeletePolicyResponse, error)
+	// ListPolicies mirrors REST GET /api/v1/tenants/{tenant_id}/policies/ and takes its tenants:read grant.
 	ListPolicies(ctx context.Context, in *ListPoliciesRequest, opts ...grpc.CallOption) (*ListPoliciesResponse, error)
+	// ValidatePolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/validate and takes its tenants:create grant.
 	ValidatePolicy(ctx context.Context, in *ValidatePolicyRequest, opts ...grpc.CallOption) (*ValidatePolicyResponse, error)
+	// TestPolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/test and takes its tenants:create grant.
 	TestPolicy(ctx context.Context, in *TestPolicyRequest, opts ...grpc.CallOption) (*TestPolicyResponse, error)
 	// Delegated Administration
+	// CreateAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	CreateAdminAssignment(ctx context.Context, in *CreateAdminAssignmentRequest, opts ...grpc.CallOption) (*AdminAssignment, error)
+	// GetAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	GetAdminAssignment(ctx context.Context, in *GetAdminAssignmentRequest, opts ...grpc.CallOption) (*AdminAssignment, error)
+	// UpdateAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	UpdateAdminAssignment(ctx context.Context, in *UpdateAdminAssignmentRequest, opts ...grpc.CallOption) (*AdminAssignment, error)
+	// DeleteAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	DeleteAdminAssignment(ctx context.Context, in *DeleteAdminAssignmentRequest, opts ...grpc.CallOption) (*DeleteAdminAssignmentResponse, error)
+	// ListAdminAssignments carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	ListAdminAssignments(ctx context.Context, in *ListAdminAssignmentsRequest, opts ...grpc.CallOption) (*AdminAssignmentList, error)
+	// CheckAdminPermission carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	CheckAdminPermission(ctx context.Context, in *CheckAdminPermissionRequest, opts ...grpc.CallOption) (*CheckAdminPermissionResponse, error)
+	// StartImpersonation mirrors REST POST /api/v1/admin/impersonation/start and takes its users:update grant.
 	StartImpersonation(ctx context.Context, in *StartImpersonationRequest, opts ...grpc.CallOption) (*ImpersonationSession, error)
+	// EndImpersonation carries no permission option: its handler looks the impersonation session up by ID with no tenant check, so it stays default-denied.
 	EndImpersonation(ctx context.Context, in *EndImpersonationRequest, opts ...grpc.CallOption) (*EndImpersonationResponse, error)
+	// GetActiveImpersonations carries no permission option: its handler looks the target user's sessions up by ID with no tenant check, so it stays default-denied.
 	GetActiveImpersonations(ctx context.Context, in *GetActiveImpersonationsRequest, opts ...grpc.CallOption) (*ImpersonationSessionList, error)
 	// GDPR Consent Management
+	// GrantConsent mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent and takes its tenants:create grant.
 	GrantConsent(ctx context.Context, in *GrantConsentRequest, opts ...grpc.CallOption) (*Consent, error)
+	// WithdrawConsent mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose}/withdraw and takes its tenants:create grant.
 	WithdrawConsent(ctx context.Context, in *WithdrawConsentRequest, opts ...grpc.CallOption) (*WithdrawConsentResponse, error)
+	// GetConsent mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose} and takes its tenants:read grant.
 	GetConsent(ctx context.Context, in *GetConsentRequest, opts ...grpc.CallOption) (*Consent, error)
+	// ListUserConsents mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consents and takes its tenants:read grant.
 	ListUserConsents(ctx context.Context, in *ListUserConsentsRequest, opts ...grpc.CallOption) (*ConsentList, error)
 	// GDPR Data Export
+	// RequestExport carries no permission option: it starts export generation in the background with no further check, so it stays default-denied.
 	RequestExport(ctx context.Context, in *RequestExportRequest, opts ...grpc.CallOption) (*DataExportRequest, error)
+	// GetExportStatus carries no permission option: its handler looks the export request up by ID with no tenant check, so it stays default-denied.
 	GetExportStatus(ctx context.Context, in *GetExportStatusRequest, opts ...grpc.CallOption) (*DataExportRequest, error)
 	GenerateExport(ctx context.Context, in *GenerateExportRequest, opts ...grpc.CallOption) (*UserDataExport, error)
 	// GDPR Data Deletion
+	// RequestDeletion mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion and takes its tenants:create grant.
 	RequestDeletion(ctx context.Context, in *RequestDeletionRequest, opts ...grpc.CallOption) (*DataDeletionRequest, error)
+	// CancelDeletion carries no permission option: its handler looks the deletion request up by ID with no tenant check, so it stays default-denied.
 	CancelDeletion(ctx context.Context, in *CancelDeletionRequest, opts ...grpc.CallOption) (*CancelDeletionResponse, error)
 	ProcessDeletion(ctx context.Context, in *ProcessDeletionRequest, opts ...grpc.CallOption) (*DeletionSummary, error)
+	// GetDeletionStatus carries no permission option: its handler looks the deletion request up by ID with no tenant check, so it stays default-denied.
 	GetDeletionStatus(ctx context.Context, in *GetDeletionStatusRequest, opts ...grpc.CallOption) (*DataDeletionRequest, error)
 }
 
@@ -820,11 +859,15 @@ type IAMServiceServer interface {
 	ListTenants(context.Context, *ListTenantsRequest) (*ListTenantsResponse, error)
 	ProvisionTenant(context.Context, *ProvisionTenantRequest) (*ProvisionTenantResponse, error)
 	// User management
+	// CreateUser takes users:create, the grant QRDBService's CreateUser takes.
 	CreateUser(context.Context, *CreateUserRequest) (*User, error)
 	// GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
 	GetUser(context.Context, *GetUserRequest) (*User, error)
+	// UpdateUser takes users:update, as GetUser, ListUsers and DeleteUser take their users grant. A request naming roles also takes roles:assign.
 	UpdateUser(context.Context, *UpdateUserRequest) (*User, error)
+	// DeleteUser takes users:delete, the grant QRDBService's DeleteUser takes.
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
+	// ListUsers takes users:list, the grant QRDBService's ListUsers takes.
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
 	// GetUserByUsername is the tenant-scoped username lookup. Like GetUser it
 	// takes users:read, the grant QRDBService's user reads take.
@@ -860,7 +903,11 @@ type IAMServiceServer interface {
 	UpdateRole(context.Context, *UpdateRoleRequest) (*Role, error)
 	DeleteRole(context.Context, *DeleteRoleRequest) (*DeleteRoleResponse, error)
 	ListRoles(context.Context, *ListRolesRequest) (*ListRolesResponse, error)
+	// AssignRole takes the tenant-scoped roles:assign grant, as the QuicBaaS
+	// service's AssignRole does (REST's tenants:create grant is system-scope).
 	AssignRole(context.Context, *AssignRoleRequest) (*AssignRoleResponse, error)
+	// RevokeRole takes the tenant-scoped roles:unassign grant, as the QuicBaaS
+	// service's RevokeRole does (REST's tenants:delete grant is system-scope).
 	RevokeRole(context.Context, *RevokeRoleRequest) (*RevokeRoleResponse, error)
 	// ReconcileRoles converges a tenant's stored built-in roles onto the
 	// definitions the running build carries. It takes the role-create family
@@ -872,43 +919,74 @@ type IAMServiceServer interface {
 	// TestGRPCPermissions_ProtoOptionMatchesAuthzMapping.
 	ReconcileRoles(context.Context, *ReconcileRolesRequest) (*ReconcileRolesResponse, error)
 	// Application (OAuth client) management
+	// RegisterApp mirrors REST POST /api/v1/tenants/{tenant_id}/apps/ and takes its tenants:create grant.
 	RegisterApp(context.Context, *RegisterAppRequest) (*Application, error)
+	// GetApp mirrors REST GET /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:read grant.
 	GetApp(context.Context, *GetAppRequest) (*Application, error)
+	// UpdateApp mirrors REST PUT /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:create grant.
 	UpdateApp(context.Context, *UpdateAppRequest) (*Application, error)
+	// DeleteApp mirrors REST DELETE /api/v1/tenants/{tenant_id}/apps/{client_id} and takes its tenants:delete grant.
 	DeleteApp(context.Context, *DeleteAppRequest) (*DeleteAppResponse, error)
+	// ListApps mirrors REST GET /api/v1/tenants/{tenant_id}/apps/ and takes its tenants:read grant.
 	ListApps(context.Context, *ListAppsRequest) (*ListAppsResponse, error)
+	// RotateAppSecret mirrors REST POST /api/v1/tenants/{tenant_id}/apps/{client_id}/rotate-secret and takes its tenants:create grant.
 	RotateAppSecret(context.Context, *RotateAppSecretRequest) (*Application, error)
 	// Policy management
+	// CreatePolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/ and takes its tenants:create grant.
 	CreatePolicy(context.Context, *CreatePolicyRequest) (*Policy, error)
+	// GetPolicy mirrors REST GET /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:read grant.
 	GetPolicy(context.Context, *GetPolicyRequest) (*Policy, error)
+	// UpdatePolicy mirrors REST PUT /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:create grant.
 	UpdatePolicy(context.Context, *UpdatePolicyRequest) (*Policy, error)
+	// DeletePolicy mirrors REST DELETE /api/v1/tenants/{tenant_id}/policies/{policy_name} and takes its tenants:delete grant.
 	DeletePolicy(context.Context, *DeletePolicyRequest) (*DeletePolicyResponse, error)
+	// ListPolicies mirrors REST GET /api/v1/tenants/{tenant_id}/policies/ and takes its tenants:read grant.
 	ListPolicies(context.Context, *ListPoliciesRequest) (*ListPoliciesResponse, error)
+	// ValidatePolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/validate and takes its tenants:create grant.
 	ValidatePolicy(context.Context, *ValidatePolicyRequest) (*ValidatePolicyResponse, error)
+	// TestPolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/test and takes its tenants:create grant.
 	TestPolicy(context.Context, *TestPolicyRequest) (*TestPolicyResponse, error)
 	// Delegated Administration
+	// CreateAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	CreateAdminAssignment(context.Context, *CreateAdminAssignmentRequest) (*AdminAssignment, error)
+	// GetAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	GetAdminAssignment(context.Context, *GetAdminAssignmentRequest) (*AdminAssignment, error)
+	// UpdateAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	UpdateAdminAssignment(context.Context, *UpdateAdminAssignmentRequest) (*AdminAssignment, error)
+	// DeleteAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	DeleteAdminAssignment(context.Context, *DeleteAdminAssignmentRequest) (*DeleteAdminAssignmentResponse, error)
+	// ListAdminAssignments carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	ListAdminAssignments(context.Context, *ListAdminAssignmentsRequest) (*AdminAssignmentList, error)
+	// CheckAdminPermission carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	CheckAdminPermission(context.Context, *CheckAdminPermissionRequest) (*CheckAdminPermissionResponse, error)
+	// StartImpersonation mirrors REST POST /api/v1/admin/impersonation/start and takes its users:update grant.
 	StartImpersonation(context.Context, *StartImpersonationRequest) (*ImpersonationSession, error)
+	// EndImpersonation carries no permission option: its handler looks the impersonation session up by ID with no tenant check, so it stays default-denied.
 	EndImpersonation(context.Context, *EndImpersonationRequest) (*EndImpersonationResponse, error)
+	// GetActiveImpersonations carries no permission option: its handler looks the target user's sessions up by ID with no tenant check, so it stays default-denied.
 	GetActiveImpersonations(context.Context, *GetActiveImpersonationsRequest) (*ImpersonationSessionList, error)
 	// GDPR Consent Management
+	// GrantConsent mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent and takes its tenants:create grant.
 	GrantConsent(context.Context, *GrantConsentRequest) (*Consent, error)
+	// WithdrawConsent mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose}/withdraw and takes its tenants:create grant.
 	WithdrawConsent(context.Context, *WithdrawConsentRequest) (*WithdrawConsentResponse, error)
+	// GetConsent mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose} and takes its tenants:read grant.
 	GetConsent(context.Context, *GetConsentRequest) (*Consent, error)
+	// ListUserConsents mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consents and takes its tenants:read grant.
 	ListUserConsents(context.Context, *ListUserConsentsRequest) (*ConsentList, error)
 	// GDPR Data Export
+	// RequestExport carries no permission option: it starts export generation in the background with no further check, so it stays default-denied.
 	RequestExport(context.Context, *RequestExportRequest) (*DataExportRequest, error)
+	// GetExportStatus carries no permission option: its handler looks the export request up by ID with no tenant check, so it stays default-denied.
 	GetExportStatus(context.Context, *GetExportStatusRequest) (*DataExportRequest, error)
 	GenerateExport(context.Context, *GenerateExportRequest) (*UserDataExport, error)
 	// GDPR Data Deletion
+	// RequestDeletion mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion and takes its tenants:create grant.
 	RequestDeletion(context.Context, *RequestDeletionRequest) (*DataDeletionRequest, error)
+	// CancelDeletion carries no permission option: its handler looks the deletion request up by ID with no tenant check, so it stays default-denied.
 	CancelDeletion(context.Context, *CancelDeletionRequest) (*CancelDeletionResponse, error)
 	ProcessDeletion(context.Context, *ProcessDeletionRequest) (*DeletionSummary, error)
+	// GetDeletionStatus carries no permission option: its handler looks the deletion request up by ID with no tenant check, so it stays default-denied.
 	GetDeletionStatus(context.Context, *GetDeletionStatusRequest) (*DataDeletionRequest, error)
 }
 
@@ -2486,7 +2564,10 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Policy Enforcement Point Service
+// # Policy Enforcement Point Service
+//
+// Check and CheckBatch take the grant their REST twins take
+// (permissions:resolve). Subscribe carries none and is default-denied.
 type PEPServiceClient interface {
 	// Single authorization check
 	Check(ctx context.Context, in *CheckRequest, opts ...grpc.CallOption) (*CheckResponse, error)
@@ -2547,7 +2628,10 @@ type PEPService_SubscribeClient = grpc.ServerStreamingClient[PolicyUpdate]
 // All implementations should embed UnimplementedPEPServiceServer
 // for forward compatibility.
 //
-// Policy Enforcement Point Service
+// # Policy Enforcement Point Service
+//
+// Check and CheckBatch take the grant their REST twins take
+// (permissions:resolve). Subscribe carries none and is default-denied.
 type PEPServiceServer interface {
 	// Single authorization check
 	Check(context.Context, *CheckRequest) (*CheckResponse, error)

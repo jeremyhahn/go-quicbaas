@@ -14790,7 +14790,7 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x19PROVIDER_TYPE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12PROVIDER_TYPE_OIDC\x10\x01\x12\x16\n" +
 	"\x12PROVIDER_TYPE_SAML\x10\x02\x12\x18\n" +
-	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\xf9-\n" +
+	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\xc11\n" +
 	"\n" +
 	"IAMService\x12a\n" +
 	"\fCreateTenant\x12$.quicbaas.iam.v1.CreateTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\"\x12\xc2\xf3\x18\x0etenants:create\x12Y\n" +
@@ -14802,12 +14802,13 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\n" +
 	"CreateUser\x12\".quicbaas.iam.v1.CreateUserRequest\x1a\x15.quicbaas.iam.v1.User\"\x10\xc2\xf3\x18\fusers:create\x12Q\n" +
 	"\aGetUser\x12\x1f.quicbaas.iam.v1.GetUserRequest\x1a\x15.quicbaas.iam.v1.User\"\x0e\xc2\xf3\x18\n" +
-	"users:read\x12G\n" +
+	"users:read\x12Y\n" +
 	"\n" +
-	"UpdateUser\x12\".quicbaas.iam.v1.UpdateUserRequest\x1a\x15.quicbaas.iam.v1.User\x12U\n" +
+	"UpdateUser\x12\".quicbaas.iam.v1.UpdateUserRequest\x1a\x15.quicbaas.iam.v1.User\"\x10\xc2\xf3\x18\fusers:update\x12g\n" +
 	"\n" +
-	"DeleteUser\x12\".quicbaas.iam.v1.DeleteUserRequest\x1a#.quicbaas.iam.v1.DeleteUserResponse\x12R\n" +
-	"\tListUsers\x12!.quicbaas.iam.v1.ListUsersRequest\x1a\".quicbaas.iam.v1.ListUsersResponse\x12e\n" +
+	"DeleteUser\x12\".quicbaas.iam.v1.DeleteUserRequest\x1a#.quicbaas.iam.v1.DeleteUserResponse\"\x10\xc2\xf3\x18\fusers:delete\x12b\n" +
+	"\tListUsers\x12!.quicbaas.iam.v1.ListUsersRequest\x1a\".quicbaas.iam.v1.ListUsersResponse\"\x0e\xc2\xf3\x18\n" +
+	"users:list\x12e\n" +
 	"\x11GetUserByUsername\x12).quicbaas.iam.v1.GetUserByUsernameRequest\x1a\x15.quicbaas.iam.v1.User\"\x0e\xc2\xf3\x18\n" +
 	"users:read\x12j\n" +
 	"\vApproveUser\x12#.quicbaas.iam.v1.ApproveUserRequest\x1a$.quicbaas.iam.v1.ApproveUserResponse\"\x10\xc2\xf3\x18\fusers:enable\x12\x8c\x01\n" +
@@ -14826,44 +14827,44 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"UpdateRole\x12\".quicbaas.iam.v1.UpdateRoleRequest\x1a\x15.quicbaas.iam.v1.Role\x12U\n" +
 	"\n" +
 	"DeleteRole\x12\".quicbaas.iam.v1.DeleteRoleRequest\x1a#.quicbaas.iam.v1.DeleteRoleResponse\x12R\n" +
-	"\tListRoles\x12!.quicbaas.iam.v1.ListRolesRequest\x1a\".quicbaas.iam.v1.ListRolesResponse\x12U\n" +
+	"\tListRoles\x12!.quicbaas.iam.v1.ListRolesRequest\x1a\".quicbaas.iam.v1.ListRolesResponse\x12g\n" +
 	"\n" +
-	"AssignRole\x12\".quicbaas.iam.v1.AssignRoleRequest\x1a#.quicbaas.iam.v1.AssignRoleResponse\x12U\n" +
+	"AssignRole\x12\".quicbaas.iam.v1.AssignRoleRequest\x1a#.quicbaas.iam.v1.AssignRoleResponse\"\x10\xc2\xf3\x18\froles:assign\x12i\n" +
 	"\n" +
-	"RevokeRole\x12\".quicbaas.iam.v1.RevokeRoleRequest\x1a#.quicbaas.iam.v1.RevokeRoleResponse\x12s\n" +
-	"\x0eReconcileRoles\x12&.quicbaas.iam.v1.ReconcileRolesRequest\x1a'.quicbaas.iam.v1.ReconcileRolesResponse\"\x10\xc2\xf3\x18\froles:create\x12P\n" +
-	"\vRegisterApp\x12#.quicbaas.iam.v1.RegisterAppRequest\x1a\x1c.quicbaas.iam.v1.Application\x12F\n" +
-	"\x06GetApp\x12\x1e.quicbaas.iam.v1.GetAppRequest\x1a\x1c.quicbaas.iam.v1.Application\x12L\n" +
-	"\tUpdateApp\x12!.quicbaas.iam.v1.UpdateAppRequest\x1a\x1c.quicbaas.iam.v1.Application\x12R\n" +
-	"\tDeleteApp\x12!.quicbaas.iam.v1.DeleteAppRequest\x1a\".quicbaas.iam.v1.DeleteAppResponse\x12O\n" +
-	"\bListApps\x12 .quicbaas.iam.v1.ListAppsRequest\x1a!.quicbaas.iam.v1.ListAppsResponse\x12X\n" +
-	"\x0fRotateAppSecret\x12'.quicbaas.iam.v1.RotateAppSecretRequest\x1a\x1c.quicbaas.iam.v1.Application\x12M\n" +
-	"\fCreatePolicy\x12$.quicbaas.iam.v1.CreatePolicyRequest\x1a\x17.quicbaas.iam.v1.Policy\x12G\n" +
-	"\tGetPolicy\x12!.quicbaas.iam.v1.GetPolicyRequest\x1a\x17.quicbaas.iam.v1.Policy\x12M\n" +
-	"\fUpdatePolicy\x12$.quicbaas.iam.v1.UpdatePolicyRequest\x1a\x17.quicbaas.iam.v1.Policy\x12[\n" +
-	"\fDeletePolicy\x12$.quicbaas.iam.v1.DeletePolicyRequest\x1a%.quicbaas.iam.v1.DeletePolicyResponse\x12[\n" +
-	"\fListPolicies\x12$.quicbaas.iam.v1.ListPoliciesRequest\x1a%.quicbaas.iam.v1.ListPoliciesResponse\x12a\n" +
-	"\x0eValidatePolicy\x12&.quicbaas.iam.v1.ValidatePolicyRequest\x1a'.quicbaas.iam.v1.ValidatePolicyResponse\x12U\n" +
+	"RevokeRole\x12\".quicbaas.iam.v1.RevokeRoleRequest\x1a#.quicbaas.iam.v1.RevokeRoleResponse\"\x12\xc2\xf3\x18\x0eroles:unassign\x12s\n" +
+	"\x0eReconcileRoles\x12&.quicbaas.iam.v1.ReconcileRolesRequest\x1a'.quicbaas.iam.v1.ReconcileRolesResponse\"\x10\xc2\xf3\x18\froles:create\x12d\n" +
+	"\vRegisterApp\x12#.quicbaas.iam.v1.RegisterAppRequest\x1a\x1c.quicbaas.iam.v1.Application\"\x12\xc2\xf3\x18\x0etenants:create\x12X\n" +
+	"\x06GetApp\x12\x1e.quicbaas.iam.v1.GetAppRequest\x1a\x1c.quicbaas.iam.v1.Application\"\x10\xc2\xf3\x18\ftenants:read\x12`\n" +
+	"\tUpdateApp\x12!.quicbaas.iam.v1.UpdateAppRequest\x1a\x1c.quicbaas.iam.v1.Application\"\x12\xc2\xf3\x18\x0etenants:create\x12f\n" +
+	"\tDeleteApp\x12!.quicbaas.iam.v1.DeleteAppRequest\x1a\".quicbaas.iam.v1.DeleteAppResponse\"\x12\xc2\xf3\x18\x0etenants:delete\x12a\n" +
+	"\bListApps\x12 .quicbaas.iam.v1.ListAppsRequest\x1a!.quicbaas.iam.v1.ListAppsResponse\"\x10\xc2\xf3\x18\ftenants:read\x12l\n" +
+	"\x0fRotateAppSecret\x12'.quicbaas.iam.v1.RotateAppSecretRequest\x1a\x1c.quicbaas.iam.v1.Application\"\x12\xc2\xf3\x18\x0etenants:create\x12a\n" +
+	"\fCreatePolicy\x12$.quicbaas.iam.v1.CreatePolicyRequest\x1a\x17.quicbaas.iam.v1.Policy\"\x12\xc2\xf3\x18\x0etenants:create\x12Y\n" +
+	"\tGetPolicy\x12!.quicbaas.iam.v1.GetPolicyRequest\x1a\x17.quicbaas.iam.v1.Policy\"\x10\xc2\xf3\x18\ftenants:read\x12a\n" +
+	"\fUpdatePolicy\x12$.quicbaas.iam.v1.UpdatePolicyRequest\x1a\x17.quicbaas.iam.v1.Policy\"\x12\xc2\xf3\x18\x0etenants:create\x12o\n" +
+	"\fDeletePolicy\x12$.quicbaas.iam.v1.DeletePolicyRequest\x1a%.quicbaas.iam.v1.DeletePolicyResponse\"\x12\xc2\xf3\x18\x0etenants:delete\x12m\n" +
+	"\fListPolicies\x12$.quicbaas.iam.v1.ListPoliciesRequest\x1a%.quicbaas.iam.v1.ListPoliciesResponse\"\x10\xc2\xf3\x18\ftenants:read\x12u\n" +
+	"\x0eValidatePolicy\x12&.quicbaas.iam.v1.ValidatePolicyRequest\x1a'.quicbaas.iam.v1.ValidatePolicyResponse\"\x12\xc2\xf3\x18\x0etenants:create\x12i\n" +
 	"\n" +
-	"TestPolicy\x12\".quicbaas.iam.v1.TestPolicyRequest\x1a#.quicbaas.iam.v1.TestPolicyResponse\x12h\n" +
+	"TestPolicy\x12\".quicbaas.iam.v1.TestPolicyRequest\x1a#.quicbaas.iam.v1.TestPolicyResponse\"\x12\xc2\xf3\x18\x0etenants:create\x12h\n" +
 	"\x15CreateAdminAssignment\x12-.quicbaas.iam.v1.CreateAdminAssignmentRequest\x1a .quicbaas.iam.v1.AdminAssignment\x12b\n" +
 	"\x12GetAdminAssignment\x12*.quicbaas.iam.v1.GetAdminAssignmentRequest\x1a .quicbaas.iam.v1.AdminAssignment\x12h\n" +
 	"\x15UpdateAdminAssignment\x12-.quicbaas.iam.v1.UpdateAdminAssignmentRequest\x1a .quicbaas.iam.v1.AdminAssignment\x12v\n" +
 	"\x15DeleteAdminAssignment\x12-.quicbaas.iam.v1.DeleteAdminAssignmentRequest\x1a..quicbaas.iam.v1.DeleteAdminAssignmentResponse\x12j\n" +
 	"\x14ListAdminAssignments\x12,.quicbaas.iam.v1.ListAdminAssignmentsRequest\x1a$.quicbaas.iam.v1.AdminAssignmentList\x12s\n" +
-	"\x14CheckAdminPermission\x12,.quicbaas.iam.v1.CheckAdminPermissionRequest\x1a-.quicbaas.iam.v1.CheckAdminPermissionResponse\x12g\n" +
-	"\x12StartImpersonation\x12*.quicbaas.iam.v1.StartImpersonationRequest\x1a%.quicbaas.iam.v1.ImpersonationSession\x12g\n" +
+	"\x14CheckAdminPermission\x12,.quicbaas.iam.v1.CheckAdminPermissionRequest\x1a-.quicbaas.iam.v1.CheckAdminPermissionResponse\x12y\n" +
+	"\x12StartImpersonation\x12*.quicbaas.iam.v1.StartImpersonationRequest\x1a%.quicbaas.iam.v1.ImpersonationSession\"\x10\xc2\xf3\x18\fusers:update\x12g\n" +
 	"\x10EndImpersonation\x12(.quicbaas.iam.v1.EndImpersonationRequest\x1a).quicbaas.iam.v1.EndImpersonationResponse\x12u\n" +
-	"\x17GetActiveImpersonations\x12/.quicbaas.iam.v1.GetActiveImpersonationsRequest\x1a).quicbaas.iam.v1.ImpersonationSessionList\x12N\n" +
-	"\fGrantConsent\x12$.quicbaas.iam.v1.GrantConsentRequest\x1a\x18.quicbaas.iam.v1.Consent\x12d\n" +
-	"\x0fWithdrawConsent\x12'.quicbaas.iam.v1.WithdrawConsentRequest\x1a(.quicbaas.iam.v1.WithdrawConsentResponse\x12J\n" +
+	"\x17GetActiveImpersonations\x12/.quicbaas.iam.v1.GetActiveImpersonationsRequest\x1a).quicbaas.iam.v1.ImpersonationSessionList\x12b\n" +
+	"\fGrantConsent\x12$.quicbaas.iam.v1.GrantConsentRequest\x1a\x18.quicbaas.iam.v1.Consent\"\x12\xc2\xf3\x18\x0etenants:create\x12x\n" +
+	"\x0fWithdrawConsent\x12'.quicbaas.iam.v1.WithdrawConsentRequest\x1a(.quicbaas.iam.v1.WithdrawConsentResponse\"\x12\xc2\xf3\x18\x0etenants:create\x12\\\n" +
 	"\n" +
-	"GetConsent\x12\".quicbaas.iam.v1.GetConsentRequest\x1a\x18.quicbaas.iam.v1.Consent\x12Z\n" +
-	"\x10ListUserConsents\x12(.quicbaas.iam.v1.ListUserConsentsRequest\x1a\x1c.quicbaas.iam.v1.ConsentList\x12Z\n" +
+	"GetConsent\x12\".quicbaas.iam.v1.GetConsentRequest\x1a\x18.quicbaas.iam.v1.Consent\"\x10\xc2\xf3\x18\ftenants:read\x12l\n" +
+	"\x10ListUserConsents\x12(.quicbaas.iam.v1.ListUserConsentsRequest\x1a\x1c.quicbaas.iam.v1.ConsentList\"\x10\xc2\xf3\x18\ftenants:read\x12Z\n" +
 	"\rRequestExport\x12%.quicbaas.iam.v1.RequestExportRequest\x1a\".quicbaas.iam.v1.DataExportRequest\x12^\n" +
 	"\x0fGetExportStatus\x12'.quicbaas.iam.v1.GetExportStatusRequest\x1a\".quicbaas.iam.v1.DataExportRequest\x12Y\n" +
-	"\x0eGenerateExport\x12&.quicbaas.iam.v1.GenerateExportRequest\x1a\x1f.quicbaas.iam.v1.UserDataExport\x12`\n" +
-	"\x0fRequestDeletion\x12'.quicbaas.iam.v1.RequestDeletionRequest\x1a$.quicbaas.iam.v1.DataDeletionRequest\x12a\n" +
+	"\x0eGenerateExport\x12&.quicbaas.iam.v1.GenerateExportRequest\x1a\x1f.quicbaas.iam.v1.UserDataExport\x12t\n" +
+	"\x0fRequestDeletion\x12'.quicbaas.iam.v1.RequestDeletionRequest\x1a$.quicbaas.iam.v1.DataDeletionRequest\"\x12\xc2\xf3\x18\x0etenants:create\x12a\n" +
 	"\x0eCancelDeletion\x12&.quicbaas.iam.v1.CancelDeletionRequest\x1a'.quicbaas.iam.v1.CancelDeletionResponse\x12\\\n" +
 	"\x0fProcessDeletion\x12'.quicbaas.iam.v1.ProcessDeletionRequest\x1a .quicbaas.iam.v1.DeletionSummary\x12d\n" +
 	"\x11GetDeletionStatus\x12).quicbaas.iam.v1.GetDeletionStatusRequest\x1a$.quicbaas.iam.v1.DataDeletionRequest2\xae\x02\n" +

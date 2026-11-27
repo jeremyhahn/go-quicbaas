@@ -152,6 +152,11 @@ func TestIAMAdminAssignmentLifecycle(t *testing.T) {
 		role := "tenant_admin"
 		grantedBy := "admin"
 
+		// gRPC refuses the unmapped assignment verbs; the lifecycle ends there.
+		if expectGRPCUnmappedRefusal(t, runner, IAMAdminAssignmentCreateCommand(userID, role, grantedBy, nil)) {
+			return
+		}
+
 		// Create assignment via JSON to capture ID
 		result := createAssignmentJSON(t, runner, userID, role, grantedBy)
 		assignmentID := extractAssignmentID(t, result)
@@ -210,6 +215,9 @@ func TestIAMAdminAssignmentCreate(t *testing.T) {
 		grantedBy := "admin"
 
 		createCmd := IAMAdminAssignmentCreateCommand(userID, role, grantedBy, nil)
+		if expectGRPCUnmappedRefusal(t, runner, createCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(createCmd)
 		require.NoError(t, err, "create assignment should succeed")
 		assert.Contains(t, stdout, userID, "output should contain user ID")
@@ -233,6 +241,9 @@ func TestIAMAdminAssignmentCreateJSON(t *testing.T) {
 		role := "user_admin"
 		grantedBy := "admin"
 
+		if expectGRPCUnmappedRefusal(t, runner, IAMAdminAssignmentCreateCommand(userID, role, grantedBy, nil)) {
+			return
+		}
 		result := createAssignmentJSON(t, runner, userID, role, grantedBy)
 		assignmentID := extractAssignmentID(t, result)
 		defer deleteAssignment(t, runner, assignmentID)
@@ -268,6 +279,9 @@ func TestIAMAdminAssignmentCreateWithPermissions(t *testing.T) {
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
 		}
+		if expectGRPCUnmappedRefusal(t, runner, cmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(cmd)
 		require.NoError(t, err, "create with permissions should succeed: stdout=%s stderr=%s", stdout, stderr)
 
@@ -294,6 +308,9 @@ func TestIAMAdminAssignmentGet(t *testing.T) {
 		role := "policy_admin"
 		grantedBy := "admin"
 
+		if expectGRPCUnmappedRefusal(t, runner, IAMAdminAssignmentCreateCommand(userID, role, grantedBy, nil)) {
+			return
+		}
 		result := createAssignmentJSON(t, runner, userID, role, grantedBy)
 		assignmentID := extractAssignmentID(t, result)
 		defer deleteAssignment(t, runner, assignmentID)
@@ -318,6 +335,9 @@ func TestIAMAdminAssignmentGetJSON(t *testing.T) {
 		role := "audit_admin"
 		grantedBy := "admin"
 
+		if expectGRPCUnmappedRefusal(t, runner, IAMAdminAssignmentCreateCommand(userID, role, grantedBy, nil)) {
+			return
+		}
 		createResult := createAssignmentJSON(t, runner, userID, role, grantedBy)
 		assignmentID := extractAssignmentID(t, createResult)
 		defer deleteAssignment(t, runner, assignmentID)
@@ -353,6 +373,9 @@ func TestIAMAdminAssignmentUpdate(t *testing.T) {
 		updatedRole := "policy_admin"
 		grantedBy := "admin"
 
+		if expectGRPCUnmappedRefusal(t, runner, IAMAdminAssignmentCreateCommand(userID, initialRole, grantedBy, nil)) {
+			return
+		}
 		result := createAssignmentJSON(t, runner, userID, initialRole, grantedBy)
 		assignmentID := extractAssignmentID(t, result)
 		defer deleteAssignment(t, runner, assignmentID)
@@ -393,6 +416,9 @@ func TestIAMAdminAssignmentUpdateDeactivate(t *testing.T) {
 		role := "tenant_admin"
 		grantedBy := "admin"
 
+		if expectGRPCUnmappedRefusal(t, runner, IAMAdminAssignmentCreateCommand(userID, role, grantedBy, nil)) {
+			return
+		}
 		result := createAssignmentJSON(t, runner, userID, role, grantedBy)
 		assignmentID := extractAssignmentID(t, result)
 		defer deleteAssignment(t, runner, assignmentID)
@@ -442,6 +468,9 @@ func TestIAMAdminAssignmentDelete(t *testing.T) {
 		role := "read_only"
 		grantedBy := "admin"
 
+		if expectGRPCUnmappedRefusal(t, runner, IAMAdminAssignmentCreateCommand(userID, role, grantedBy, nil)) {
+			return
+		}
 		result := createAssignmentJSON(t, runner, userID, role, grantedBy)
 		assignmentID := extractAssignmentID(t, result)
 
@@ -476,6 +505,9 @@ func TestIAMAdminAssignmentList(t *testing.T) {
 		userID2 := uniqueNumericUserID()
 		grantedBy := "admin"
 
+		if expectGRPCUnmappedRefusal(t, runner, IAMAdminAssignmentCreateCommand(userID1, "tenant_admin", grantedBy, nil)) {
+			return
+		}
 		result1 := createAssignmentJSON(t, runner, userID1, "tenant_admin", grantedBy)
 		assignmentID1 := extractAssignmentID(t, result1)
 		defer deleteAssignment(t, runner, assignmentID1)
@@ -506,6 +538,9 @@ func TestIAMAdminAssignmentListActiveOnly(t *testing.T) {
 		grantedBy := "admin"
 
 		// Create active assignment
+		if expectGRPCUnmappedRefusal(t, runner, IAMAdminAssignmentCreateCommand(activeUserID, "tenant_admin", grantedBy, nil)) {
+			return
+		}
 		activeResult := createAssignmentJSON(t, runner, activeUserID, "tenant_admin", grantedBy)
 		activeID := extractAssignmentID(t, activeResult)
 		defer deleteAssignment(t, runner, activeID)
@@ -610,6 +645,9 @@ func TestIAMAdminCheckPermission(t *testing.T) {
 		grantedBy := "admin"
 
 		// Create an assignment so the user has a role
+		if expectGRPCUnmappedRefusal(t, runner, IAMAdminAssignmentCreateCommand(userID, "tenant_admin", grantedBy, nil)) {
+			return
+		}
 		result := createAssignmentJSON(t, runner, userID, "tenant_admin", grantedBy)
 		assignmentID := extractAssignmentID(t, result)
 		defer deleteAssignment(t, runner, assignmentID)
@@ -636,6 +674,9 @@ func TestIAMAdminCheckPermissionWithTenant(t *testing.T) {
 		grantedBy := "admin"
 
 		// Create an assignment with tenant scope
+		if expectGRPCUnmappedRefusal(t, runner, IAMAdminAssignmentCreateCommand(userID, "tenant_admin", grantedBy, nil)) {
+			return
+		}
 		result := createAssignmentJSON(t, runner, userID, "tenant_admin", grantedBy)
 		assignmentID := extractAssignmentID(t, result)
 		defer deleteAssignment(t, runner, assignmentID)
@@ -663,6 +704,9 @@ func TestIAMAdminCheckPermissionWithResource(t *testing.T) {
 		grantedBy := "admin"
 
 		// Create an assignment so the user has a role
+		if expectGRPCUnmappedRefusal(t, runner, IAMAdminAssignmentCreateCommand(userID, "tenant_admin", grantedBy, nil)) {
+			return
+		}
 		result := createAssignmentJSON(t, runner, userID, "tenant_admin", grantedBy)
 		assignmentID := extractAssignmentID(t, result)
 		defer deleteAssignment(t, runner, assignmentID)

@@ -556,15 +556,44 @@ func (r *ToolRegistry) executeIAMGDPRExportGenerate(ctx context.Context, args ma
 // Deletion Execution Handlers
 // =============================================================================
 
+// deletionGracePeriodDaysArg reads grace_period_days for a deletion request
+// as the gRPC handler does: a negative value is refused as invalid input,
+// and an omitted or explicit 0 takes iam.DefaultGracePeriodDays, so a
+// request never schedules the erasure to run at once.
+func deletionGracePeriodDaysArg(args map[string]interface{}) (int, error) {
+	switch v := args["grace_period_days"].(type) {
+	case float64:
+		if v < 0 {
+			return 0, api.NewInvalidInputError("grace_period_days must not be negative")
+		}
+	case int:
+		if v < 0 {
+			return 0, api.NewInvalidInputError("grace_period_days must not be negative")
+		}
+	case int64:
+		if v < 0 {
+			return 0, api.NewInvalidInputError("grace_period_days must not be negative")
+		}
+	}
+	ints := newIntArgReader(args)
+	days := ints.Int("grace_period_days")
+	if err := ints.Err(); err != nil {
+		return 0, err
+	}
+	if days == 0 {
+		days = iam.DefaultGracePeriodDays
+	}
+	return days, nil
+}
+
 func (r *ToolRegistry) executeIAMGDPRDeletionRequest(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	gdprMgr, err := r.getGDPRManager(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	ints := newIntArgReader(args)
-	gracePeriodDays := ints.IntOr("grace_period_days", 30)
-	if err := ints.Err(); err != nil {
+	gracePeriodDays, err := deletionGracePeriodDaysArg(args)
+	if err != nil {
 		return nil, err
 	}
 
