@@ -2822,6 +2822,9 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	echo "$(YELLOW)Waiting for storage backends (Floci, MinIO, Azurite) to be ready...$(NC)"; \
 	COMPOSE="$$WAIT_COMPOSE" DOCKER="$(DOCKER)" bash test/integration/wait_stack.sh storage || exit 1; \
 	echo ""; \
+	echo "$(YELLOW)Waiting for a raft leader on test-node1..3...$(NC)"; \
+	COMPOSE="$$WAIT_COMPOSE" bash test/integration/wait_stack.sh leader || exit 1; \
+	echo ""; \
 	if [ $$START_LOCAL_OLLAMA -eq 1 ]; then \
 		echo "$(YELLOW)Waiting for local Ollama container to be ready...$(NC)"; \
 		COMPOSE="$$WAIT_COMPOSE" bash test/integration/wait_stack.sh ollama || exit 1; \
@@ -2876,6 +2879,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 		tail -n 200 integration-compose.log || true; \
 		echo "$(YELLOW)---- end service logs ----$(NC)"; \
 	fi; \
+	NO_LEADER_LINES=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE logs --no-color test-node1 test-node2 test-node3 2>&1 | grep -ciE 'no leader|not leader' || true); \
 	echo "$(BLUE)Stopping integration test cluster...$(NC)"; \
 	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \
 	TORN_DOWN=1; \
@@ -2900,6 +2904,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 		echo "$(RED)=========================================================================================================$(NC)"; \
 		echo "$(RED)✗ Integration tests FAILED (exit code: $$DOCKER_RESULT)$(NC)"; \
 	fi; \
+	echo "$(BLUE)Raft no-leader log lines (test-node1..3): $${NO_LEADER_LINES:-0}$(NC)"; \
 	if [ $$MINUTES -gt 0 ]; then \
 		echo "$(BLUE)Total time: $${MINUTES}m $${SECONDS}s$(NC)"; \
 	else \
