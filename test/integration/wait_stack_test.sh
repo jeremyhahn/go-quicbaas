@@ -197,6 +197,11 @@ expect_ready Ollama ollama
 STUB_DOWN=ollama WAIT_TIMEOUT=10 expect_timeout Ollama 2 \
 	"✗ Timeout after 10s waiting for the local Ollama container" ollama
 
+# (iv-b) Raft leader: test-node2's /api/v1/health/ready never answers 200.
+expect_ready leader leader
+STUB_DOWN=test-node2:https://localhost:8080/api/v1/health/ready WAIT_TIMEOUT=6 expect_timeout leader 2 \
+	"✗ Timeout after 6s waiting for a raft leader on test-node1..3 (/api/v1/health/ready): 2/3 ready, not ready: test-node2" leader
+
 # (v) Cluster readiness: node 2 answers 503.
 # shellcheck disable=SC2086 # urls is a list of URLs.
 expect_ready "cluster nodes" ready "cluster nodes 1-3" 6 $urls
