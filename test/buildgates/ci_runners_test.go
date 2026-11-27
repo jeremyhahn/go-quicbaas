@@ -1135,6 +1135,9 @@ func TestRunnerSelect(t *testing.T) {
 		"SERVER": "https://github.com", "API": selectAPI, "RUN_ID": strconv.Itoa(runID), "JOB_TOKEN": "job-token",
 		"HS": strconv.Itoa(hs), "C1": strconv.Itoa(units), "C2": strconv.Itoa(units),
 		"EVENT": "push", "REF": "refs/heads/main", "REPO": "o/r", "HEAD_REPO": "",
+		// v1.62: a private repository never overflows to hosted, so the cases
+		// below keep the v1.60 choice.
+		"PRIVATE": "true", "WAIT_LIMIT": "600",
 	}
 	// #2427: the notice of an event the Dells' runner image refuses.
 	const refused = "which the Dells' runner image refuses"
