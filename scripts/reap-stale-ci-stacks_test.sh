@@ -21,6 +21,7 @@ mkdir -p "$bin"
 # The stub reads its world from files in $STUB_DIR:
 #   containers: "<id> <project> <status> <finished-at>" per line ("-" = no project)
 #   volumes:    "<name> <project> <created-at>" per line ("-" = anonymous)
+#   ps-fails:   when present, `docker ps` filtered on one project exits 1
 cat > "$bin/docker" <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >> "$STUB_DIR/log"
@@ -39,6 +40,10 @@ case "$1" in
       esac
       shift
     done
+    # ps-fails: a lookup of one project's containers fails with empty stdout.
+    if [ -f "$STUB_DIR/ps-fails" ] && [ -n "$want" ] && [ "$want" != '*' ]; then
+      echo "Cannot connect to the Docker daemon" >&2; exit 1
+    fi
     while read -r id project status finished; do
       [ -n "$id" ] || continue
       case $want in
@@ -140,20 +145,29 @@ echo "go-quicbaas-ci-400-1_quicbaas-certs go-quicbaas-ci-400-1 $old" > "$STUB_DI
 reap
 case $out in *"volume rm go-quicbaas-ci-400-1_quicbaas-certs"*) fail "case 4: a live project's volume was reaped: $out" ;; esac
 
-# 5. The CI Integration job tears down through the integration compose file.
+# 5. When the container lookup of a project fails, its volumes are kept:
+#    an empty answer from a failed docker ps is no proof the project is gone.
+STUB_DIR="$work/w5"; mkdir -p "$STUB_DIR"
+echo "go-quicbaas-ci-450-1_quicbaas-certs go-quicbaas-ci-450-1 $old" > "$STUB_DIR/volumes"
+touch "$STUB_DIR/ps-fails"
+reap
+case $out in *"volume rm go-quicbaas-ci-450-1_quicbaas-certs"*) fail "case 5: a volume was reaped after its project's container lookup failed: $out" ;; esac
+case $out in *"keep  volume go-quicbaas-ci-450-1_quicbaas-certs"*) ;; *) fail "case 5: the reaper did not report keeping the volume: $out" ;; esac
+
+# 6. The CI Integration job tears down through the integration compose file.
 ci="$root/.github/workflows/ci.yml"
 td=$(sed -n '/^  integration:/,/^  [a-z][a-z-]*:$/p' "$ci" | sed -n '/- name: Tear down/,/^      - /p')
 case $td in
   *'make cluster-down-integration IT_PROJECT="$IT_PROJECT"'*) ;;
-  *) fail "case 5: the Integration job's Tear down does not run make cluster-down-integration with its IT_PROJECT" ;;
+  *) fail "case 6: the Integration job's Tear down does not run make cluster-down-integration with its IT_PROJECT" ;;
 esac
 case $td in
-  *devcontainer/compose.yaml*) fail "case 5: the Integration job's Tear down still names the devcontainer compose file" ;;
+  *devcontainer/compose.yaml*) fail "case 6: the Integration job's Tear down still names the devcontainer compose file" ;;
 esac
-dn=$(cd "$root" && make -s -n cluster-down-integration IT_PROJECT=go-quicbaas-ci-500-1 2>/dev/null) || fail "case 5: make -n cluster-down-integration failed"
+dn=$(cd "$root" && make -s -n cluster-down-integration IT_PROJECT=go-quicbaas-ci-500-1 2>/dev/null) || fail "case 6: make -n cluster-down-integration failed"
 case $dn in
   *"-p go-quicbaas-ci-500-1 -f test/integration/docker-compose.integration.yml down --volumes"*) ;;
-  *) fail "case 5: cluster-down-integration does not take the job's project down with its volumes: $dn" ;;
+  *) fail "case 6: cluster-down-integration does not take the job's project down with its volumes: $dn" ;;
 esac
 
 if [ "$fails" -ne 0 ]; then
