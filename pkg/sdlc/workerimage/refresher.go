@@ -498,7 +498,7 @@ func (r *Refresher) publishImage(ctx context.Context, image string) (string, err
 		return "", err
 	}
 	remote := r.cfg.Registry + ":" + tagOf(image)
-	digest, err := r.push(ctx, info.ID, remote)
+	digest, err := r.release(ctx, info.ID, remote)
 	if err != nil {
 		return "", err
 	}
@@ -893,7 +893,7 @@ func (r *Refresher) publish(ctx context.Context, imageID string, build softwaref
 		return localRef, "", nil
 	}
 	remote := r.cfg.Registry + ":" + build.Tag()
-	digest, err := r.push(ctx, imageID, remote)
+	digest, err := r.release(ctx, imageID, remote)
 	if err != nil {
 		return "", "", err
 	}
@@ -916,7 +916,14 @@ func (r *Refresher) push(ctx context.Context, imageID, remote string) (string, e
 		}
 		auth = credential
 	}
-	digest, err := r.deps.Engine.PushImage(ctx, remote, auth)
+	return r.deps.Engine.PushImage(ctx, remote, auth)
+}
+
+// release pushes imageID as remote, an image Agents are repointed to, and
+// publishes its signed factory provenance. A staged candidate goes through
+// push alone: it is not released, so it carries no provenance.
+func (r *Refresher) release(ctx context.Context, imageID, remote string) (string, error) {
+	digest, err := r.push(ctx, imageID, remote)
 	if err != nil {
 		return "", err
 	}
