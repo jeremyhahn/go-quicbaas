@@ -100,7 +100,9 @@ func TestBackupHandler_RestoreCarriesTheBackupID(t *testing.T) {
 	if got := fake.lastRestore.GetBackupId(); got != "b-42" {
 		t.Errorf("RestoreBackup backup_id = %q, want b-42", got)
 	}
-	want := &backup.RestoreResponse{Restored: true}
+	// RestoreBackup answers once the restore has finished, so the handler
+	// reports it completed; the gRPC RPC carries no job id.
+	want := &backup.RestoreResponse{Restored: true, Status: backupRestoreCompleted}
 	if !reflect.DeepEqual(resp, want) {
 		t.Errorf("Restore = %+v, want %+v", resp, want)
 	}
@@ -123,12 +125,19 @@ func TestBackupHandler_ListMapsEveryBackup(t *testing.T) {
 	}
 	// The service list response the client reads has no encryption field, so
 	// Encrypted stays false on every transport.
-	want := &backup.ListBackupsResponse{Backups: []backup.BackupInfo{
+	// A backup with no timestamp has the zero CreatedAt.
+	want := []backup.BackupInfo{
 		{ID: "b-1", Size: 1024, CreatedAt: created},
-		{ID: "b-2", Size: 2048, CreatedAt: time.Unix(0, 0).UTC()},
-	}}
-	if !reflect.DeepEqual(resp, want) {
-		t.Errorf("List = %+v, want %+v", resp, want)
+		{ID: "b-2", Size: 2048},
+	}
+	if len(resp.Backups) != len(want) {
+		t.Fatalf("List = %+v, want %+v", resp, want)
+	}
+	for i, got := range resp.Backups {
+		w := want[i]
+		if got.ID != w.ID || got.Size != w.Size || got.Encrypted != w.Encrypted || !got.CreatedAt.Equal(w.CreatedAt) {
+			t.Errorf("List[%d] = %+v, want %+v", i, got, w)
+		}
 	}
 }
 
@@ -139,8 +148,8 @@ func TestBackupHandler_RefusesFieldsTheWireCannotCarry(t *testing.T) {
 	client, _ := newBackupClient(t, fake)
 	ctx := context.Background()
 
-	if _, err := client.Create(ctx, &backup.BackupRequest{Destination: "/backups", Compress: true}); !errors.IsUnimplemented(err) {
-		t.Errorf("Create with a destination gave %v, want unimplemented", err)
+	if _, err := client.Create(ctx, &backup.BackupRequest{Destination: "/backups", Compress: true}); !errors.IsInvalidInput(err) {
+		t.Errorf("Create with a destination gave %v, want invalid input", err)
 	}
 	if _, err := client.Restore(ctx, &backup.RestoreRequest{BackupID: "b-1", Source: "/backups/b-1"}); !errors.IsInvalidInput(err) {
 		t.Errorf("Restore with a source gave %v, want invalid input", err)

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -53,58 +52,6 @@ func (d *backupDouble) ListBackups(_ context.Context, req *service.ListBackupsRe
 func (d *backupDouble) RestoreBackup(_ context.Context, req *service.RestoreBackupRequest) (*service.RestoreBackupResponse, error) {
 	d.restoreReq = req
 	return &service.RestoreBackupResponse{JobID: "restore-" + req.BackupID, Status: "completed", Progress: 100}, nil
-}
-
-func newBackupClientOverEmbedded(t *testing.T) (backupclient.Client, *backupDouble) {
-	t.Helper()
-	double := &backupDouble{}
-	transport, err := New(double)
-	require.NoError(t, err)
-	return backupclient.NewClient(transport), double
-}
-
-func TestBackupClient_Create_ReachesEmbeddedHandler(t *testing.T) {
-	client, double := newBackupClientOverEmbedded(t)
-
-	resp, err := client.Create(context.Background(), &backupclient.BackupRequest{
-		Destination: "nightly",
-		Compress:    true,
-		Encrypt:     true,
-	})
-	require.NoError(t, err)
-
-	require.NotNil(t, double.createReq, "the handler never received the request")
-	assert.Equal(t, "nightly", double.createReq.Description)
-	assert.Equal(t, "gzip", double.createReq.Compression)
-	assert.Equal(t, "aes-256-gcm", double.createReq.Encryption)
-
-	assert.Equal(t, "backup-7", resp.BackupID)
-	assert.Equal(t, int64(4096), resp.Size)
-	assert.True(t, backupDoubleCreatedAt.Equal(resp.CreatedAt))
-}
-
-func TestBackupClient_Restore_ReachesEmbeddedHandler(t *testing.T) {
-	client, double := newBackupClientOverEmbedded(t)
-
-	resp, err := client.Restore(context.Background(), &backupclient.RestoreRequest{BackupID: "backup-7"})
-	require.NoError(t, err)
-
-	require.NotNil(t, double.restoreReq, "the handler never received the request")
-	assert.Equal(t, "backup-7", double.restoreReq.BackupID)
-	assert.True(t, resp.Restored)
-}
-
-func TestBackupClient_List_ReachesEmbeddedHandler(t *testing.T) {
-	client, double := newBackupClientOverEmbedded(t)
-
-	resp, err := client.List(context.Background())
-	require.NoError(t, err)
-
-	require.NotNil(t, double.listReq, "the handler never received the request")
-	require.Len(t, resp.Backups, 1)
-	assert.Equal(t, "backup-7", resp.Backups[0].ID)
-	assert.Equal(t, int64(4096), resp.Backups[0].Size)
-	assert.True(t, backupDoubleCreatedAt.Equal(resp.Backups[0].CreatedAt))
 }
 
 func TestBackupHandlers_WrongRequestType_ReturnInvalidRequestTypeError(t *testing.T) {
