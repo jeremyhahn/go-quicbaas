@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -23,6 +24,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -361,4 +364,91 @@ func TestBackupLiveStorage_IteratorAndBatch(t *testing.T) {
 		wrapped := &BackupStoreUnavailableError{Cause: errors.New("boom")}
 		assert.Contains(t, wrapped.Error(), "boom")
 	})
+}
+
+// backupBatchFakeKV is a backupFakeKV that also implements ExecuteBatch,
+// recording the op count and the payload size of every call.
+type backupBatchFakeKV struct {
+	*backupFakeKV
+	calls []int
+	bytes []int
+}
+
+func (f *backupBatchFakeKV) ExecuteBatch(ctx context.Context, ops []qrdbtransport.Op) error {
+	size := 0
+	for _, op := range ops {
+		size += len(op.Key) + len(op.Value) + backupRestoreOpOverhead
+	}
+	f.calls = append(f.calls, len(ops))
+	f.bytes = append(f.bytes, size)
+	for _, op := range ops {
+		if op.Type != qrdbtransport.OpPut {
+			return errors.New("unexpected op type")
+		}
+		if err := f.Put(ctx, string(op.Key), op.Value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestBackupLiveStorage_WriteBatchChunks(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("op bound", func(t *testing.T) {
+		fake := &backupBatchFakeKV{backupFakeKV: newBackupFakeKV()}
+		store := newBackupLiveStorage(func() (interfaces.KVStore, error) { return fake, nil })
+
+		kvs := make([]backup.KeyValue, 0, 1200)
+		for i := 0; i < 1200; i++ {
+			kvs = append(kvs, backup.KeyValue{
+				Key:   []byte(fmt.Sprintf("backup-test/k%04d", i)),
+				Value: []byte(fmt.Sprintf("v%d", i)),
+			})
+		}
+		require.NoError(t, store.WriteBatch(ctx, kvs))
+		assert.Equal(t, []int{512, 512, 176}, fake.calls)
+		require.Len(t, fake.data, 1200)
+		for _, kv := range kvs {
+			assert.Equal(t, string(kv.Value), string(fake.data[string(kv.Key)]))
+		}
+	})
+
+	t.Run("byte bound", func(t *testing.T) {
+		fake := &backupBatchFakeKV{backupFakeKV: newBackupFakeKV()}
+		store := newBackupLiveStorage(func() (interfaces.KVStore, error) { return fake, nil })
+
+		big := make([]byte, 1<<20)
+		kvs := []backup.KeyValue{
+			{Key: []byte("backup-test/big1"), Value: big},
+			{Key: []byte("backup-test/big2"), Value: big},
+			{Key: []byte("backup-test/big3"), Value: big},
+		}
+		require.NoError(t, store.WriteBatch(ctx, kvs))
+		assert.GreaterOrEqual(t, len(fake.calls), 2)
+		total := 0
+		for i, n := range fake.calls {
+			total += n
+			if n > 1 {
+				assert.LessOrEqual(t, fake.bytes[i], backupRestoreBatchMaxBytes, "call %d exceeds the byte bound", i)
+			}
+		}
+		assert.Equal(t, 3, total)
+		for _, kv := range kvs {
+			assert.Len(t, fake.data[string(kv.Key)], len(big))
+		}
+	})
+}
+
+func TestBackupLiveStorage_WriteBatchFallsBackToPut(t *testing.T) {
+	fake := newBackupFakeKV()
+	store := newBackupLiveStorage(func() (interfaces.KVStore, error) { return fake, nil })
+
+	kvs := []backup.KeyValue{
+		{Key: []byte("backup-test/c"), Value: []byte("3")},
+		{Key: []byte("backup-test/a"), Value: []byte("1")},
+		{Key: []byte("backup-test/b"), Value: []byte("2")},
+	}
+	require.NoError(t, store.WriteBatch(context.Background(), kvs))
+	assert.Equal(t, []string{"backup-test/c=3", "backup-test/a=1", "backup-test/b=2"}, fake.puts)
 }
