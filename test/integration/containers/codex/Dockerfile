@@ -1,6 +1,4 @@
-# Codex Agent Container
-# Alpine 3.21 + Node.js 20 LTS with @openai/codex CLI
-# Non-root agent user, workspace at /workspace
+# Codex agent container: Alpine, Node.js and the codex CLI; non-root, workspace at /workspace.
 
 FROM alpine:3.21 AS base
 
@@ -14,8 +12,7 @@ RUN apk add --no-cache \
     && node --version \
     && npm --version
 
-# Install Codex CLI globally
-# Note: package name subject to change pending official OpenAI release
+# Codex CLI, installed globally.
 RUN npm install -g @openai/codex@latest \
     && codex --version
 

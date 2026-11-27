@@ -150,6 +150,30 @@ func AccountUpdateCommand(accountID string) CommandDef {
 	}
 }
 
+// AccountUpdateSecretRefCommand points an account at the tenant secret ref.
+func AccountUpdateSecretRefCommand(accountID, ref string) CommandDef {
+	return CommandDef{
+		Name: "account update --credential-secret-ref",
+		Args: []string{"account", "update", accountID,
+			"--credential-secret-ref", ref, "--output", "json"},
+		ExpectSuccess: true,
+		Timeout:       20 * time.Second,
+	}
+}
+
+// secretsStoreFileCommand stores the raw bytes of a file as the tenant secret
+// path: the verbatim shape an account's credential reference reads (a --data
+// pair would store a JSON map instead). It keeps SecretsStoreCommand's
+// transports and unseal requirement.
+func secretsStoreFileCommand(t *testing.T, path, value string) CommandDef {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "secret-value")
+	require.NoError(t, os.WriteFile(file, []byte(value), 0o600))
+	cmd := SecretsStoreCommand(path, value)
+	cmd.Args = []string{"secrets", "put", path, "--from-file", file}
+	return cmd
+}
+
 // AccountSetDefaultCommand marks an account the tenant default.
 func AccountSetDefaultCommand(accountID string) CommandDef {
 	return CommandDef{
@@ -249,6 +273,112 @@ func TestAgentAccountLifecycle(t *testing.T) {
 		if _, _, getErr := runner.Run(gone); getErr == nil {
 			t.Errorf("[%s] get succeeded for a deleted account", runner.transport)
 		}
+	})
+}
+
+// writeStaticAccountCredential writes a static_token credential, the refresh
+// policy a seeded default account carries: an access token and the variable
+// it is exported as, and no refresh token.
+func writeStaticAccountCredential(t *testing.T, accessToken string) string {
+	t.Helper()
+	encoded, err := json.Marshal(map[string]interface{}{
+		"access_token":         accessToken,
+		"access_token_env_key": "CLAUDE_CODE_OAUTH_TOKEN",
+	})
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "static-credential.json")
+	require.NoError(t, os.WriteFile(path, encoded, 0o600))
+	return path
+}
+
+// accountStatusFromJSON decodes an account document and returns its status.
+func accountStatusFromJSON(t *testing.T, transport Transport, stdout string) string {
+	t.Helper()
+	var info struct {
+		Status string `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &info),
+		"[%s] output is not an account document: %s", transport, stdout)
+	return info.Status
+}
+
+// TestAgentAccountDefaultProviderAccounts proves that a tenant created after
+// the server started has both default provider accounts awaiting their
+// credential, and that the first-login rotate activates one without showing
+// the credential.
+func TestAgentAccountDefaultProviderAccounts(t *testing.T) {
+	RunForAllTransports(t, "AgentAccountDefaultProviderAccounts", func(t *testing.T, runner *TestRunner) {
+		// A fresh tenant, provisioned after startup: the case neither the
+		// boot pass nor a barrier unseal reaches.
+		runner.ActAsTenantAdmin(UniqueKey("acctdef"))
+
+		for _, accountID := range []string{"default-claude", "default-codex"} {
+			get := AccountGetCommand(accountID)
+			stdout, stderr, err := runner.Run(get)
+			if runner.IsSkipped(get) {
+				return
+			}
+			require.NoError(t, err, "[%s] get %s failed: stdout=%s stderr=%s", runner.transport, accountID, stdout, stderr)
+			assertNoCredentialLeak(t, runner.transport, get.Name, stdout)
+			assert.Equal(t, "awaiting_credential", accountStatusFromJSON(t, runner.transport, stdout),
+				"[%s] %s status in a new tenant", runner.transport, accountID)
+		}
+
+		rotate := AccountRotateCommand("default-claude", writeStaticAccountCredential(t, "SECRET-ACCESS-TOKEN"))
+		stdout, stderr, err := runner.Run(rotate)
+		require.NoError(t, err, "[%s] rotate failed: stdout=%s stderr=%s", runner.transport, stdout, stderr)
+		assertNoCredentialLeak(t, runner.transport, rotate.Name, stdout)
+
+		get := AccountGetCommand("default-claude")
+		stdout, stderr, err = runner.Run(get)
+		require.NoError(t, err, "[%s] get after rotate failed: stdout=%s stderr=%s", runner.transport, stdout, stderr)
+		assertNoCredentialLeak(t, runner.transport, get.Name, stdout)
+		assert.Equal(t, "active", accountStatusFromJSON(t, runner.transport, stdout),
+			"[%s] default-claude status after its first credential", runner.transport)
+	})
+}
+
+// TestAgentAccountDefaultProviderAccountSecretRef: a new tenant's default
+// account takes its first credential by reference too. Pointing default-claude
+// at a tenant secret with account update makes it active, and no output ever
+// shows the secret.
+func TestAgentAccountDefaultProviderAccountSecretRef(t *testing.T) {
+	RunForAllTransports(t, "AgentAccountDefaultProviderAccountSecretRef", func(t *testing.T, runner *TestRunner) {
+		runner.ActAsTenantAdmin(UniqueKey("acctref"))
+		const (
+			ref    = "agents/claude/default/oauth_token"
+			marker = "SECRET-REF-TOKEN"
+		)
+		assertClean := func(name, stdout, stderr string) {
+			t.Helper()
+			assertNoCredentialLeak(t, runner.transport, name, stdout)
+			assert.NotContains(t, stdout, marker, "[%s] %s stdout shows the secret", runner.transport, name)
+			assert.NotContains(t, stderr, marker, "[%s] %s stderr shows the secret", runner.transport, name)
+		}
+
+		put := secretsStoreFileCommand(t, ref, marker)
+		stdout, stderr, err := runner.Run(put)
+		if runner.IsSkipped(put) {
+			return
+		}
+		require.NoError(t, err, "[%s] secrets put failed: stdout=%s stderr=%s", runner.transport, stdout, stderr)
+		assertClean(put.Name, stdout, stderr)
+
+		update := AccountUpdateSecretRefCommand("default-claude", ref)
+		stdout, stderr, err = runner.Run(update)
+		if runner.IsSkipped(update) {
+			return
+		}
+		require.NoError(t, err, "[%s] update failed: stdout=%s stderr=%s", runner.transport, stdout, stderr)
+		assertClean(update.Name, stdout, stderr)
+
+		get := AccountGetCommand("default-claude")
+		stdout, stderr, err = runner.Run(get)
+		require.NoError(t, err, "[%s] get after update failed: stdout=%s stderr=%s", runner.transport, stdout, stderr)
+		assertClean(get.Name, stdout, stderr)
+		assert.Equal(t, "active", accountStatusFromJSON(t, runner.transport, stdout),
+			"[%s] default-claude status after its secret reference", runner.transport)
 	})
 }
 

@@ -62,7 +62,6 @@ import (
 
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 	qbstorage "github.com/jeremyhahn/go-quicbaas/pkg/storage"
-	filestorage "github.com/jeremyhahn/go-quicbaas/pkg/storage/file"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watchbridge"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
@@ -1720,16 +1719,11 @@ func (s *Server) startBackupManager() error {
 		Timeout:            timeout,
 	}
 
-	// Create file-based storage for the backup manager.
-	// The backup manager requires interfaces.Storage for snapshot iteration.
-	backupDataDir := filepath.Join(workDir, "storage")
-	fileConfig := filestorage.DefaultConfig()
-	fileConfig.DataDir = backupDataDir
-	backupStore, err := filestorage.New(fileConfig, s.logger)
-	if err != nil {
-		return api.NewOperationFailedError("create backup storage", err)
-	}
-	s.backupStorage = newBackupStorageAdapter(backupStore)
+	// The backup manager's data store is the embedded qrdb node's live
+	// platform-shard keyspace. It resolves the node per call and fails
+	// closed when no node is running, so startup without a node still
+	// succeeds.
+	s.backupStorage = newBackupLiveStorage(s.backupLiveStore)
 
 	// Create the backup manager
 	mgr, err := backup.NewBackupManager(backupConfig, s.backupStorage, s.raftNode, s.logger)
@@ -1820,7 +1814,7 @@ func (s *Server) stopBackupManager() error {
 
 	s.backupManager = nil
 
-	// Close the backup storage adapter
+	// Release the live storage adapter; closing it leaves the qrdb node running.
 	if s.backupStorage != nil {
 		if err := s.backupStorage.Close(); err != nil {
 			s.logger.WithError(err).Warn("Failed to close backup storage")
@@ -2102,6 +2096,8 @@ func (s *Server) startService() error {
 			// The proxy serves the direct barrier servicer, which keeps the
 			// verified SO PIN and the Shamir counts the client adapter drops.
 			s.publishBarrierServicer(bootstrapServices.Barrier)
+			// The node's protocol servers serve credentials through the credential proxy.
+			s.publishCredentialServicer(bootstrapServices.Credential)
 			s.logger.Info("Bootstrap ceremony services wired (node seal disabled): persistent data-plane barrier + manual credential/ceremony")
 		}
 	}

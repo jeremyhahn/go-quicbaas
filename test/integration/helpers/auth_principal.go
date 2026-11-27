@@ -137,7 +137,7 @@ func (r *principalRegistry) bearerAt(ctx context.Context, clusterURL, loginURL s
 	if principal.tokens == nil {
 		principal.tokens = make(map[string]pivCachedToken)
 	}
-	if token, ok := principal.tokens[loginURL]; ok && time.Now().Before(token.ExpiresAt) {
+	if token, ok := principal.tokens[loginURL]; ok && pivCachedTokenUsable(token, time.Now()) {
 		return token.Bearer, nil
 	}
 

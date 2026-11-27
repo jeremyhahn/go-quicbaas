@@ -1,17 +1,5 @@
 #!/usr/bin/env bash
-# check-secret-findings.sh <trivy-json> <scan-root>
-#
-# Gates the worker-image layer scan (.github/workflows/worker-image.yml). The
-# step extracts every layer tarball to <scan-root>/<layer-dir>/ and runs
-# `trivy fs --scanners secret --format json` over <scan-root>; this reads that
-# report (.Results[].Target, .Results[].Secrets[]) and allows a finding only
-# when its image path (the target with <scan-root>/<layer-dir>/ stripped) is
-# listed in secret-allowlist.txt beside this script AND the file's sha256
-# under <scan-root> is the pinned one. Anything else fails, closed: an
-# unlisted finding, a listed path with other content, a target outside the
-# scan root, and a missing, empty or non-JSON report.
-#
-# Needs bash, jq and sha256sum only.
+# check-secret-findings.sh <trivy-json> <scan-root>: fail on trivy secret findings outside the allowed paths.
 set -euo pipefail
 
 fail() {
