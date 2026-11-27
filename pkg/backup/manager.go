@@ -578,6 +578,19 @@ func (m *BackupManager) RestoreBackup(ctx context.Context, backupID string, opts
 }
 
 // restoreShardSnapshot restores a single shard snapshot.
+// KeyValue is one key/value pair a restore writes back.
+type KeyValue struct {
+	Key   []byte
+	Value []byte
+}
+
+// BatchWriter is the optional capability of a backup data store that
+// applies many writes in few round trips. RestoreBackup uses it when the
+// store has it, and writes key by key otherwise.
+type BatchWriter interface {
+	WriteBatch(ctx context.Context, kvs []KeyValue) error
+}
+
 func (m *BackupManager) restoreShardSnapshot(ctx context.Context, snapshot *ShardSnapshot, opts *RestoreOptions) error {
 	// Verify snapshot checksum
 	if opts.VerifyChecksum {
@@ -586,8 +599,10 @@ func (m *BackupManager) restoreShardSnapshot(ctx context.Context, snapshot *Shar
 		}
 	}
 
-	// Parse and restore key-value pairs
+	// Decode every key-value pair first, so the store can apply them in
+	// few round trips instead of one write per key.
 	reader := bytes.NewReader(snapshot.Data)
+	var kvs []KeyValue
 
 	for {
 		key, value, err := readKeyValue(reader)
@@ -600,13 +615,30 @@ func (m *BackupManager) restoreShardSnapshot(ctx context.Context, snapshot *Shar
 
 		// Skip existing keys if requested
 		if opts.SkipExisting {
-			if _, err := m.storage.Get(key); err == nil {
+			if _, err := m.storage.GetWithContext(ctx, key); err == nil {
 				continue
 			}
 		}
 
-		// Restore key-value pair
-		if err := m.storage.Set(key, value); err != nil {
+		kvs = append(kvs, KeyValue{Key: key, Value: value})
+	}
+
+	if len(kvs) == 0 {
+		return nil
+	}
+
+	if bw, ok := m.storage.(BatchWriter); ok {
+		if err := bw.WriteBatch(ctx, kvs); err != nil {
+			return api.NewOperationFailedError("restore keys", err)
+		}
+		return nil
+	}
+
+	for _, kv := range kvs {
+		if err := ctx.Err(); err != nil {
+			return api.NewOperationFailedError("restore key", err)
+		}
+		if err := m.storage.SetWithContext(ctx, kv.Key, kv.Value); err != nil {
 			return api.NewOperationFailedError("restore key", err)
 		}
 	}
