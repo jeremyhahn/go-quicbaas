@@ -74,6 +74,12 @@ func (s *sdkKVStore) Put(ctx context.Context, key string, value []byte) error {
 	return s.client.KV().Put(ctx, key, value)
 }
 
+// ExecuteBatch applies ops as one atomic qrdb batch on this store's shard.
+func (s *sdkKVStore) ExecuteBatch(ctx context.Context, ops []transport.Op) error {
+	_, err := s.client.Batch().ExecuteBatch(ctx, ops)
+	return err
+}
+
 // guardedSDKKVStore carries the guarded verbs as EXPLICIT FORWARDS
 // (go-quicbaas#120): qrdb evaluates their condition inside the storage
 // engine — across every process sharing the store — which is exactly the
