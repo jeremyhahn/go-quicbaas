@@ -1,4 +1,4 @@
-# ci-template: v1.53 (handbook 3110a0b) + v1.59 runner selection + v1.52 + v1.51 + v1.50 + v1.48 + v1.49 (delta port onto v1.34.1 + v1.42 hermetic gate + v1.43 hosted first + v1.46 runner rule; customized)
+# ci-template: v1.53 (handbook 3110a0b) + v1.60 runner selection + v1.52 + v1.51 + v1.50 + v1.48 + v1.49 (delta port onto v1.34.1 + v1.42 hermetic gate + v1.43 hosted first + v1.46 runner rule; customized)
 # v1.54 and v1.59 (handbook b18e6499; Tenant Agent ruling 1137, owner
 # order): the preflight step `Balanced runner pool (ruling 1137)`, copied
 # from the template at v1.59, replaces `Hosted or overflow runner (ruling
@@ -10,6 +10,9 @@
 # ::warning. The runs-on expressions and outputs are unchanged.
 # Nothing else of v1.54 to v1.59 is taken. Its tests: the handbook's
 # runner-select-tests.py, verbatim, and test/buildgates, both run in CI.
+# v1.60: a selection tie (equal use, or equal queues with both pools
+# full) goes self-hosted; the event rule (a push to main or a
+# same-repository pull request only) was already in place.
 # go-quicbaas #2427 (owner order): the unit shards, coverage and unit-passes
 # leave ubuntu-latest for the preflight runner_docker pool, as lint, image
 # and integration: they build the toolchain image and run their target in it
@@ -1018,11 +1021,11 @@ jobs:
       # hosted default with a ::warning). Hosted use is H/HS; self-hosted use
       # is the larger of S1/C1 and S2/C2. Then:
       #   - both below their limit: the lower use wins, compared by
-      #     cross-multiplication (self-hosted wins only when S1*HS < H*C1 and
-      #     S2*HS < H*C2); a tie goes hosted;
+      #     cross-multiplication (self-hosted wins when S1*HS <= H*C1 and
+      #     S2*HS <= H*C2); a tie goes self-hosted;
       #   - one pool full (H >= HS; or S1 >= C1 or S2 >= C2): the other pool;
       #   - both full: the pool with fewer queued jobs (bigdisk and
-      #     bigdisk-docker together for the Dells); a tie goes hosted.
+      #     bigdisk-docker together for the Dells); a tie goes self-hosted.
       # The units are shared across repositories, so C1 and C2 can overstate
       # this repository's free room: when they are busy elsewhere its jobs
       # queue, S1 or S2 rises, and its runs go hosted.
@@ -1181,15 +1184,15 @@ jobs:
           [ "$H" -lt "$HS" ] || hfull=1
           { [ "$S1" -lt "$C1" ] && [ "$S2" -lt "$C2" ]; } || sfull=1
           if [ "$hfull" = 1 ] && [ "$sfull" = 1 ]; then
-            [ "$SQ" -lt "$HQ" ] && pick=self
+            [ "$SQ" -le "$HQ" ] && pick=self
             why="both pools full: hosted $HQ queued, self-hosted $SQ queued"
           elif [ "$hfull" = 1 ]; then
             pick=self; why="the hosted pool is full ($H of $HS)"
           elif [ "$sfull" = 1 ]; then
             why="the self-hosted pool is full (bigdisk $S1 of $C1, bigdisk-docker $S2 of $C2)"
           else
-            # self-hosted use, max(S1/C1, S2/C2), below hosted use H/HS.
-            [ $((S1 * HS)) -lt $((H * C1)) ] && [ $((S2 * HS)) -lt $((H * C2)) ] && pick=self
+            # self-hosted use, max(S1/C1, S2/C2), at or below hosted use H/HS.
+            [ $((S1 * HS)) -le $((H * C1)) ] && [ $((S2 * HS)) -le $((H * C2)) ] && pick=self
             why="use hosted $H/$HS, bigdisk $S1/$C1, bigdisk-docker $S2/$C2"
           fi
           if [ "$pick" = self ]; then
