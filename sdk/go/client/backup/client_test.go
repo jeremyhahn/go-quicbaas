@@ -5,11 +5,14 @@ package backup
 
 import (
 	"context"
+	"math"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	svc "github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -45,15 +48,6 @@ func (m *mockTransport) Healthy() bool {
 	return true
 }
 
-// respondWith returns a transport that answers every request with resp.
-func respondWith(resp interface{}) *mockTransport {
-	return &mockTransport{
-		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return resp, nil
-		},
-	}
-}
-
 func TestNewClient(t *testing.T) {
 	t.Run("with valid transport", func(t *testing.T) {
 		client := NewClient(&mockTransport{})
@@ -71,7 +65,17 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestClient_Create_Validation(t *testing.T) {
-	client := NewClient(respondWith(&service.CreateBackupResponse{BackupID: "backup-123", Size: 1024}))
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return &svc.CreateBackupResponse{
+				BackupID:  "backup-123",
+				Size:      1024,
+				Timestamp: time.Now().UnixNano(),
+				Status:    "completed",
+			}, nil
+		},
+	}
+	client := NewClient(mockT)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -79,13 +83,41 @@ func TestClient_Create_Validation(t *testing.T) {
 		req     *BackupRequest
 		wantErr bool
 	}{
-		{name: "nil request", req: nil, wantErr: true},
-		{name: "empty destination", req: &BackupRequest{Destination: ""}, wantErr: true},
-		{name: "valid request with local path", req: &BackupRequest{Destination: "/backups/"}},
-		{name: "valid request with s3", req: &BackupRequest{Destination: "s3://bucket/path"}},
-		{name: "valid request with compression", req: &BackupRequest{Destination: "/backups/", Compress: true}},
-		{name: "valid request with encryption", req: &BackupRequest{Destination: "/backups/", Encrypt: true}},
-		{name: "valid request with both options", req: &BackupRequest{Destination: "/backups/", Compress: true, Encrypt: true}},
+		{
+			name:    "nil request",
+			req:     nil,
+			wantErr: true,
+		},
+		{
+			name:    "empty request is valid",
+			req:     &BackupRequest{},
+			wantErr: false,
+		},
+		{
+			name:    "local destination refused",
+			req:     &BackupRequest{Destination: "/backups/"},
+			wantErr: true,
+		},
+		{
+			name:    "s3 destination refused",
+			req:     &BackupRequest{Destination: "s3://bucket/path"},
+			wantErr: true,
+		},
+		{
+			name:    "compression refused",
+			req:     &BackupRequest{Compress: true},
+			wantErr: true,
+		},
+		{
+			name:    "encryption refused",
+			req:     &BackupRequest{Encrypt: true},
+			wantErr: true,
+		},
+		{
+			name:    "compression and encryption refused",
+			req:     &BackupRequest{Compress: true, Encrypt: true},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -94,14 +126,17 @@ func TestClient_Create_Validation(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Create() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil && !errors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput error, got %v", err)
+			if tt.wantErr && err != nil {
+				if !errors.IsInvalidInput(err) {
+					t.Errorf("expected InvalidInput error, got %v", err)
+				}
 			}
 		})
 	}
 }
 
 func TestClient_Create(t *testing.T) {
+	now := time.Now()
 	tests := []struct {
 		name      string
 		ctx       context.Context
@@ -113,19 +148,25 @@ func TestClient_Create(t *testing.T) {
 			name: "successful backup",
 			ctx:  context.Background(),
 			transport: &mockTransport{
-				requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
-					if svc != serviceName {
-						t.Errorf("expected service %q, got %q", serviceName, svc)
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					if service != serviceName {
+						t.Errorf("expected service %q, got %q", serviceName, service)
 					}
 					if method != "Create" {
 						t.Errorf("expected method %q, got %q", "Create", method)
 					}
-					if _, ok := req.(*service.CreateBackupRequest); !ok {
-						t.Errorf("expected *service.CreateBackupRequest, got %T", req)
+					if _, ok := req.(*svc.CreateBackupRequest); !ok {
+						t.Errorf("expected *svc.CreateBackupRequest, got %T", req)
 					}
-					return &service.CreateBackupResponse{BackupID: "backup-abc123", Size: 1048576}, nil
+					return &svc.CreateBackupResponse{
+						BackupID:  "backup-abc123",
+						Size:      1048576,
+						Timestamp: now.UnixNano(),
+						Status:    "completed",
+					}, nil
 				},
 			},
+			wantErr: false,
 		},
 		{
 			name:      "nil context",
@@ -138,7 +179,7 @@ func TestClient_Create(t *testing.T) {
 			name: "transport error",
 			ctx:  context.Background(),
 			transport: &mockTransport{
-				requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 					return nil, errors.NewUnavailable("test", "server unavailable")
 				},
 			},
@@ -146,22 +187,41 @@ func TestClient_Create(t *testing.T) {
 			errCode: errors.CodeUnavailable,
 		},
 		{
-			name:      "nil response",
-			ctx:       context.Background(),
-			transport: respondWith(nil),
-			wantErr:   true,
-			errCode:   errors.CodeInternal,
+			name: "nil response",
+			ctx:  context.Background(),
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return nil, nil
+				},
+			},
+			wantErr: true,
+			errCode: errors.CodeInternal,
 		},
 		{
-			name:      "invalid response type",
-			ctx:       context.Background(),
-			transport: respondWith("invalid"),
-			wantErr:   true,
-			errCode:   errors.CodeInternal,
+			name: "invalid response type",
+			ctx:  context.Background(),
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return "invalid", nil
+				},
+			},
+			wantErr: true,
+			errCode: errors.CodeInternal,
+		},
+		{
+			name: "typed nil response",
+			ctx:  context.Background(),
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return (*svc.CreateBackupResponse)(nil), nil
+				},
+			},
+			wantErr: true,
+			errCode: errors.CodeInternal,
 		},
 	}
 
-	validReq := &BackupRequest{Destination: "/backups/"}
+	validReq := &BackupRequest{}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -170,8 +230,10 @@ func TestClient_Create(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Create() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil && errors.Code(err) != tt.errCode {
-				t.Errorf("expected error code %v, got %v", tt.errCode, errors.Code(err))
+			if tt.wantErr && err != nil {
+				if errors.Code(err) != tt.errCode {
+					t.Errorf("expected error code %v, got %v", tt.errCode, errors.Code(err))
+				}
 			}
 			if !tt.wantErr && resp == nil {
 				t.Error("expected non-nil response")
@@ -181,7 +243,14 @@ func TestClient_Create(t *testing.T) {
 }
 
 func TestClient_Restore_Validation(t *testing.T) {
-	client := NewClient(respondWith(&service.RestoreBackupResponse{Status: "completed"}))
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return &svc.RestoreBackupResponse{
+				Status: "completed",
+			}, nil
+		},
+	}
+	client := NewClient(mockT)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -189,11 +258,31 @@ func TestClient_Restore_Validation(t *testing.T) {
 		req     *RestoreRequest
 		wantErr bool
 	}{
-		{name: "nil request", req: nil, wantErr: true},
-		{name: "empty backup ID and source", req: &RestoreRequest{}, wantErr: true},
-		{name: "valid request with backup ID only", req: &RestoreRequest{BackupID: "backup-123"}},
-		{name: "source only is refused (the service has no source)", req: &RestoreRequest{Source: "s3://bucket/backup"}, wantErr: true},
-		{name: "backup ID with source is refused (the source would be dropped)", req: &RestoreRequest{BackupID: "backup-123", Source: "s3://bucket/backup"}, wantErr: true},
+		{
+			name:    "nil request",
+			req:     nil,
+			wantErr: true,
+		},
+		{
+			name:    "empty backup ID and source",
+			req:     &RestoreRequest{BackupID: "", Source: ""},
+			wantErr: true,
+		},
+		{
+			name:    "valid request with backup ID only",
+			req:     &RestoreRequest{BackupID: "backup-123"},
+			wantErr: false,
+		},
+		{
+			name:    "source only is refused",
+			req:     &RestoreRequest{Source: "s3://bucket/backup"},
+			wantErr: true,
+		},
+		{
+			name:    "backup ID with source is refused",
+			req:     &RestoreRequest{BackupID: "backup-123", Source: "s3://bucket/backup"},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -202,8 +291,10 @@ func TestClient_Restore_Validation(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Restore() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil && !errors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput error, got %v", err)
+			if tt.wantErr && err != nil {
+				if !errors.IsInvalidInput(err) {
+					t.Errorf("expected InvalidInput error, got %v", err)
+				}
 			}
 		})
 	}
@@ -222,23 +313,33 @@ func TestClient_Restore(t *testing.T) {
 			name: "successful restore",
 			ctx:  context.Background(),
 			transport: &mockTransport{
-				requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
-					if svc != serviceName {
-						t.Errorf("expected service %q, got %q", serviceName, svc)
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					if service != serviceName {
+						t.Errorf("expected service %q, got %q", serviceName, service)
 					}
 					if method != "Restore" {
 						t.Errorf("expected method %q, got %q", "Restore", method)
 					}
-					return &service.RestoreBackupResponse{JobID: "restore-backup-123", Status: "completed", Progress: 100}, nil
+					return &svc.RestoreBackupResponse{
+						Status: "completed",
+					}, nil
 				},
 			},
+			wantErr:  false,
 			restored: true,
 		},
 		{
-			name:      "restore in progress",
-			ctx:       context.Background(),
-			transport: respondWith(&service.RestoreBackupResponse{Status: "running", Progress: 40}),
-			restored:  false,
+			name: "restore in progress",
+			ctx:  context.Background(),
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return &svc.RestoreBackupResponse{
+						Status: "running",
+					}, nil
+				},
+			},
+			wantErr:  false,
+			restored: false,
 		},
 		{
 			name:      "nil context",
@@ -251,7 +352,7 @@ func TestClient_Restore(t *testing.T) {
 			name: "transport error",
 			ctx:  context.Background(),
 			transport: &mockTransport{
-				requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 					return nil, errors.NewUnavailable("test", "server unavailable")
 				},
 			},
@@ -262,7 +363,7 @@ func TestClient_Restore(t *testing.T) {
 			name: "backup not found",
 			ctx:  context.Background(),
 			transport: &mockTransport{
-				requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 					return nil, errors.NewNotFound("test", "backup not found")
 				},
 			},
@@ -270,18 +371,26 @@ func TestClient_Restore(t *testing.T) {
 			errCode: errors.CodeNotFound,
 		},
 		{
-			name:      "nil response",
-			ctx:       context.Background(),
-			transport: respondWith(nil),
-			wantErr:   true,
-			errCode:   errors.CodeInternal,
+			name: "nil response",
+			ctx:  context.Background(),
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return nil, nil
+				},
+			},
+			wantErr: true,
+			errCode: errors.CodeInternal,
 		},
 		{
-			name:      "invalid response type",
-			ctx:       context.Background(),
-			transport: respondWith(123),
-			wantErr:   true,
-			errCode:   errors.CodeInternal,
+			name: "invalid response type",
+			ctx:  context.Background(),
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return 123, nil
+				},
+			},
+			wantErr: true,
+			errCode: errors.CodeInternal,
 		},
 	}
 
@@ -294,17 +403,22 @@ func TestClient_Restore(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Restore() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil && errors.Code(err) != tt.errCode {
-				t.Errorf("expected error code %v, got %v", tt.errCode, errors.Code(err))
+			if tt.wantErr && err != nil {
+				if errors.Code(err) != tt.errCode {
+					t.Errorf("expected error code %v, got %v", tt.errCode, errors.Code(err))
+				}
 			}
-			if !tt.wantErr && resp.Restored != tt.restored {
-				t.Errorf("expected restored=%v, got %v", tt.restored, resp.Restored)
+			if !tt.wantErr {
+				if resp.Restored != tt.restored {
+					t.Errorf("expected restored=%v, got %v", tt.restored, resp.Restored)
+				}
 			}
 		})
 	}
 }
 
 func TestClient_List(t *testing.T) {
+	now := time.Now()
 	tests := []struct {
 		name        string
 		ctx         context.Context
@@ -312,49 +426,70 @@ func TestClient_List(t *testing.T) {
 		wantErr     bool
 		errCode     errors.ErrorCode
 		backupCount int
+		wantFirst   *BackupInfo
 	}{
 		{
 			name: "list with backups",
 			ctx:  context.Background(),
 			transport: &mockTransport{
-				requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
-					if svc != serviceName {
-						t.Errorf("expected service %q, got %q", serviceName, svc)
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					if service != serviceName {
+						t.Errorf("expected service %q, got %q", serviceName, service)
 					}
 					if method != "List" {
 						t.Errorf("expected method %q, got %q", "List", method)
 					}
-					if _, ok := req.(*service.ListBackupsRequest); !ok {
-						t.Errorf("expected *service.ListBackupsRequest, got %T", req)
+					if _, ok := req.(*svc.ListBackupsRequest); !ok {
+						t.Errorf("expected *svc.ListBackupsRequest, got %T", req)
 					}
-					return &service.ListBackupsResponse{
-						Backups: []*service.BackupMetadata{
-							{BackupID: "backup-1", Size: 1024},
-							{BackupID: "backup-2", Size: 2048},
-							{BackupID: "backup-3", Size: 4096},
+					return &svc.ListBackupsResponse{
+						Backups: []*svc.BackupMetadata{
+							{BackupID: "backup-1", Size: 1024, Timestamp: now.UnixNano()},
+							nil,
+							{BackupID: "backup-2", Size: 2048, Timestamp: now.UnixNano()},
+							{BackupID: "backup-3", Size: 4096, Timestamp: now.UnixNano()},
 						},
 						TotalCount: 3,
 					}, nil
 				},
 			},
+			wantErr:     false,
 			backupCount: 3,
+			wantFirst:   &BackupInfo{ID: "backup-1", Size: 1024, CreatedAt: now},
 		},
 		{
-			name:        "list with empty result",
-			ctx:         context.Background(),
-			transport:   respondWith(&service.ListBackupsResponse{}),
+			name: "typed nil response returns empty list",
+			ctx:  context.Background(),
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return (*svc.ListBackupsResponse)(nil), nil
+				},
+			},
+			wantErr:     false,
 			backupCount: 0,
 		},
 		{
-			name:        "nil entries are skipped",
-			ctx:         context.Background(),
-			transport:   respondWith(&service.ListBackupsResponse{Backups: []*service.BackupMetadata{nil, {BackupID: "backup-1"}}}),
-			backupCount: 1,
+			name: "list with empty result",
+			ctx:  context.Background(),
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return &svc.ListBackupsResponse{
+						Backups: []*svc.BackupMetadata{},
+					}, nil
+				},
+			},
+			wantErr:     false,
+			backupCount: 0,
 		},
 		{
-			name:        "nil response returns empty list",
-			ctx:         context.Background(),
-			transport:   respondWith(nil),
+			name: "nil response returns empty list",
+			ctx:  context.Background(),
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return nil, nil
+				},
+			},
+			wantErr:     false,
 			backupCount: 0,
 		},
 		{
@@ -368,7 +503,7 @@ func TestClient_List(t *testing.T) {
 			name: "transport error",
 			ctx:  context.Background(),
 			transport: &mockTransport{
-				requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 					return nil, errors.NewUnavailable("test", "server unavailable")
 				},
 			},
@@ -376,11 +511,15 @@ func TestClient_List(t *testing.T) {
 			errCode: errors.CodeUnavailable,
 		},
 		{
-			name:      "invalid response type",
-			ctx:       context.Background(),
-			transport: respondWith("invalid"),
-			wantErr:   true,
-			errCode:   errors.CodeInternal,
+			name: "invalid response type",
+			ctx:  context.Background(),
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return "invalid", nil
+				},
+			},
+			wantErr: true,
+			errCode: errors.CodeInternal,
 		},
 	}
 
@@ -391,8 +530,10 @@ func TestClient_List(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("List() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil && errors.Code(err) != tt.errCode {
-				t.Errorf("expected error code %v, got %v", tt.errCode, errors.Code(err))
+			if tt.wantErr && err != nil {
+				if errors.Code(err) != tt.errCode {
+					t.Errorf("expected error code %v, got %v", tt.errCode, errors.Code(err))
+				}
 			}
 			if !tt.wantErr {
 				if resp == nil {
@@ -401,21 +542,32 @@ func TestClient_List(t *testing.T) {
 				if len(resp.Backups) != tt.backupCount {
 					t.Errorf("expected %d backups, got %d", tt.backupCount, len(resp.Backups))
 				}
+				if tt.wantFirst != nil && len(resp.Backups) > 0 {
+					got := resp.Backups[0]
+					if got.ID != tt.wantFirst.ID || got.Size != tt.wantFirst.Size || !got.CreatedAt.Equal(tt.wantFirst.CreatedAt) {
+						t.Errorf("first backup = %+v, want %+v", got, *tt.wantFirst)
+					}
+				}
 			}
 		})
 	}
 }
 
 func TestBackupResponse_Fields(t *testing.T) {
-	createdAt := time.Unix(1700000000, 500).UTC()
-	client := NewClient(respondWith(&service.CreateBackupResponse{
-		BackupID:  "backup-xyz789",
-		Size:      10485760,
-		Timestamp: createdAt.UnixNano(),
-		Status:    "completed",
-	}))
+	now := time.Now()
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return &svc.CreateBackupResponse{
+				BackupID:  "backup-xyz789",
+				Size:      10485760,
+				Timestamp: now.UnixNano(),
+				Status:    "completed",
+			}, nil
+		},
+	}
 
-	resp, err := client.Create(context.Background(), &BackupRequest{Destination: "/backups/"})
+	client := NewClient(mockT)
+	resp, err := client.Create(context.Background(), &BackupRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -426,36 +578,111 @@ func TestBackupResponse_Fields(t *testing.T) {
 	if resp.Size != 10485760 {
 		t.Errorf("expected Size=10485760, got %d", resp.Size)
 	}
-	if !resp.CreatedAt.Equal(createdAt) {
-		t.Errorf("expected CreatedAt=%v, got %v", createdAt, resp.CreatedAt)
+	if resp.Duration != 0 {
+		t.Errorf("expected Duration=0, got %v", resp.Duration)
+	}
+	if want := time.Unix(0, now.UnixNano()); !resp.CreatedAt.Equal(want) {
+		t.Errorf("expected CreatedAt=%v, got %v", want, resp.CreatedAt)
+	}
+	if resp.Status != "completed" {
+		t.Errorf("expected Status='completed', got %q", resp.Status)
 	}
 }
 
-func TestBackupResponse_SizeClampsOverflow(t *testing.T) {
-	client := NewClient(respondWith(&service.CreateBackupResponse{BackupID: "backup-big", Size: ^uint64(0)}))
+func TestClient_Create_SizeClampsAndZeroTimestamp(t *testing.T) {
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return &svc.CreateBackupResponse{
+				BackupID:  "backup-big",
+				Size:      math.MaxUint64,
+				Timestamp: 0,
+				Status:    "completed",
+			}, nil
+		},
+	}
 
-	resp, err := client.Create(context.Background(), &BackupRequest{Destination: "/backups/"})
+	resp, err := NewClient(mockT).Create(context.Background(), &BackupRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.Size <= 0 {
-		t.Errorf("expected a size clamped to the int64 maximum, got %d", resp.Size)
+	if resp.Size != math.MaxInt64 {
+		t.Errorf("expected Size=%d, got %d", int64(math.MaxInt64), resp.Size)
+	}
+	if !resp.CreatedAt.IsZero() {
+		t.Errorf("expected zero CreatedAt, got %v", resp.CreatedAt)
+	}
+}
+
+func TestRestoreResponse_Fields(t *testing.T) {
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return &svc.RestoreBackupResponse{
+				JobID:  "restore-backup-123",
+				Status: "completed",
+			}, nil
+		},
+	}
+
+	client := NewClient(mockT)
+	resp, err := client.Restore(context.Background(), &RestoreRequest{BackupID: "backup-123"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !resp.Restored {
+		t.Error("expected Restored to be true")
+	}
+	if resp.JobID != "restore-backup-123" {
+		t.Errorf("expected JobID=restore-backup-123, got %q", resp.JobID)
+	}
+	if resp.Status != "completed" {
+		t.Errorf("expected Status=completed, got %q", resp.Status)
+	}
+}
+
+func TestRestoreResponse_RunningRestoreIsNotAnError(t *testing.T) {
+	client := NewClient(&mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return &svc.RestoreBackupResponse{JobID: "restore-backup-123", Status: "running"}, nil
+		},
+	})
+
+	resp, err := client.Restore(context.Background(), &RestoreRequest{BackupID: "backup-123"})
+	if err != nil {
+		t.Fatalf("an accepted, running restore is not an error: %v", err)
+	}
+	if resp.Restored {
+		t.Error("a running restore must not report Restored")
+	}
+	if resp.Status != "running" {
+		t.Errorf("expected Status=running, got %q", resp.Status)
 	}
 }
 
 func TestBackupInfo_Fields(t *testing.T) {
-	createdAt := time.Unix(1700000000, 0).UTC()
-	client := NewClient(respondWith(&service.ListBackupsResponse{
-		Backups: []*service.BackupMetadata{
-			{BackupID: "backup-abc", Size: 5242880, Timestamp: createdAt.UnixNano(), Status: "completed"},
+	now := time.Now()
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return &svc.ListBackupsResponse{
+				Backups: []*svc.BackupMetadata{
+					{
+						BackupID:  "backup-abc",
+						Size:      5242880,
+						Timestamp: now.UnixNano(),
+						Status:    "completed",
+					},
+				},
+				TotalCount: 1,
+			}, nil
 		},
-		TotalCount: 1,
-	}))
+	}
 
+	client := NewClient(mockT)
 	resp, err := client.List(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if len(resp.Backups) != 1 {
 		t.Fatalf("expected 1 backup, got %d", len(resp.Backups))
 	}
@@ -467,102 +694,112 @@ func TestBackupInfo_Fields(t *testing.T) {
 	if backup.Size != 5242880 {
 		t.Errorf("expected Size=5242880, got %d", backup.Size)
 	}
-	if !backup.CreatedAt.Equal(createdAt) {
-		t.Errorf("expected CreatedAt=%v, got %v", createdAt, backup.CreatedAt)
+	if want := time.Unix(0, now.UnixNano()); !backup.CreatedAt.Equal(want) {
+		t.Errorf("expected CreatedAt=%v, got %v", want, backup.CreatedAt)
+	}
+	if backup.Encrypted {
+		t.Error("expected Encrypted to be false")
 	}
 }
 
-func TestClient_Create_RequestMapping(t *testing.T) {
-	tests := []struct {
-		name            string
-		req             *BackupRequest
-		wantCompression string
-		wantEncryption  string
-	}{
-		{
-			name:            "compressed and encrypted",
-			req:             &BackupRequest{Destination: "s3://my-bucket/backups/", Compress: true, Encrypt: true},
-			wantCompression: "gzip",
-			wantEncryption:  "aes-256-gcm",
-		},
-		{
-			name:            "plain",
-			req:             &BackupRequest{Destination: "/backups/"},
-			wantCompression: "none",
-			wantEncryption:  "none",
+func TestClient_Create_RequestValidation(t *testing.T) {
+	var captured interface{}
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			captured = req
+			return &svc.CreateBackupResponse{
+				BackupID:  "backup-123",
+				Size:      1024,
+				Timestamp: time.Now().UnixNano(),
+				Status:    "completed",
+			}, nil
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var captured *service.CreateBackupRequest
-			client := NewClient(&mockTransport{
-				requestFn: func(_ context.Context, _, _ string, req interface{}) (interface{}, error) {
-					captured, _ = req.(*service.CreateBackupRequest)
-					return &service.CreateBackupResponse{BackupID: "backup-123"}, nil
-				},
-			})
+	client := NewClient(mockT)
+	if _, err := client.Create(context.Background(), &BackupRequest{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-			if _, err := client.Create(context.Background(), tt.req); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if captured == nil {
-				t.Fatal("expected a *service.CreateBackupRequest on the wire")
-			}
-			if captured.Description != tt.req.Destination {
-				t.Errorf("expected Description=%q, got %q", tt.req.Destination, captured.Description)
-			}
-			if captured.Compression != tt.wantCompression {
-				t.Errorf("expected Compression=%q, got %q", tt.wantCompression, captured.Compression)
-			}
-			if captured.Encryption != tt.wantEncryption {
-				t.Errorf("expected Encryption=%q, got %q", tt.wantEncryption, captured.Encryption)
-			}
-		})
+	capturedReq, ok := captured.(*svc.CreateBackupRequest)
+	if !ok {
+		t.Fatalf("expected *svc.CreateBackupRequest, got %T", captured)
+	}
+	if !reflect.DeepEqual(capturedReq, &svc.CreateBackupRequest{}) {
+		t.Errorf("expected an empty CreateBackupRequest, got %+v", capturedReq)
 	}
 }
 
-func TestClient_Restore_RequestMapping(t *testing.T) {
-	var captured *service.RestoreBackupRequest
-	client := NewClient(&mockTransport{
-		requestFn: func(_ context.Context, _, _ string, req interface{}) (interface{}, error) {
-			captured, _ = req.(*service.RestoreBackupRequest)
-			return &service.RestoreBackupResponse{Status: "completed"}, nil
+func TestClient_Restore_RequestValidation(t *testing.T) {
+	var capturedReq *svc.RestoreBackupRequest
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			capturedReq = req.(*svc.RestoreBackupRequest)
+			return &svc.RestoreBackupResponse{
+				Status: "completed",
+			}, nil
 		},
-	})
+	}
 
-	_, err := client.Restore(context.Background(), &RestoreRequest{
-		BackupID: "backup-456",
-	})
+	client := NewClient(mockT)
+	ctx := context.Background()
+
+	originalReq := &RestoreRequest{BackupID: "backup-456"}
+
+	_, err := client.Restore(ctx, originalReq)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if captured == nil {
-		t.Fatal("expected a *service.RestoreBackupRequest on the wire")
+
+	if capturedReq.BackupID != originalReq.BackupID {
+		t.Errorf("expected BackupID=%q, got %q", originalReq.BackupID, capturedReq.BackupID)
 	}
-	if captured.BackupID != "backup-456" {
-		t.Errorf("expected BackupID=%q, got %q", "backup-456", captured.BackupID)
+}
+
+func TestClient_Restore_SourceRefusedBeforeCall(t *testing.T) {
+	called := false
+	client := NewClient(&mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			called = true
+			return &svc.RestoreBackupResponse{Status: "completed"}, nil
+		},
+	})
+
+	_, err := client.Restore(context.Background(), &RestoreRequest{BackupID: "backup-456", Source: "nightly"})
+	if !errors.IsInvalidInput(err) {
+		t.Fatalf("expected an invalid-input error, got %v", err)
+	}
+	if called {
+		t.Error("a source restore must be refused before any call")
 	}
 }
 
 func TestClient_List_ServiceAndMethod(t *testing.T) {
 	var capturedService, capturedMethod string
-	client := NewClient(&mockTransport{
-		requestFn: func(_ context.Context, svc, method string, _ interface{}) (interface{}, error) {
-			capturedService = svc
+	var capturedReq interface{}
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			capturedService = service
 			capturedMethod = method
-			return &service.ListBackupsResponse{}, nil
+			capturedReq = req
+			return &svc.ListBackupsResponse{Backups: []*svc.BackupMetadata{}}, nil
 		},
-	})
+	}
 
-	if _, err := client.List(context.Background()); err != nil {
+	client := NewClient(mockT)
+	_, err := client.List(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if capturedService != serviceName {
 		t.Errorf("expected service=%q, got %q", serviceName, capturedService)
 	}
 	if capturedMethod != "List" {
 		t.Errorf("expected method='List', got %q", capturedMethod)
+	}
+	if _, ok := capturedReq.(*svc.ListBackupsRequest); !ok {
+		t.Errorf("expected *svc.ListBackupsRequest, got %T", capturedReq)
 	}
 }
 
@@ -570,18 +807,48 @@ func TestValidateBackupRequest(t *testing.T) {
 	tests := []struct {
 		name    string
 		req     *BackupRequest
-		wantErr bool
+		wantMsg string
 	}{
-		{name: "nil request", req: nil, wantErr: true},
-		{name: "empty destination", req: &BackupRequest{Destination: ""}, wantErr: true},
-		{name: "valid destination", req: &BackupRequest{Destination: "/path/to/backup"}},
+		{
+			name:    "nil request",
+			req:     nil,
+			wantMsg: "request is required",
+		},
+		{
+			name: "empty request",
+			req:  &BackupRequest{},
+		},
+		{
+			name:    "destination",
+			req:     &BackupRequest{Destination: "/path/to/backup"},
+			wantMsg: "destination is not supported: the backup service writes to its configured backup storage",
+		},
+		{
+			name:    "compress",
+			req:     &BackupRequest{Compress: true},
+			wantMsg: "compression is not supported: the backup service applies its configured settings",
+		},
+		{
+			name:    "encrypt",
+			req:     &BackupRequest{Encrypt: true},
+			wantMsg: "encryption is not supported: the backup service applies its configured settings",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateBackupRequest(tt.req)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validateBackupRequest() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantMsg == "" {
+				if err != nil {
+					t.Errorf("validateBackupRequest() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("validateBackupRequest() = nil, want %q", tt.wantMsg)
+			}
+			if !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Errorf("validateBackupRequest() error = %q, want it to contain %q", err.Error(), tt.wantMsg)
 			}
 		})
 	}
@@ -593,11 +860,31 @@ func TestValidateRestoreRequest(t *testing.T) {
 		req     *RestoreRequest
 		wantErr bool
 	}{
-		{name: "nil request", req: nil, wantErr: true},
-		{name: "empty backup ID and source", req: &RestoreRequest{}, wantErr: true},
-		{name: "backup ID only", req: &RestoreRequest{BackupID: "backup-123"}},
-		{name: "source only", req: &RestoreRequest{Source: "/path/to/backup"}, wantErr: true},
-		{name: "both backup ID and source", req: &RestoreRequest{BackupID: "backup-123", Source: "/path/to/backup"}, wantErr: true},
+		{
+			name:    "nil request",
+			req:     nil,
+			wantErr: true,
+		},
+		{
+			name:    "empty backup ID and source",
+			req:     &RestoreRequest{BackupID: "", Source: ""},
+			wantErr: true,
+		},
+		{
+			name:    "backup ID only",
+			req:     &RestoreRequest{BackupID: "backup-123", Source: ""},
+			wantErr: false,
+		},
+		{
+			name:    "source only is refused",
+			req:     &RestoreRequest{BackupID: "", Source: "/path/to/backup"},
+			wantErr: true,
+		},
+		{
+			name:    "backup ID with source is refused",
+			req:     &RestoreRequest{BackupID: "backup-123", Source: "/path/to/backup"},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -611,25 +898,34 @@ func TestValidateRestoreRequest(t *testing.T) {
 }
 
 func TestClient_MultipleBackups(t *testing.T) {
-	client := NewClient(respondWith(&service.ListBackupsResponse{
-		Backups: []*service.BackupMetadata{
-			{BackupID: "backup-1", Size: 100},
-			{BackupID: "backup-2", Size: 200},
-			{BackupID: "backup-3", Size: 300},
+	now := time.Now()
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return &svc.ListBackupsResponse{
+				Backups: []*svc.BackupMetadata{
+					{BackupID: "backup-1", Size: 100, Timestamp: now.Add(-2 * time.Hour).UnixNano()},
+					{BackupID: "backup-2", Size: 200, Timestamp: now.Add(-1 * time.Hour).UnixNano()},
+					{BackupID: "backup-3", Size: 300, Timestamp: now.UnixNano()},
+				},
+				TotalCount: 3,
+			}, nil
 		},
-		TotalCount: 3,
-	}))
+	}
 
+	client := NewClient(mockT)
 	resp, err := client.List(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if len(resp.Backups) != 3 {
 		t.Fatalf("expected 3 backups, got %d", len(resp.Backups))
 	}
 
+	// Verify order and content
 	expectedIDs := []string{"backup-1", "backup-2", "backup-3"}
 	expectedSizes := []int64{100, 200, 300}
+
 	for i, backup := range resp.Backups {
 		if backup.ID != expectedIDs[i] {
 			t.Errorf("backup[%d]: expected ID=%q, got %q", i, expectedIDs[i], backup.ID)

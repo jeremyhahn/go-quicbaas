@@ -15,6 +15,7 @@ package fleet
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -256,5 +257,48 @@ func TestContainerRuntimeName_UnnamedRuntime(t *testing.T) {
 	}
 	if got := containerRuntimeName(&namedContainerRuntime{command: "docker"}); got != "docker" {
 		t.Fatalf("containerRuntimeName = %q, want %q", got, "docker")
+	}
+}
+
+// noneOnlyContainerRuntime can give a sandbox only the "none" network.
+type noneOnlyContainerRuntime struct {
+	fakeContainerRuntime
+}
+
+func (*noneOnlyContainerRuntime) SupportsSandboxNetwork(network orchestration.SandboxNetwork) bool {
+	return network == orchestration.SandboxNetworkNone
+}
+
+func TestCheckContainerRuntimeNetwork(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		rt      orchestration.ContainerRuntime
+		network orchestration.SandboxNetwork
+		wantErr bool
+	}{
+		{name: "no runtime", rt: nil, network: orchestration.SandboxNetworkBridge},
+		{name: "runtime without the interface", rt: &fakeContainerRuntime{available: true}, network: orchestration.SandboxNetworkBridge},
+		{name: "supported network", rt: &noneOnlyContainerRuntime{}, network: orchestration.SandboxNetworkNone},
+		{name: "unsupported network", rt: &noneOnlyContainerRuntime{}, network: orchestration.SandboxNetworkBridge, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := CheckContainerRuntimeNetwork(tc.rt, tc.network)
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("CheckContainerRuntimeNetwork: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrContainerRuntimeNetworkUnsupported) {
+				t.Fatalf("want ErrContainerRuntimeNetworkUnsupported, got %v", err)
+			}
+			if !strings.Contains(err.Error(), string(tc.network)) {
+				t.Fatalf("the error must name the network, got %v", err)
+			}
+		})
 	}
 }

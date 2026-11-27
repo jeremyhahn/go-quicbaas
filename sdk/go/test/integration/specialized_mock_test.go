@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/backup"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
@@ -26,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/vector"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	svc "github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/mock"
 )
 
@@ -734,20 +734,12 @@ func TestTimeSeriesClient_QueryValidationErrors(t *testing.T) {
 // Backup Client Tests
 // ============================================================================
 
-func TestBackupClient_CreateCompressedEncrypted(t *testing.T) {
+func TestBackupClient_CreateRefusesCompressDestinationEncrypt(t *testing.T) {
 	mt := mock.NewTransport()
 	client := backup.NewClient(mt)
 	if client == nil {
 		t.Fatal("expected non-nil client")
 	}
-
-	expectedResp := &service.CreateBackupResponse{
-		BackupID:  "backup-20251227-001",
-		Size:      1024 * 1024 * 100, // 100MB
-		Timestamp: time.Now().UnixNano(),
-		Status:    "completed",
-	}
-	mt.SetResponse("quicbaas.Backup", "Create", expectedResp, nil)
 
 	ctx := context.Background()
 	req := &backup.BackupRequest{
@@ -757,58 +749,55 @@ func TestBackupClient_CreateCompressedEncrypted(t *testing.T) {
 	}
 
 	resp, err := client.Create(ctx, req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected an error")
 	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
+	if resp != nil {
+		t.Errorf("expected nil response, got %+v", resp)
 	}
-	if resp.BackupID != expectedResp.BackupID {
-		t.Errorf("expected backup ID %q, got %q", expectedResp.BackupID, resp.BackupID)
-	}
-	if uint64(resp.Size) != expectedResp.Size {
-		t.Errorf("expected size %d, got %d", expectedResp.Size, resp.Size)
-	}
-
-	// Verify the service request carries the compression and encryption choices
-	requests := mt.Requests()
-	payload, ok := requests[0].Payload.(*service.CreateBackupRequest)
+	sdkErr, ok := err.(*errors.QBError)
 	if !ok {
-		t.Fatal("expected CreateBackupRequest payload")
+		t.Fatalf("expected *errors.QBError, got %T", err)
 	}
-	if payload.Compression != "gzip" {
-		t.Errorf("expected Compression %q, got %q", "gzip", payload.Compression)
+	want := "destination is not supported: the backup service writes to its configured backup storage"
+	if sdkErr.Message != want {
+		t.Errorf("expected message %q, got %q", want, sdkErr.Message)
 	}
-	if payload.Encryption != "aes-256-gcm" {
-		t.Errorf("expected Encryption %q, got %q", "aes-256-gcm", payload.Encryption)
+	if n := len(mt.Requests()); n != 0 {
+		t.Errorf("expected no transport request, got %d", n)
 	}
 }
 
-func TestBackupClient_CreateUncompressed(t *testing.T) {
+func TestBackupClient_CreateFullBackup(t *testing.T) {
 	mt := mock.NewTransport()
 	client := backup.NewClient(mt)
 
-	expectedResp := &service.CreateBackupResponse{
+	mt.SetResponse("quicbaas.Backup", "Create", &svc.CreateBackupResponse{
 		BackupID:  "backup-20251227-002",
-		Size:      1024 * 1024 * 500, // 500MB (larger because uncompressed)
+		Size:      500 * 1024 * 1024,
 		Timestamp: time.Now().UnixNano(),
 		Status:    "completed",
-	}
-	mt.SetResponse("quicbaas.Backup", "Create", expectedResp, nil)
+	}, nil)
 
-	ctx := context.Background()
-	req := &backup.BackupRequest{
-		Destination: "/mnt/backups/",
-		Compress:    false,
-		Encrypt:     false,
-	}
-
-	resp, err := client.Create(ctx, req)
+	resp, err := client.Create(context.Background(), &backup.BackupRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.BackupID != expectedResp.BackupID {
-		t.Errorf("expected backup ID %q, got %q", expectedResp.BackupID, resp.BackupID)
+	if resp.BackupID != "backup-20251227-002" {
+		t.Errorf("expected backup ID %q, got %q", "backup-20251227-002", resp.BackupID)
+	}
+	if resp.Size != 500*1024*1024 {
+		t.Errorf("expected size %d, got %d", 500*1024*1024, resp.Size)
+	}
+	if resp.Status != "completed" {
+		t.Errorf("expected status %q, got %q", "completed", resp.Status)
+	}
+	requests := mt.Requests()
+	if len(requests) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(requests))
+	}
+	if _, ok := requests[0].Payload.(*svc.CreateBackupRequest); !ok {
+		t.Errorf("expected *svc.CreateBackupRequest payload, got %T", requests[0].Payload)
 	}
 }
 
@@ -816,12 +805,11 @@ func TestBackupClient_RestoreFromBackupID(t *testing.T) {
 	mt := mock.NewTransport()
 	client := backup.NewClient(mt)
 
-	expectedResp := &service.RestoreBackupResponse{
-		JobID:    "restore-backup-20251227-001",
-		Status:   "completed",
-		Progress: 100,
+	serviceResp := &svc.RestoreBackupResponse{
+		JobID:  "restore-backup-20251227-001",
+		Status: "completed",
 	}
-	mt.SetResponse("quicbaas.Backup", "Restore", expectedResp, nil)
+	mt.SetResponse("quicbaas.Backup", "Restore", serviceResp, nil)
 
 	ctx := context.Background()
 	req := &backup.RestoreRequest{
@@ -838,10 +826,11 @@ func TestBackupClient_RestoreFromBackupID(t *testing.T) {
 	if !resp.Restored {
 		t.Error("expected Restored to be true")
 	}
+	if resp.JobID != serviceResp.JobID {
+		t.Errorf("expected job ID %q, got %q", serviceResp.JobID, resp.JobID)
+	}
 
-	// Verify the service request names the backup
-	requests := mt.Requests()
-	payload, ok := requests[0].Payload.(*service.RestoreBackupRequest)
+	payload, ok := mt.Requests()[0].Payload.(*svc.RestoreBackupRequest)
 	if !ok {
 		t.Fatal("expected RestoreBackupRequest payload")
 	}
@@ -850,18 +839,24 @@ func TestBackupClient_RestoreFromBackupID(t *testing.T) {
 	}
 }
 
-func TestBackupClient_RestoreStillRunning(t *testing.T) {
+func TestBackupClient_RestoreFromExternalSource(t *testing.T) {
 	mt := mock.NewTransport()
 	client := backup.NewClient(mt)
 
-	mt.SetResponse("quicbaas.Backup", "Restore", &service.RestoreBackupResponse{Status: "running", Progress: 40}, nil)
-
-	resp, err := client.Restore(context.Background(), &backup.RestoreRequest{BackupID: "backup-20251227-001"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	ctx := context.Background()
+	req := &backup.RestoreRequest{
+		Source: "s3://external-bucket/backups/snapshot-2025-12-27.tar.gz",
 	}
-	if resp.Restored {
-		t.Error("expected Restored to be false while the restore is running")
+
+	resp, err := client.Restore(ctx, req)
+	if !errors.IsInvalidInput(err) {
+		t.Fatalf("expected invalid input error, got %v", err)
+	}
+	if resp != nil {
+		t.Errorf("expected nil response, got %+v", resp)
+	}
+	if n := len(mt.Requests()); n != 0 {
+		t.Errorf("expected no transport request, got %d", n)
 	}
 }
 
@@ -870,8 +865,8 @@ func TestBackupClient_ListWithResults(t *testing.T) {
 	client := backup.NewClient(mt)
 
 	now := time.Now()
-	expectedResp := &service.ListBackupsResponse{
-		Backups: []*service.BackupMetadata{
+	expectedResp := &svc.ListBackupsResponse{
+		Backups: []*svc.BackupMetadata{
 			{BackupID: "backup-001", Size: 100 * 1024 * 1024, Timestamp: now.Add(-24 * time.Hour).UnixNano()},
 			{BackupID: "backup-002", Size: 95 * 1024 * 1024, Timestamp: now.Add(-48 * time.Hour).UnixNano()},
 			{BackupID: "backup-003", Size: 110 * 1024 * 1024, Timestamp: now.Add(-72 * time.Hour).UnixNano()},
@@ -895,9 +890,6 @@ func TestBackupClient_ListWithResults(t *testing.T) {
 	// Verify backup info
 	if resp.Backups[0].ID != "backup-001" {
 		t.Errorf("expected first backup ID %q, got %q", "backup-001", resp.Backups[0].ID)
-	}
-	if !resp.Backups[0].CreatedAt.Equal(now.Add(-24 * time.Hour)) {
-		t.Errorf("expected first backup CreatedAt %v, got %v", now.Add(-24*time.Hour), resp.Backups[0].CreatedAt)
 	}
 }
 
@@ -937,9 +929,14 @@ func TestBackupClient_CreateValidationErrors(t *testing.T) {
 			wantErr: "request is required",
 		},
 		{
-			name:    "empty destination",
+			name:    "destination refused",
+			req:     &backup.BackupRequest{Destination: "/mnt/backups/"},
+			wantErr: "destination is not supported: the backup service writes to its configured backup storage",
+		},
+		{
+			name:    "compress refused",
 			req:     &backup.BackupRequest{Compress: true},
-			wantErr: "destination is required",
+			wantErr: "compression is not supported: the backup service applies its configured settings",
 		},
 	}
 
@@ -981,11 +978,9 @@ func TestBackupClient_RestoreValidationErrors(t *testing.T) {
 			wantErr: "backup ID is required",
 		},
 		{
-			// The backup service restores by backup ID only (#1726): a
-			// source is refused rather than silently dropped.
-			name:    "source is refused",
-			req:     &backup.RestoreRequest{BackupID: "backup-20251227-001", Source: "s3://bucket/backup"},
-			wantErr: "source is not supported: the backup service restores by backup ID only",
+			name:    "source only",
+			req:     &backup.RestoreRequest{Source: "nightly"},
+			wantErr: "restore from a source is not supported; set backup ID",
 		},
 	}
 
@@ -1835,9 +1830,7 @@ func TestSpecializedClients_TransportErrors(t *testing.T) {
 		mt.Reset()
 		mt.SetResponse("quicbaas.Backup", "Create", nil, transportErr)
 		client := backup.NewClient(mt)
-		_, err := client.Create(ctx, &backup.BackupRequest{
-			Destination: "/tmp/backup",
-		})
+		_, err := client.Create(ctx, &backup.BackupRequest{})
 		if err == nil {
 			t.Fatal("expected error")
 		}

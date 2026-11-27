@@ -109,8 +109,11 @@ func (s *accountServiceImpl) createWithSecretRef(ctx context.Context, account *o
 //
 // A successful check is also the recovery path: an account the spawn path put
 // in AccountStatusError because its secret was missing returns to active here,
-// since the operator has just shown the secret now resolves. Any other status
-// (revoked, limited) is left alone — those are not the secret's to clear.
+// since the operator has just shown the secret now resolves. It is also the
+// first-credential path: an account in AccountStatusAwaitingCredential (a
+// tenant's seeded default account) becomes active here, since a resolving
+// reference is its first credential. Any other status (revoked, limited) is
+// left alone — those are not the secret's to clear.
 func (s *accountServiceImpl) applySecretRef(ctx context.Context, account *orchestration.Account, ref, file string) error {
 	account.CredentialSecretRef = ref
 	account.CredentialSecretFile = file
@@ -129,7 +132,8 @@ func (s *accountServiceImpl) applySecretRef(ctx context.Context, account *orches
 	// switch or re-point reaches a daemon on its next spawn rather than when
 	// its cached copy ages out.
 	account.LastRefreshedAt = time.Now().UTC()
-	if account.Status == orchestration.AccountStatusError {
+	switch account.Status {
+	case orchestration.AccountStatusError, orchestration.AccountStatusAwaitingCredential:
 		account.Status = orchestration.AccountStatusActive
 		account.LastError = ""
 	}

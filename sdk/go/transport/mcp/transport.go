@@ -433,7 +433,7 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		}
 	}
 
-	// Likewise for the FIDO2 ceremony surface (xkms.fido2.* tools).
+	// Likewise for the FIDO2 ceremony surface (xkms_fido2_* tools).
 	if isFIDO2 {
 		if _, ok := fido2ToolName(method); !ok {
 			return nil, errors.NewUnimplemented("mcp.fido2."+method,
@@ -743,6 +743,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// accepts.
 	if isMCPKVService(service) {
 		return transformKVResponse(method, result)
+	}
+
+	// Decode the restore job status into the service response the backup
+	// client accepts.
+	if isMCPBackupService(service) {
+		return transformBackupResponse(method, result)
 	}
 
 	return result, nil
@@ -1149,7 +1155,7 @@ func ToolName(service, method string) string {
 	}
 
 	// FIDO2 ceremony tools are likewise the xkms compatibility set
-	// (xkms.fido2.*).
+	// (xkms_fido2_*).
 	if isMCPFIDO2Service(service) {
 		if toolName, ok := fido2ToolName(method); ok {
 			return toolName

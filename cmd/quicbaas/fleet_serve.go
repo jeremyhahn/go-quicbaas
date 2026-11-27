@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -135,12 +136,12 @@ Examples:
 	cmd.Flags().Int64Var(&serveSandboxPidsLimit, "sandbox-pids-limit", 0, fmt.Sprintf("Maximum processes plus threads in a sandboxed container (--pids-limit). Zero takes the default %d.", orchestration.DefaultSandboxPidsLimit))
 	cmd.Flags().StringSliceVar(&serveSandboxUlimits, "sandbox-ulimit", nil, fmt.Sprintf("Resource limit for sandboxed containers as name=soft[:hard]; comma-separated or repeatable. The default is memlock=%d (4 GiB, what the CI runners give); an entry naming memlock replaces it.", orchestration.DefaultSandboxMemlockBytes))
 	cmd.Flags().StringVar(&serveContainerRT, "container-runtime", "auto", "OCI runtime: docker | podman | auto | none")
-	cmd.Flags().StringVar(&serveOllamaBaseURL, "ollama-url", "", "Base URL of the ollama server the \"ollama\" backend uses, without /v1 (default http://127.0.0.1:11434).")
-	cmd.Flags().StringVar(&serveOpenVINOURL, "openvino-url", "", "OpenVINO Model Server base URL, without /v3 (e.g. http://gpu-host:9000). Registers the \"openvino\" backend; empty leaves it unregistered.")
+	cmd.Flags().StringVar(&serveOllamaBaseURL, "ollama-url", "", "Base URL of the ollama server the \"ollama\" backend uses, without /v1. Also OLLAMA_URL; empty takes http://localhost:11434.")
+	cmd.Flags().StringVar(&serveOpenVINOURL, "openvino-url", "", "OpenVINO Model Server base URL, without /v3 (e.g. http://inference.example:9000). Registers the \"openvino\" backend; empty leaves it unregistered.")
 	cmd.Flags().StringVar(&serveOpenVINOModel, "openvino-model", "", "Model the OpenVINO server serves, e.g. qwen3-8b.")
 	cmd.Flags().StringVar(&serveOllamaAgentModel, "ollama-agent-model", "", "Model the \"ollama-agent\" backend uses: the container-and-tools agent loop against the ollama endpoint, for roles that must read a repository. Empty leaves the backend registered with no default model.")
 	cmd.Flags().StringVar(&serveCodexEffort, "codex-reasoning-effort", "", "Reasoning effort the codex backend runs at: minimal, low, medium or high (default medium). Review is a gate, so a shallower pass approves what it should have caught rather than failing visibly.")
-	cmd.Flags().StringVar(&serveVLLMBaseURL, "vllm-url", "", "Base URL of a vLLM server, without /v1 (e.g. http://gpu-host:11435). Registers the \"vllm\" backend alongside ollama so a project switches between them by naming a different backend; empty leaves it unregistered.")
+	cmd.Flags().StringVar(&serveVLLMBaseURL, "vllm-url", "", "Base URL of a vLLM server, without /v1 (e.g. http://inference.example:11435). Registers the \"vllm\" backend alongside ollama so a project switches between them by naming a different backend; empty leaves it unregistered.")
 	cmd.Flags().StringVar(&serveVLLMModel, "vllm-model", "", "The served-model name vLLM answers to (its --served-model-name), not a file path.")
 	cmd.Flags().IntVar(&serveVLLMCtx, "vllm-context-tokens", 0, "How much prompt that vLLM model accepts. Zero learns the ceiling from the first refusal.")
 	cmd.Flags().IntVar(&serveOllamaAgentCtx, "ollama-agent-context-tokens", 0, "How much prompt that ollama model accepts. Zero learns the ceiling from the first refusal.")
@@ -373,6 +374,10 @@ func runFleetServe(cmd *cobra.Command, args []string) error {
 	return waitForSignalAndStop(daemon)
 }
 
+// inProcessRuntimeDirName is the in-process container runtime's state
+// directory under the agent's work dir.
+const inProcessRuntimeDirName = "containers"
+
 // buildFleetRuntime constructs the daemon's Runtime over the supplied
 // backends, resolving --container-runtime into the engine that will host
 // sandboxed sessions. Without that resolution the runtime holds no engine and
@@ -383,9 +388,16 @@ func runFleetServe(cmd *cobra.Command, args []string) error {
 // usable engine — live in fleet.NewRuntime, so this path and the embedded
 // fleet node enforce one rule rather than two.
 func buildFleetRuntime(cfg *fleet.Config, backends map[string]orchestration.AgentBackend, logger interfaces.Logger) (*fleet.Runtime, error) {
-	containerRuntime, rtErr := fleet.ResolveContainerRuntime(cfg.EffectiveContainerRuntime(), logger)
+	// The in-process runtime keeps its state under this agent's own work dir,
+	// so two agents never share a runtime's state.
+	containerRuntime, rtErr := fleet.ResolveContainerRuntimeIn(cfg.EffectiveContainerRuntime(), filepath.Join(cfg.WorkDir, inProcessRuntimeDirName), logger)
 	if rtErr != nil {
 		return nil, rtErr
+	}
+	// A runtime that cannot give the sandbox network this agent is configured
+	// for would refuse every spawn, so the agent ends here, before it enrols.
+	if netErr := fleet.CheckContainerRuntimeNetwork(containerRuntime, cfg.EffectiveSandboxNetwork()); netErr != nil {
+		return nil, netErr
 	}
 	// A BACKEND THAT RUNS ITS OWN CONTAINERS NEEDS THE RUNTIME TOO, and this
 	// is the only place it exists. The CLI backends are handed one by

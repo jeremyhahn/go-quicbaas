@@ -5,21 +5,7 @@ on:
     tags:
       - 'v*'
 
-# GOPROXY / GOSUMDB are deliberately absent, as in ci.yml. First-party
-# github.com/jeremyhahn/* modules resolve through the proxy and checksum
-# database like any other; setting
-# `GOPROXY: direct` and `GOSUMDB: off` here additionally routed every
-# third-party module around proxy.golang.org with sumdb verification off,
-# resolving them from mutable VCS refs. §1 says not to add them.
-#
-# REGISTRY defaults to ghcr.io and is overridden per forge by the repository
-# variable of the same name: ghcr.io does not exist on a self-hosted Gitea and a
-# Gitea token cannot authenticate to it, so such a forge sets `vars.REGISTRY` to
-# its own registry host (lessons.md). No forge address is written down here --
-# go-quicbaas#944 removed the one that was, because this file ships publicly.
-# Nothing is pushed on Gitea anyway -- the build-docker* jobs have no registry
-# credentials there and skip every push -- so off github.com REGISTRY only
-# prefixes the local tag the Trivy gate scans.
+# GOPROXY and GOSUMDB are deliberately absent, as in ci.yml.
 env:
   GO_VERSION: '1.27.4'
   REGISTRY: ${{ vars.REGISTRY || 'ghcr.io' }}
@@ -50,9 +36,7 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION}"
 
-      # Container images are pushed only on the GitHub path (see the
-      # build-docker* jobs). The notes are generated to match, so a Gitea
-      # release never advertises a manifest that was never published.
+      # Container images are pushed only on github.com.
       - name: Generate changelog
         id: changelog
         env:
@@ -255,28 +239,7 @@ jobs:
 
           chmod +x build.sh
 
-          # Run build in a native container for the target architecture.
-          #
-          # NOT `docker run -v $(pwd):/workspace`: $(pwd) here is a path
-          # INSIDE THIS JOB CONTAINER (e.g. /workspace/jeremyhahn/go-quicbaas),
-          # but act_runner talks to the HOST's docker daemon over the socket
-          # -- the daemon tries to bind-mount that path from ITS OWN
-          # filesystem, where it doesn't exist in that shape. Runner-log-
-          # proven (task 2940 and every other Build Binaries run):
-          #   docker: Error response from daemon: error while creating mount
-          #   source path '/workspace/jeremyhahn/go-quicbaas': mkdir
-          #   /workspace: file exists
-          # `docker cp` sidesteps this entirely: the CLI (running in this job
-          # container, which does have the files) streams them to the daemon
-          # over the API rather than asking the daemon to resolve a bind-mount
-          # path itself, so it works regardless of where the two filesystems
-          # actually live relative to each other.
-          #
-          # This container's `go build` resolves go-xkms/go-qrdb through the
-          # module proxy and checksum database like any other module, so no
-          # fetch credentials are forwarded. `docker create` (unlike
-          # `docker run`) does not reliably forward bare `-e NAME` host-value
-          # passthrough, so each var is explicitly expanded here.
+          # Run the build in a native container for the target architecture.
           CID=$(docker create \
             --platform=${{ matrix.platform }} \
             -w /src \
@@ -438,12 +401,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        # No credentials to push with on Gitea, and REGISTRY there resolves
-        # to that forge's own registry, which is plain HTTP while
-        # docker/login-action always contacts it over HTTPS -- unguarded this
-        # fails every run with "http: server gave HTTP response to HTTPS
-        # client" (tasks 3612/3613/3614) before a single build step runs.
-        # Matches ci.yml's Docker job login guard.
+        # No push credentials off github.com, and the registry there is plain HTTP: log in only on github.com.
         if: github.server_url == 'https://github.com'
         uses: docker/login-action@v3
         with:
@@ -462,24 +420,13 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      # First-party modules resolve through the module proxy and checksum
-      # database like any other, so no fetch credentials are staged; the
-      # file stays empty and is still handed to buildx as a secret mount --
-      # Dockerfile's `RUN --mount=type=secret,id=gomodauth` expects one but
-      # nothing in this workflow previously supplied it, so `go mod
-      # download` for the private go-xkms/go-qrdb modules had no
-      # credentials. Empty on GitHub Actions (those vars are unset there),
-      # which is fine: the mount is optional and falls back to public
-      # resolution.
+      # No module fetch credentials are needed; the empty file satisfies the Dockerfile's gomodauth secret mount.
       - name: Stage Gitea module credentials
         run: |
           umask 077
           : > gomodauth.env
 
-      # devops.md §8: no image reaches a registry unscanned. Built amd64-only
-      # and loaded into the local daemon so Trivy can read it; the multi-arch
-      # push below shares the same buildx cache, so this costs a load rather
-      # than a rebuild.
+      # No image reaches a registry unscanned.
       - name: Build daemon image for scanning
         uses: docker/build-push-action@v6
         with:
@@ -512,8 +459,7 @@ jobs:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE: ${{ env.IMAGE_NAME_DAEMON }}
 
-      # No credentials to push with on Gitea (see the login step above)
-      # -- skip the push there rather than fail after a successful scan.
+      # No push credentials off github.com: skip the push there.
       - name: Build and push Docker image
         if: github.server_url == 'https://github.com'
         uses: docker/build-push-action@v6
@@ -549,12 +495,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        # No credentials to push with on Gitea, and REGISTRY there resolves
-        # to that forge's own registry, which is plain HTTP while
-        # docker/login-action always contacts it over HTTPS -- unguarded this
-        # fails every run with "http: server gave HTTP response to HTTPS
-        # client" (tasks 3612/3613/3614) before a single build step runs.
-        # Matches ci.yml's Docker job login guard.
+        # No push credentials off github.com, and the registry there is plain HTTP: log in only on github.com.
         if: github.server_url == 'https://github.com'
         uses: docker/login-action@v3
         with:
@@ -573,15 +514,13 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      # See the daemon job's comment: buildkit needs the credentials staged
-      # into a file to hand to it as a secret.
+      # The empty gomodauth secret, as in the daemon job.
       - name: Stage Gitea module credentials
         run: |
           umask 077
           : > gomodauth.env
 
-      # devops.md §8: no image reaches a registry unscanned. See the daemon job
-      # for why this builds amd64-only and loads rather than pushing.
+      # No image reaches a registry unscanned.
       - name: Build CLI image for scanning
         uses: docker/build-push-action@v6
         with:
@@ -650,12 +589,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        # No credentials to push with on Gitea, and REGISTRY there resolves
-        # to that forge's own registry, which is plain HTTP while
-        # docker/login-action always contacts it over HTTPS -- unguarded this
-        # fails every run with "http: server gave HTTP response to HTTPS
-        # client" (tasks 3612/3613/3614) before a single build step runs.
-        # Matches ci.yml's Docker job login guard.
+        # No push credentials off github.com, and the registry there is plain HTTP: log in only on github.com.
         if: github.server_url == 'https://github.com'
         uses: docker/login-action@v3
         with:
@@ -672,15 +606,13 @@ jobs:
             type=semver,pattern={{version}}-fips
             type=raw,value=latest-fips,enable={{is_default_branch}}
 
-      # See the daemon job's comment: buildkit needs the credentials staged
-      # into a file to hand to it as a secret.
+      # The empty gomodauth secret, as in the daemon job.
       - name: Stage Gitea module credentials
         run: |
           umask 077
           : > gomodauth.env
 
-      # devops.md §8: no image reaches a registry unscanned. See the daemon job
-      # for why this builds amd64-only and loads rather than pushing.
+      # No image reaches a registry unscanned.
       - name: Build FIPS image for scanning
         uses: docker/build-push-action@v6
         with:
@@ -777,8 +709,7 @@ jobs:
     runs-on: ubuntu-latest
     if: success()
     steps:
-      # Skipped off GitHub, where no image was pushed -- appending pull
-      # commands there would contradict the notes the release was created with.
+      # Skipped off github.com, where no image was pushed.
       - name: Update release notes
         if: github.server_url == 'https://github.com'
         uses: actions/github-script@v7

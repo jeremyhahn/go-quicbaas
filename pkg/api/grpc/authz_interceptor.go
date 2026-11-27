@@ -22,6 +22,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -48,6 +50,16 @@ type MissingTokenError struct {
 
 func (e *MissingTokenError) Error() string {
 	return "authentication required for gRPC method: " + e.Method
+}
+
+// CrossTenantMethodError is returned when a gRPC method restricted to the
+// system tenant is invoked by an identity of any other tenant.
+type CrossTenantMethodError struct {
+	Method string
+}
+
+func (e *CrossTenantMethodError) Error() string {
+	return "gRPC method is restricted to the system tenant: " + e.Method
 }
 
 // bearerFromContext extracts the bearer token from the inbound "authorization"
@@ -142,6 +154,13 @@ func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRP
 		return ctx, validatorGRPCStatus(err)
 	}
 
+	// Cross-tenant methods (the qrdb.v1 backup RPCs act on every tenant's
+	// data): the permission alone is not enough, the caller must be the
+	// system tenant. Fail closed when the authorizer returns no context.
+	if isSystemTenantOnlyGRPCMethod(fullMethod) && (authzCtx == nil || authzCtx.TenantID != qrdbsdk.SystemTenantID) {
+		return ctx, status.Error(codes.PermissionDenied, (&CrossTenantMethodError{Method: fullMethod}).Error())
+	}
+
 	return contextWithAuthorizedSubject(ctx, authzCtx), nil
 }
 
@@ -190,8 +209,41 @@ func UnaryAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer, opts ...A
 		if err != nil {
 			return nil, err
 		}
+		if err := authorizeGRPCRequestFields(ctx, info.FullMethod, req, authorizer, cfg.sealedBypass); err != nil {
+			return nil, err
+		}
 		return handler(authedCtx, req)
 	}
+}
+
+// authorizeGRPCRequestFields renders the further permissions a request's own
+// fields demand (grpcRequestPermissions) after the method's grant has been
+// decided. A public or sealed-window bypassed method, or one with no entry,
+// needs nothing more. Each permission is decided by the same token authorizer
+// as the method grant; a denial maps through validatorGRPCStatus, and a request
+// the table cannot read is refused (fail closed).
+func authorizeGRPCRequestFields(ctx context.Context, fullMethod string, req interface{}, authorizer GRPCValidatorAuthorizer, sealedBypass *sealedwindow.AuthBypass) error {
+	// The table is consulted first: BypassesGRPC audits every admit it
+	// makes, so it is asked only for a method that has an entry, and an
+	// allowlisted unseal verb is never audited twice.
+	fields, ok := grpcRequestPermissions[fullMethod]
+	if !ok {
+		return nil
+	}
+	if isPublicGRPCMethod(fullMethod) || sealedBypass.BypassesGRPC(fullMethod) {
+		return nil
+	}
+	perms, err := fields(req)
+	if err != nil {
+		return status.Error(codes.PermissionDenied, "permission denied")
+	}
+	token := bearerFromContext(ctx)
+	for _, perm := range perms {
+		if _, err := authorizer.Authorize(ctx, token, perm.resource+":"+perm.action, "", "", ""); err != nil {
+			return validatorGRPCStatus(err)
+		}
+	}
+	return nil
 }
 
 // StreamAuthorizationInterceptor is the streaming counterpart of
