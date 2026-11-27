@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -117,4 +118,160 @@ func TestBackupManager_NilRaftRestoreRecoversValues(t *testing.T) {
 	got, err = store.Get([]byte("backup-test/k3"))
 	require.NoError(t, err)
 	assert.Equal(t, "v3", string(got))
+}
+
+// batchCountingStorage is a mockStorage that implements BatchWriter,
+// recording the number of WriteBatch calls and the pairs they carry.
+type batchCountingStorage struct {
+	*mockStorage
+	calls int
+	pairs int
+}
+
+func (s *batchCountingStorage) WriteBatch(ctx context.Context, kvs []KeyValue) error {
+	s.calls++
+	s.pairs += len(kvs)
+	for _, kv := range kvs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := s.Set(kv.Key, kv.Value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestBackupManager_RestoreUsesBatchWriter(t *testing.T) {
+	store := &batchCountingStorage{mockStorage: &mockStorage{MemoryStorage: memory.New(nil)}}
+
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	require.NoError(t, err)
+
+	config := &Config{
+		StorageBackend:     "local",
+		DefaultCompression: CompressionNone,
+		DefaultEncryption:  EncryptionNone,
+		WorkDir:            t.TempDir(),
+		Timeout:            5 * time.Minute,
+		StorageConfig: map[string]string{
+			"path":   t.TempDir(),
+			"prefix": "backups",
+		},
+	}
+
+	mgr, err := NewBackupManager(config, store, nil, log)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	for i := 0; i < 500; i++ {
+		require.NoError(t, store.Set([]byte(fmt.Sprintf("backup-test/k%03d", i)), []byte(fmt.Sprintf("v%d", i))))
+	}
+
+	ctx := context.Background()
+	b, err := mgr.CreateBackup(ctx, BackupTypeFull)
+	require.NoError(t, err)
+
+	require.NoError(t, store.Set([]byte("backup-test/k042"), []byte("changed")))
+
+	require.NoError(t, mgr.RestoreBackup(ctx, b.ID, nil))
+
+	assert.Equal(t, 1, store.calls, "restore writes the shard in one batch")
+	assert.Equal(t, 500, store.pairs)
+
+	got, err := store.Get([]byte("backup-test/k042"))
+	require.NoError(t, err)
+	assert.Equal(t, "v42", string(got))
+}
+
+func TestBackupManager_RestoreShardStopsOnCancelledContext(t *testing.T) {
+	mgr, store := newNilRaftManager(t)
+
+	var buf bytes.Buffer
+	require.NoError(t, writeKeyValue(&buf, []byte("backup-test/cancelled"), []byte("v")))
+	data := buf.Bytes()
+	snap := &ShardSnapshot{
+		ShardID:  1,
+		Data:     data,
+		Checksum: ComputeChecksum(data),
+		Size:     int64(len(data)),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := mgr.restoreShardSnapshot(ctx, snap, &RestoreOptions{})
+	require.Error(t, err)
+
+	_, err = store.Get([]byte("backup-test/cancelled"))
+	assert.Error(t, err, "no key is written after the context is cancelled")
+}
+
+// blockingWriteStorage is a store without BatchWriter whose context-aware
+// write blocks until its context is cancelled, like a Raft proposal that
+// waits for a quorum.
+type blockingWriteStorage struct {
+	*mockStorage
+	started chan struct{}
+	writes  int
+}
+
+func (s *blockingWriteStorage) Set(key, value []byte) error {
+	s.writes++
+	return s.mockStorage.Set(key, value)
+}
+
+func (s *blockingWriteStorage) SetWithContext(ctx context.Context, key, value []byte) error {
+	s.writes++
+	if s.writes == 1 {
+		close(s.started)
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestBackupManager_RestoreShardPassesContextToWrites proves the per-key
+// restore path hands the request context to the store: a write already in
+// flight returns when the caller cancels, and no later key is written.
+func TestBackupManager_RestoreShardPassesContextToWrites(t *testing.T) {
+	mgr, base := newNilRaftManager(t)
+	store := &blockingWriteStorage{mockStorage: base, started: make(chan struct{})}
+	mgr.storage = store
+
+	var buf bytes.Buffer
+	require.NoError(t, writeKeyValue(&buf, []byte("backup-test/inflight-1"), []byte("v1")))
+	require.NoError(t, writeKeyValue(&buf, []byte("backup-test/inflight-2"), []byte("v2")))
+	data := buf.Bytes()
+	snap := &ShardSnapshot{
+		ShardID:  1,
+		Data:     data,
+		Checksum: ComputeChecksum(data),
+		Size:     int64(len(data)),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- mgr.restoreShardSnapshot(ctx, snap, &RestoreOptions{}) }()
+
+	select {
+	case <-store.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("restore never started a write")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("restore kept waiting on a write after the context was cancelled")
+	}
+
+	assert.Equal(t, 1, store.writes, "no key is written after the context is cancelled")
+	for _, k := range []string{"backup-test/inflight-1", "backup-test/inflight-2"} {
+		_, err := base.Get([]byte(k))
+		assert.Error(t, err, "key %s must not be written", k)
+	}
 }
