@@ -98,7 +98,7 @@ and watch its changes. An instance stays listed while its lease is renewed and
 disappears when the lease lapses. Every command is scoped to your tenant.
 
 Examples:
-  quicbaas registry register --service api --id node-a --address 10.0.4.7:8443 --ttl 15 --meta zone=z1
+  quicbaas registry register --service api --id node-a --instance-address 10.0.4.7:8443 --ttl 15 --meta zone=z1
   quicbaas registry renew 42
   quicbaas registry resolve api
   quicbaas registry watch api
@@ -122,7 +122,7 @@ func newRegistryRegisterCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&registryService, "service", "", "Service name (required)")
 	cmd.Flags().StringVar(&registryInstanceID, "id", "", "Instance ID, unique within the service (required)")
-	cmd.Flags().StringVar(&registryAddress, "address", "", "Instance address, host:port (required)")
+	cmd.Flags().StringVar(&registryAddress, "instance-address", "", "Instance address, host:port (required)")
 	cmd.Flags().Int64Var(&registryTTL, "ttl", 15, "Lease TTL in seconds (1 to 86400)")
 	cmd.Flags().StringArrayVar(&registryMetadata, "meta", nil, "Metadata as key=value (repeatable)")
 	return cmd

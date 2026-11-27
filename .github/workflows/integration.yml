@@ -1,33 +1,4 @@
-# Integration suite — the five-node quicbaas cluster against real daemons.
-#
-# Separate from ci.yml on purpose (devops.md §5): this stands up a five-node
-# cluster plus its supporting services in containers, builds the daemon, the
-# CLI and the test-runner images from tagged modules, and takes on the order of
-# an hour, so the per-PR gate stays fast and honest while the suite still runs.
-#
-# FULL TIER (handbook sdlc §5a; go-quicbaas#1266, #1272). It runs on
-# workflow_dispatch only -- the nightly full tier is dispatched this way; no
-# workflow carries a `schedule:` trigger, owner ruling 2026-10-11. It no
-# longer runs on push to main or on pull requests: ci.yml's integration job
-# runs `make integration-test` on those already, so a push to main ran the
-# suite twice. This workflow is in no required check.
-#
-# Why not a job inside ci.yml: Gitea does not honour job-level
-# continue-on-error for the overall run conclusion, so an advisory job there
-# could only lie or hold the whole gate red. Observed on run 367, 2026-08-14.
-#
-# This suite ran dark until 2026-08-14, so its failures are first-execution
-# findings rather than regressions. Tracked as #57.
-#
-# One of them has been fixed and is worth knowing about, because the symptom
-# named the wrong culprit: compose starts an init service once for `up` and
-# again for the later `run`, and the certificate generator regenerated on the
-# second start. That minted a fresh CA under the same subject name while nodes
-# 1-3 were already running on the first one, so every client saw "x509:
-# certificate signed by unknown authority" against an authority it could name
-# by subject. It reads as a broken cluster and is rotated trust. gen-certs is
-# now a no-op when the material is already present; per-run freshness comes
-# from `down --volumes` between runs, not from rewriting a live volume.
+# Integration suite: the five-node quicbaas cluster against real daemons.
 name: Integration
 
 on:
@@ -38,10 +9,7 @@ on:
 permissions:
   contents: read
 
-# The ci.yml block (DS-3161): Gitea does not evaluate an expression in
-# cancel-in-progress, so it is a literal true. A newer push to a pull request
-# cancels that ref's older run; on main the group key carries the commit sha,
-# so no main run is cancelled and every main commit keeps its run.
+# cancel-in-progress is a literal true; not every forge evaluates an expression there.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'latest' }}
   cancel-in-progress: true
@@ -50,13 +18,7 @@ env:
   GO_VERSION: '1.27.4'
 
 jobs:
-  # #2427 (owner order): picks the pool Integration Tests runs on, with
-  # ci.yml's `Balanced runner pool (ruling 1137)` step copied verbatim (its
-  # tests, testdata/runner-select-tests.py, hold the two copies equal). Only
-  # a push to main or a same-repository pull_request can take the Dells'
-  # bigdisk-docker; workflow_dispatch and every other event go hosted. It
-  # runs under the job's own `if:`, so a pull request without ci:full skips
-  # both at no cost, and on ubuntu-latest, before any checkout.
+  # Picks the pool the integration tests run on, with the same selector as ci.yml's `Balanced runner pool` step.
   preflight:
     name: Preflight [runner selection]
     runs-on: ubuntu-latest
@@ -220,39 +182,17 @@ jobs:
 
   integration-test:
     name: Integration Tests
-    # #2427: the preflight runner_docker pool, as ci.yml's Docker jobs:
-    # ubuntu-latest, or the Dells' bigdisk-docker when the selector picks them.
+    # The preflight runner_docker pool, as ci.yml's Docker jobs.
     runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
     needs: preflight
     # Full tier: the same condition as ci.yml's (see its header).
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
     timeout-minutes: 120
     env:
-      # #2427: as ci.yml's integration job, 8g on a self-hosted runner for a
-      # stage run through scripts/in-toolchain-image.sh; no cap only on a
-      # GitHub-hosted runner (the preflight runner_docker output is
-      # "ubuntu-latest").
+      # 8g on a self-hosted runner for a stage run through scripts/in-toolchain-image.sh; no cap on a GitHub-hosted runner.
       IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
     steps:
-      # The stack builds several images in one run; the runner's stock free
-      # space is not enough for them plus the toolchain caches.
-      #
-      # Nothing here touches Docker, deliberately. The suite reclaims its own
-      # space: `make integration-test` brings its compose stack down with
-      # `--volumes --remove-orphans` and removes the five node images and the
-      # test-runner image before it rebuilds them, and arms an EXIT trap before
-      # the first container exists so the stack comes down on every way out of
-      # the recipe — a failed build or an unhealthy cluster included, not only
-      # the run that reached its last line (pinned by
-      # `make verify-integration-teardown`). A host-global
-      # `sudo docker system prune -af --volumes` used to run here instead; the
-      # runners are shared, and that deletes every unused image and named
-      # volume on the host. On 2026-08-17 it repeatedly destroyed the
-      # codex-review job image on two of the shared runners and failed 16 review runs
-      # portfolio-wide (#3). Space beyond this job's own stack is host
-      # maintenance, not this workflow's to reclaim.
-      # Hosted runners only: the pool guest (bigdisk-docker, ruling 442) is a
-      # throwaway VM with its own large disk and no passwordless sudo promise.
+      # The stack builds several images; the runner's stock free space is not enough for them plus the caches.
       - name: Free up disk space
         if: runner.environment == 'github-hosted'
         run: |
@@ -268,10 +208,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      # #2427, as in ci.yml (ruling 887; template v1.44): a pool runner's
-      # environment names LAN addresses and host names; they are masked
-      # before any step that builds can print one. On a GitHub-hosted runner
-      # the variables are unset and the script prints nothing.
+      # A pool runner's environment names LAN addresses and host names; mask them before any step can print one.
       - name: Mask the LAN addresses
         env:
           CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
@@ -286,31 +223,12 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      # Every service runs in a container with its binary baked in, and the
-      # per-run certificates are produced by an init service into a named
-      # volume, so this step needs nothing from the host but a Docker daemon
-      # (devops.md §4). `make integration-test` stages the module-fetch
-      # credentials for the image builds itself.
+      # Every service runs in a container with its binary baked in, so this step needs only a Docker daemon.
       - name: Run integration tests
         timeout-minutes: 90
         run: make integration-test
 
-      # The service logs are the only evidence of WHY a run failed, and they
-      # used to be unobtainable: the compose stack runs the servers in
-      # containers, so their stdout never reaches the job log, and
-      # `make integration-test` tears the stack down itself — by the time any
-      # step here runs, the containers are gone. `make integration-test` now
-      # dumps them to integration-compose.log before teardown (Makefile), and
-      # tails 200 lines into the job log so the common case needs no artifact
-      # at all. This step preserves the full copy.
-      #
-      # The github.com condition was removed rather than kept: this workflow
-      # runs on Gitea, where `github.server_url` is never 'https://github.com',
-      # so the step could not fire on the one forge it actually executes on —
-      # an artifact step shaped like coverage that collected nothing. That is
-      # how a suite stayed red across three main commits with no evidence of
-      # the cause (#164). upload-artifact is a no-op elsewhere if unsupported;
-      # a step that never runs is strictly worse than one that might.
+      # The service logs are the only evidence of a failed run, and the stack is gone before any later step.
       - name: Upload integration test results
         if: always()
         uses: actions/upload-artifact@v6

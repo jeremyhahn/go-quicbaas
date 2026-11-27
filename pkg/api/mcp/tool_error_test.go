@@ -131,6 +131,8 @@ func TestToolErrorCode(t *testing.T) {
 		// TestConvertOrchestratorError_AFleetCapacityRefusalIsResourceExhausted.
 		{"fleet capacity refused", &orchestration.FleetCapacityRefusedError{Backend: "claude"}, mcptransport.MCPResourceExhausted},
 		{"agent pool exhausted", orchestration.ErrAgentPoolExhausted, mcptransport.MCPResourceExhausted},
+		// gRPC answers codes.Unimplemented for the same refusal.
+		{"infer unsupported", &orchestration.InferUnsupportedError{Backend: "claude", Operation: "infer"}, mcptransport.MCPUnimplemented},
 		// The project and SDLC services return their own typed errors; gRPC
 		// pins the same classes in convertProjectError and convertSDLCError.
 		{"project not found", &service.ProjectNotFoundError{TenantID: "t", ProjectID: "p"}, mcptransport.MCPResourceNotFound},
@@ -159,6 +161,20 @@ func TestToolErrorCode(t *testing.T) {
 // TestToolErrorResult_ProjectBindingCheckFailureIsSanitized pins that a
 // delete whose binding store could not be read answers the server-failure
 // message: its cause describes the store, not the request.
+// TestToolErrorResult_InferUnsupportedKeepsMessage checks that inference on a
+// session-based backend answers unimplemented with its reason, not a
+// sanitized internal error.
+func TestToolErrorResult_InferUnsupportedKeepsMessage(t *testing.T) {
+	err := &orchestration.InferUnsupportedError{Backend: "claude", Operation: "infer"}
+
+	result := ToolErrorResult(nil, "quicbaas_orchestrator_inference", err)
+
+	require.Equal(t, mcptransport.ToolError{Code: mcptransport.MCPUnimplemented}, result.StructuredContent)
+	text, ok := mcpgo.AsTextContent(result.Content[0])
+	require.True(t, ok)
+	require.Contains(t, text.Text, "session-based")
+}
+
 func TestToolErrorResult_ProjectBindingCheckFailureIsSanitized(t *testing.T) {
 	err := &service.ProjectBindingCheckError{TenantID: "t1", ProjectID: "p1", Cause: stderrors.New("open /var/lib/sdlc/bindings: permission denied")}
 

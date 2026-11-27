@@ -1,14 +1,6 @@
 #!/bin/bash
 #
-# Verify Grafana Dashboard Queries
-#
-# This script tests that the Prometheus queries in the Grafana dashboard
-# would return data when the server is running under load.
-#
-# Usage:
-#   ./verify-dashboard-queries.sh [prometheus-url]
-#
-# Default prometheus-url: http://localhost:9090
+# Verify the Grafana dashboard queries.
 
 set -e
 

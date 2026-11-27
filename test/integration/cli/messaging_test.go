@@ -25,7 +25,7 @@ import (
 
 // TestMsgChannelLifecycle tests the complete messaging channel lifecycle across all transports.
 func TestMsgChannelLifecycle(t *testing.T) {
-	RunForAllTransports(t, "ChannelLifecycle", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ChannelLifecycle", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("test-channel")
 		suite := MsgChannelSuite(channelName)
 		runner.RunSuite(suite)
@@ -34,7 +34,7 @@ func TestMsgChannelLifecycle(t *testing.T) {
 
 // TestMsgChannelCreate tests channel creation across all transports.
 func TestMsgChannelCreate(t *testing.T) {
-	RunForAllTransports(t, "ChannelCreate", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ChannelCreate", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("create-channel")
 		cmd := MsgChannelCreateCommand(channelName)
 		runner.RunAndAssert(cmd)
@@ -63,7 +63,7 @@ func TestMsgChannelCreateWithOptions(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			RunForAllTransports(t, "CreateWithOptions", func(t *testing.T, runner *TestRunner) {
+			RunForAllTransportsAsTenantAdmin(t, "CreateWithOptions", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 				channelName := UniqueKey("options-channel")
 				cmd := MsgChannelCreateWithOptionsCommand(channelName, tc.bufferSize, tc.maxSubscribers, tc.persistent, tc.ttl)
 				runner.RunAndAssert(cmd)
@@ -82,7 +82,7 @@ func TestMsgChannelCreateWithOptions(t *testing.T) {
 
 // TestMsgChannelList tests listing channels across all transports.
 func TestMsgChannelList(t *testing.T) {
-	RunForAllTransports(t, "ChannelList", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ChannelList", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		// Create multiple channels
 		channels := []string{
 			UniqueKey("list-channel-1"),
@@ -109,7 +109,7 @@ func TestMsgChannelList(t *testing.T) {
 
 // TestMsgChannelListWithFilter tests listing channels with filter across all transports.
 func TestMsgChannelListWithFilter(t *testing.T) {
-	RunForAllTransports(t, "ChannelListWithFilter", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ChannelListWithFilter", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		prefix := UniqueKey("filter-test")
 		channels := []string{
 			prefix + "-alpha",
@@ -123,13 +123,11 @@ func TestMsgChannelListWithFilter(t *testing.T) {
 			runner.RunAndAssert(createCmd)
 		}
 
-		// List with filter
-		filterCmd := MsgChannelListWithFilterCommand(prefix+"*", 10, 0)
-		runner.RunAndAssert(filterCmd)
-
-		// List with pagination
-		paginatedCmd := MsgChannelListWithFilterCommand("", 2, 0)
-		runner.RunAndAssert(paginatedCmd)
+		// list-channels has no filter or paging flags: list the tenant's
+		// channels in each output format and find this test's channels in it.
+		for _, format := range []string{"table", "json"} {
+			runner.RunAndAssert(MsgChannelListOutputCommand(format, channels...))
+		}
 
 		// Cleanup
 		for _, ch := range channels {
@@ -141,7 +139,7 @@ func TestMsgChannelListWithFilter(t *testing.T) {
 
 // TestMsgChannelGet tests getting channel information across all transports.
 func TestMsgChannelGet(t *testing.T) {
-	RunForAllTransports(t, "ChannelGet", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ChannelGet", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("get-channel")
 
 		// Create channel
@@ -160,7 +158,7 @@ func TestMsgChannelGet(t *testing.T) {
 
 // TestMsgChannelDelete tests deleting channels across all transports.
 func TestMsgChannelDelete(t *testing.T) {
-	RunForAllTransports(t, "ChannelDelete", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ChannelDelete", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("delete-channel")
 
 		// Create channel
@@ -187,7 +185,7 @@ func TestMsgChannelDelete(t *testing.T) {
 
 // TestMsgPublish tests publishing messages to channels across all transports.
 func TestMsgPublish(t *testing.T) {
-	RunForAllTransports(t, "Publish", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "Publish", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("publish-channel")
 
 		// Create channel
@@ -221,7 +219,7 @@ func TestMsgPublishWithOptions(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			RunForAllTransports(t, "PublishWithOptions", func(t *testing.T, runner *TestRunner) {
+			RunForAllTransportsAsTenantAdmin(t, "PublishWithOptions", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 				channelName := UniqueKey("publish-options-channel")
 
 				// Create channel
@@ -243,7 +241,7 @@ func TestMsgPublishWithOptions(t *testing.T) {
 
 // TestMsgPublishMultiple tests publishing multiple messages to verify channel functionality.
 func TestMsgPublishMultiple(t *testing.T) {
-	RunForAllTransports(t, "PublishMultiple", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "PublishMultiple", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("multi-publish-channel")
 
 		// Create channel
@@ -265,7 +263,7 @@ func TestMsgPublishMultiple(t *testing.T) {
 
 // TestMsgPublishDelta tests publishing delta messages across all transports.
 func TestMsgPublishDelta(t *testing.T) {
-	RunForAllTransports(t, "PublishDelta", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "PublishDelta", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("delta-channel")
 
 		// Create channel
@@ -286,7 +284,7 @@ func TestMsgPublishDelta(t *testing.T) {
 
 // TestMsgPublishDeltaWithEntity tests publishing delta messages with entity information.
 func TestMsgPublishDeltaWithEntity(t *testing.T) {
-	RunForAllTransports(t, "PublishDeltaWithEntity", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "PublishDeltaWithEntity", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("delta-entity-channel")
 
 		// Create channel
@@ -311,7 +309,7 @@ func TestMsgPublishDeltaWithEntity(t *testing.T) {
 
 // TestMsgListSubscriptions tests listing subscriptions across all transports.
 func TestMsgListSubscriptions(t *testing.T) {
-	RunForAllTransports(t, "ListSubscriptions", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ListSubscriptions", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		// List all subscriptions
 		listCmd := MsgListSubscriptionsCommand()
 		runner.RunAndAssert(listCmd)
@@ -320,7 +318,7 @@ func TestMsgListSubscriptions(t *testing.T) {
 
 // TestMsgListSubscriptionsByChannel tests listing subscriptions for a specific channel.
 func TestMsgListSubscriptionsByChannel(t *testing.T) {
-	RunForAllTransports(t, "ListSubscriptionsByChannel", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ListSubscriptionsByChannel", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("subs-channel")
 
 		// Create channel
@@ -343,7 +341,7 @@ func TestMsgListSubscriptionsByChannel(t *testing.T) {
 
 // TestMsgDedupStats tests getting deduplication statistics across all transports.
 func TestMsgDedupStats(t *testing.T) {
-	RunForAllTransports(t, "DedupStats", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "DedupStats", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("stats-channel")
 
 		// Create channel
@@ -369,27 +367,32 @@ func TestMsgDedupStats(t *testing.T) {
 
 // TestMsgDedupStatsWithOptions tests getting dedup stats with options.
 func TestMsgDedupStatsWithOptions(t *testing.T) {
+	// dedup-stats' only flag is --output; each case names the output the
+	// format must carry.
 	testCases := []struct {
 		name   string
-		reset  bool
-		window string
+		format string
+		expect func(channelName string) []string
 	}{
-		{"WithWindow", false, "1h"},
-		{"WithReset", true, ""},
-		{"WithBothOptions", true, "30m"},
+		{"Table", "table", func(channelName string) []string {
+			return []string{"Deduplication Statistics: " + channelName, "Total Checks:", "Window:"}
+		}},
+		{"JSON", "json", func(string) []string {
+			return []string{`"TotalChecks"`, `"WindowDuration"`}
+		}},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			RunForAllTransports(t, "DedupStatsWithOptions", func(t *testing.T, runner *TestRunner) {
+			RunForAllTransportsAsTenantAdmin(t, "DedupStatsWithOptions", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 				channelName := UniqueKey("stats-options-channel")
 
 				// Create channel
 				createCmd := MsgChannelCreateCommand(channelName)
 				runner.RunAndAssert(createCmd)
 
-				// Get dedup stats with options
-				statsCmd := MsgDedupStatsWithOptionsCommand(channelName, tc.reset, tc.window)
+				// Get dedup stats in the case's output format
+				statsCmd := MsgDedupStatsOutputCommand(channelName, tc.format, tc.expect(channelName)...)
 				runner.RunAndAssert(statsCmd)
 
 				// Cleanup
@@ -434,7 +437,7 @@ func TestMsgChannelCreateMissingName(t *testing.T) {
 
 // TestMsgPublishMissingPayload tests error handling for missing payload.
 func TestMsgPublishMissingPayload(t *testing.T) {
-	RunForAllTransports(t, "PublishMissingPayload", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "PublishMissingPayload", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("error-channel")
 
 		// Create channel first
@@ -453,7 +456,7 @@ func TestMsgPublishMissingPayload(t *testing.T) {
 
 // TestMsgPublishDeltaMissingValues tests error handling for missing delta values.
 func TestMsgPublishDeltaMissingValues(t *testing.T) {
-	RunForAllTransports(t, "PublishDeltaMissingValues", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "PublishDeltaMissingValues", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("delta-error-channel")
 
 		// Create channel first
@@ -472,7 +475,7 @@ func TestMsgPublishDeltaMissingValues(t *testing.T) {
 
 // TestMsgErrorSuite tests all messaging error commands.
 func TestMsgErrorSuite(t *testing.T) {
-	RunForAllTransports(t, "ErrorSuite", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ErrorSuite", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("error-suite-channel")
 
 		// Create channel for error testing
@@ -494,7 +497,7 @@ func TestMsgErrorSuite(t *testing.T) {
 
 // TestMsgFullChannelWorkflow tests a complete messaging workflow.
 func TestMsgFullChannelWorkflow(t *testing.T) {
-	RunForAllTransports(t, "FullChannelWorkflow", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "FullChannelWorkflow", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("workflow-channel")
 
 		// 1. Create channel with options
@@ -544,7 +547,7 @@ func TestMsgFullChannelWorkflow(t *testing.T) {
 
 // TestMsgMultipleChannels tests operations with multiple channels.
 func TestMsgMultipleChannels(t *testing.T) {
-	RunForAllTransports(t, "MultipleChannels", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "MultipleChannels", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		basePrefix := UniqueKey("multi")
 		channels := []string{
 			basePrefix + "-orders",
@@ -569,9 +572,8 @@ func TestMsgMultipleChannels(t *testing.T) {
 		listCmd := MsgChannelListCommand()
 		runner.RunAndAssert(listCmd)
 
-		// List with prefix filter
-		filterCmd := MsgChannelListWithFilterCommand(basePrefix+"*", 10, 0)
-		runner.RunAndAssert(filterCmd)
+		// List as JSON and find every channel this test created
+		runner.RunAndAssert(MsgChannelListOutputCommand("json", channels...))
 
 		// Get info for each channel
 		for _, ch := range channels {
@@ -589,7 +591,7 @@ func TestMsgMultipleChannels(t *testing.T) {
 
 // TestMsgDeduplication tests message deduplication functionality.
 func TestMsgDeduplication(t *testing.T) {
-	RunForAllTransports(t, "Deduplication", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "Deduplication", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("dedup-test-channel")
 
 		// Create channel
@@ -624,7 +626,7 @@ func TestMsgDeduplication(t *testing.T) {
 
 // TestMsgPersistentChannel tests persistent channel functionality.
 func TestMsgPersistentChannel(t *testing.T) {
-	RunForAllTransports(t, "PersistentChannel", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "PersistentChannel", "msg-tenant", func(t *testing.T, runner *TestRunner) {
 		channelName := UniqueKey("persistent-channel")
 
 		// Create persistent channel

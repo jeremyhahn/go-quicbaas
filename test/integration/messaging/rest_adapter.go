@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -198,7 +199,10 @@ func (a *restAdapter) ListChannels(ctx context.Context, req *grpc.MessagingListC
 			if req.Limit > 0 {
 				path += "&"
 			}
-			path += "prefix=" + req.NamePrefix
+			// The REST handler reads the prefix from name_prefix
+			// (pkg/api/rest/handlers_messaging.go); any other name is
+			// ignored and the whole tenant's channels come back.
+			path += "name_prefix=" + url.QueryEscape(req.NamePrefix)
 		}
 	}
 

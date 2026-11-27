@@ -932,7 +932,7 @@ AGENT_LDFLAGS := $(LDFLAGS) -s -w -linkmode external -extldflags '-static'
 # container runtime libraries: OpenPGP signature checks in go.podman.io/image
 # instead of gpgme, and no btrfs graph driver in go.podman.io/storage. The
 # agent's cgo build then needs no C library beyond libc. Without them
-# pkg/containerruntime compiles its ErrRuntimeRequiresLinuxCgo stub, which is
+# internal/containerruntime compiles its ErrRuntimeRequiresLinuxCgo stub, which is
 # what quicbaasd (CGO_ENABLED=0) always links.
 CONTAINER_LIB_TAGS := containers_image_openpgp exclude_graphdriver_btrfs
 
@@ -1226,7 +1226,7 @@ TEST_TAGS := !integration $(strip $(BUILD_TAGS)) $(TEST_EXTRA_TAGS)
 # status, so a command that printed a partial list AND THEN failed would slip
 # through; that is not a shape this tool can produce, and the alternative
 # (.SHELLSTATUS through a deferred expansion) buys less than it costs here.
-MINIMAL_OFF_TAGS = $(or $(shell $(GOCMD) run ./scripts/buildtagcover -list-negated -dir pkg -dir cmd),$(error buildtagcover -list-negated produced no tags; refusing to build a minimal pass that turns nothing off))
+MINIMAL_OFF_TAGS = $(or $(shell $(GOCMD) run ./scripts/buildtagcover -list-negated -dir pkg -dir cmd -dir internal),$(error buildtagcover -list-negated produced no tags; refusing to build a minimal pass that turns nothing off))
 MINIMAL_TEST_TAGS = !integration $(filter-out $(MINIMAL_OFF_TAGS),$(strip $(BUILD_TAGS)))
 
 # STANDARD_TEST_TAGS: the `make build-standard` FEATURE SET -- REST on, the AI
@@ -1319,7 +1319,7 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 # a pass that compiled it could not run it. Drive it by hand against a served
 # model:
 #
-#   OPENVINO_BASE_URL=http://gpu-host:9000 OPENVINO_MODEL=qwen3-8b \
+#   OPENVINO_BASE_URL=http://gpu-01:9000 OPENVINO_MODEL=qwen3-8b \
 #     go test -tags openvino_live -run TestOpenVINOBackend_Live ./pkg/orchestration/
 TAG_GATE_EXEMPT := linux darwin windows unix ignore integration coverage production \
 	pkcs11 swtpm \
@@ -1349,7 +1349,7 @@ IAM_TEST_TAGS := $(TEST_TAGS)
 # TEST_CHECKS are the repository validations every unit-test pass runs first.
 # Both `test` and `coverage` (the CI test stage) list this one variable, so
 # CI cannot drop a check that `make test` runs.
-TEST_CHECKS := check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets check-ci-image-cache
+TEST_CHECKS := check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets check-ci-image-cache check-feature-map
 
 .PHONY: test
 test: $(TEST_CHECKS) ## Run unit tests (excludes integration tests)
@@ -1358,7 +1358,7 @@ ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(TEST_TAGS)$(NC)"
 endif
 	@START_TIME=$$(date +%s); \
-	$(GOTEST) -v -p 2 -tags '$(TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/... ./scripts/... ./test/buildgates/...; \
+	$(GOTEST) -v -p 2 -tags '$(TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/... ./internal/... ./scripts/... ./test/buildgates/...; \
 	TEST_RESULT=$$?; \
 	END_TIME=$$(date +%s); \
 	ELAPSED=$$((END_TIME - START_TIME)); \
@@ -1420,6 +1420,16 @@ check-package-targets: ## Fail if a per-package make target does not reach its n
 	@TEST_TAGS='$(TEST_TAGS)' IAM_TEST_TAGS='$(IAM_TEST_TAGS)' MAKE='$(MAKE)' sh scripts/resolve-package_test.sh
 	@MAKE='$(MAKE)' sh scripts/package-targets-exit_test.sh
 
+.PHONY: check-feature-map
+# testing-guidelines section 4: every integration test belongs to a feature
+# of the mapping table, every feature has an integration target, and the
+# scripts that name what a diff touched read that table.
+check-feature-map: ## Fail if an integration test belongs to no feature or a feature has no integration target
+	@echo "$(BLUE)Checking the feature mapping table...$(NC)"
+	@MAKE='$(MAKE)' sh scripts/check-feature-map.sh
+	@MAKE='$(MAKE)' sh scripts/touched-features_test.sh
+	@MAKE='$(MAKE)' sh scripts/touched-packages_test.sh
+
 .PHONY: check-ci-image-cache
 # scripts/ci-image-cache_test.sh drives scripts/ci-image-cache.sh against stub
 # docker and make binaries, so the CI_IMAGE_REGISTRY cache path is proven
@@ -1458,7 +1468,7 @@ check-ci-image-cache: ## Prove ci-image-cache.sh's registry cache path against s
 # pkg/signal carries the only two.
 check-local-keygen: ## Fail if any non-test site creates a key pair or signs a certificate itself
 	@echo "$(BLUE)Checking for local key/certificate generation outside go-xkms...$(NC)"
-	@$(GOCMD) run ./scripts/localkeygen -dir pkg -dir cmd -dir sdk -dir test
+	@$(GOCMD) run ./scripts/localkeygen -dir pkg -dir cmd -dir internal -dir sdk -dir test
 
 .PHONY: check-library-pins
 # QuicBaaS deploys on the exact go-qrdb, go-xkms and go-quicraft releases its
@@ -1496,7 +1506,7 @@ check-library-pins: ## Fail if go-qrdb, go-xkms or go-quicraft is taken from any
 # waiver.
 check-coded-sentinels: ## Fail if errors.Is targets a qrdb-coded sentinel without a stated reason
 	@echo "$(BLUE)Checking errors.Is targets against qrdb-coded sentinels...$(NC)"
-	@$(GOCMD) run ./scripts/codedsentinel -dir pkg -dir cmd -dir sdk
+	@$(GOCMD) run ./scripts/codedsentinel -dir pkg -dir cmd -dir internal -dir sdk
 
 .PHONY: check-nolint
 # nolintlint (.golangci.yml) makes every //nolint name its linter, give a
@@ -1546,7 +1556,7 @@ check-nolint: ## Fail if a //nolint directive is not on scripts/nolint-allowlist
 check-build-tags: ## Fail if any //go:build CONSTRAINT is satisfied by no test pass
 	@echo "$(BLUE)Checking build-constraint coverage of the test gate...$(NC)"
 	@$(GOCMD) run ./scripts/buildtagcover \
-		-dir pkg -dir cmd \
+		-dir pkg -dir cmd -dir internal \
 		-free '$(TAG_GATE_EXEMPT)' \
 		-pass 'maximal:$(TEST_TAGS)' \
 		-pass 'standard:$(STANDARD_TEST_TAGS)' \
@@ -1558,19 +1568,19 @@ check-build-tags: ## Fail if any //go:build CONSTRAINT is satisfied by no test p
 test-minimal: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with every tag that has a !tag side off (compiles the stub/no-op paths)
 	@echo "$(BLUE)Running unit tests with every disabled-side tag off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(MINIMAL_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/... ./internal/...
 
 .PHONY: test-standard
 test-standard: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests in the build-standard configuration (REST on, AI features off)
 	@echo "$(BLUE)Running unit tests in the build-standard configuration...$(NC)"
 	@echo "$(YELLOW)Build tags: $(STANDARD_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(STANDARD_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(STANDARD_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/... ./internal/...
 
 .PHONY: test-lean
 test-lean: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with the transports on and the optional data-model features off
 	@echo "$(BLUE)Running unit tests with the transports on, data-model extras off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(LEAN_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/... ./internal/...
 
 INTEROP_LEGS := oidc http3 grpc mcp
 
@@ -1771,6 +1781,123 @@ integration-test-orchestration-gpu: ## Run GPU-accelerated orchestration integra
 	fi; \
 	echo "$(GREEN)Model $$MODEL available$(NC)"
 	@GOFLAGS=-mod=mod $(GOTEST) -v -tags 'integration,rag,gpu' -timeout 10m ./test/integration/orchestration_gpu/...
+
+# ==============================================================================
+# Feature mapping table
+# ==============================================================================
+# The one list of features (testing-guidelines section 4). Each feature in
+# INTEGRATION_FEATURES has an integration target, integration-test-<feature>
+# (a recipe below, or the integration-test-% pattern rule for a directory
+# test/integration/<feature>/), and FEATURE_PATHS_<feature> lists the paths
+# it owns. A separately run suite outside test/integration/ is a feature too
+# (sdk-go and sdk-js, the SDK suites under sdk/*/test/integration/). So is an
+# integration-tagged test inside a package that has its own target
+# (quicbaasd, forge-gitea, merge-result, storage-file). A path is a shell
+# pattern matched against a repository-relative file name; a path ending in /
+# owns everything under it; a path with no / names a file at the repository
+# root only (so *.md is the root's markdown, not an embedded prompt under
+# pkg/).
+#
+# scripts/touched-features.sh and scripts/touched-packages.sh read this table
+# through `make print-feature-map`; scripts/check-feature-map.sh (make
+# check-feature-map, in TEST_CHECKS) fails when an integration test (a test
+# file under any test/integration/ directory, or a *_test.go anywhere whose
+# //go:build line requires the integration tag) belongs to no feature and is
+# not in INTEGRATION_UNTARGETED_PATHS, a feature has no integration target,
+# or a path matches no tracked file. A change to a path no row owns runs
+# every feature.
+INTEGRATION_FEATURES := account agent agents api attestation auth backup batch \
+	cache-redis cli cluster containerruntime dataplane dek durability embedded \
+	fleet-enrollment fleet-runtime forge-gitea iam init kms lifecycle login mcp merge-result messaging \
+	observability orchestration orchestration-gpu orchestrator parameter_store \
+	placement project quicbaasd raft rag registry routing scheduler sdk-go sdk-js seal \
+	seal-hardware secrets secrets-resolver server session-attach signalbridge \
+	standalone storage storage-file tenantbarrier timeseries transactions transport vector \
+	workerimage
+FEATURE_PATHS_account           := test/integration/cli/account_test.go
+FEATURE_PATHS_agent             := test/integration/agent/
+FEATURE_PATHS_agents            := test/integration/agents/
+FEATURE_PATHS_api               := test/integration/api/
+FEATURE_PATHS_attestation       := test/integration/cli/attestation_verifier_test.go
+FEATURE_PATHS_auth              := test/integration/auth/
+FEATURE_PATHS_backup            := test/integration/backup/
+FEATURE_PATHS_batch             := test/integration/batch/
+FEATURE_PATHS_cache-redis       := test/integration/cache/
+FEATURE_PATHS_cli               := test/integration/cli/
+FEATURE_PATHS_cluster           := test/integration/cluster/
+FEATURE_PATHS_containerruntime  := test/integration/containerruntime/ internal/containerruntime/
+FEATURE_PATHS_dataplane         := test/integration/dataplane/
+FEATURE_PATHS_dek               := test/integration/dek/
+FEATURE_PATHS_durability        := test/integration/durability/
+FEATURE_PATHS_embedded          := test/integration/embedded/
+FEATURE_PATHS_fleet-enrollment  := test/integration/fleet_enrollment/
+FEATURE_PATHS_fleet-runtime     := test/integration/fleet_runtime/
+FEATURE_PATHS_forge-gitea       := pkg/sdlc/forge_gitea_live_test.go
+FEATURE_PATHS_iam               := test/integration/iam/
+FEATURE_PATHS_init              := test/integration/init/
+FEATURE_PATHS_kms               := test/integration/kms/
+FEATURE_PATHS_lifecycle         := test/integration/lifecycle/
+FEATURE_PATHS_login             := test/integration/login/
+FEATURE_PATHS_mcp               := test/integration/mcp/
+FEATURE_PATHS_merge-result      := pkg/sdlc/merge_result_snapshot_integration_test.go
+FEATURE_PATHS_messaging         := test/integration/messaging/
+FEATURE_PATHS_observability     := test/integration/observability/
+FEATURE_PATHS_orchestration     := test/integration/orchestration/
+FEATURE_PATHS_orchestration-gpu := test/integration/orchestration_gpu/
+FEATURE_PATHS_orchestrator      := test/integration/orchestrator/ test/integration/cli/orchestrator_inference*
+FEATURE_PATHS_parameter_store   := test/integration/parameter_store/
+FEATURE_PATHS_placement         := test/integration/placement/ pkg/scheduler/placement/
+FEATURE_PATHS_project           := test/integration/project/
+FEATURE_PATHS_quicbaasd         := cmd/quicbaasd/sdlc_loop_e2e_test.go cmd/quicbaasd/sdlc_webhook_e2e_test.go
+FEATURE_PATHS_raft              := test/integration/raft/
+FEATURE_PATHS_rag               := test/integration/rag/
+FEATURE_PATHS_registry          := test/integration/cli/registry_test.go pkg/registry/ sdk/go/client/registry/
+FEATURE_PATHS_routing           := test/integration/routing/
+FEATURE_PATHS_scheduler         := test/integration/scheduler/
+FEATURE_PATHS_sdk-go            := sdk/go/test/integration/
+FEATURE_PATHS_sdk-js            := sdk/javascript/test/integration/
+FEATURE_PATHS_seal              := test/integration/seal/
+FEATURE_PATHS_seal-hardware     := test/integration/seal/
+FEATURE_PATHS_secrets           := test/integration/secrets/
+FEATURE_PATHS_secrets-resolver  := test/integration/secrets-resolver/
+FEATURE_PATHS_server            := test/integration/server/
+FEATURE_PATHS_session-attach    := test/integration/session_attach/
+FEATURE_PATHS_signalbridge      := test/integration/signalbridge/ pkg/signalbridge/
+FEATURE_PATHS_standalone        := test/integration/standalone/
+FEATURE_PATHS_storage           := test/integration/storage/
+FEATURE_PATHS_storage-file      := pkg/storage/file/integration_test.go
+FEATURE_PATHS_tenantbarrier     := test/integration/tenantbarrier/
+FEATURE_PATHS_timeseries        := test/integration/timeseries/
+FEATURE_PATHS_transactions      := test/integration/transactions/
+FEATURE_PATHS_transport         := test/integration/transport/
+FEATURE_PATHS_vector            := test/integration/vector/
+FEATURE_PATHS_workerimage       := test/integration/workerimage/
+# Support code every feature uses: a change here runs every feature, and its
+# own tests belong to every feature (they run in `make integration-test`).
+INTEGRATION_SHARED_PATHS := test/integration/helpers/ test/integration/certfixture/ test/integration/authzfake/
+# Integration-tagged tests that no integration-test-<feature> target runs:
+# the pkg/ and cmd/ ones run only in `make test-integration-tagged`, which
+# also runs the live forge suite and so is no feature's target, and
+# test/benchmark/ holds benchmarks only. They belong to no feature, so a
+# change to one runs every feature; check-feature-map.sh accepts them.
+INTEGRATION_UNTARGETED_PATHS := cmd/quicbaas/main_integration_test.go \
+	pkg/api/grpc/client_integration_test.go \
+	pkg/backup/compression_integration_test.go \
+	pkg/backup/encryption_integration_test.go \
+	pkg/backup/manager_integration_test.go \
+	pkg/backup/storage_integration_test.go \
+	pkg/cache/manager_integration_test.go \
+	pkg/server/embedded_integration_test.go \
+	pkg/server/server_integration_test.go \
+	pkg/storage/memory/memory_integration_test.go \
+	pkg/watch/manager_integration_test.go \
+	test/benchmark/grpc_bench_test.go
+# Documentation: a change confined to these paths runs no feature.
+INTEGRATION_DOC_PATHS := docs/ changelog.d/ *.md
+
+.PHONY: print-feature-map
+print-feature-map: ## Print the feature mapping table: one "<feature> <path>..." line per feature
+	@$(foreach f,$(INTEGRATION_FEATURES),echo '$(f) $(strip $(FEATURE_PATHS_$(f)))';)
 
 # ==============================================================================
 # Dynamic Integration Test Targets
@@ -2480,7 +2607,7 @@ list-integration-packages: ## (Deprecated) Use list-packages instead
 test-integration-tagged: ## Run integration tests with build tag (in-process)
 	@echo "$(BLUE)Running tagged integration tests...$(NC)"
 	@START_TIME=$$(date +%s); \
-	$(GOTEST) -v -tags integration -timeout=10m ./pkg/... ./cmd/...; \
+	$(GOTEST) -v -tags integration -timeout=10m ./pkg/... ./cmd/... ./internal/...; \
 	TEST_RESULT=$$?; \
 	END_TIME=$$(date +%s); \
 	ELAPSED=$$((END_TIME - START_TIME)); \
@@ -3240,17 +3367,17 @@ test-all: test integration-test e2e-test ## Run all tests (except FIPS - use 'ma
 benchmark: ## Run benchmarks (tunable benchtime via BENCHTIME, default 100ms)
 	@echo "$(BLUE)Running benchmarks...$(NC)"
 	# Serialize package execution to avoid port conflicts; shorten benchtime to avoid timeouts
-	$(GOTEST) -p=1 -count=1 -tags '$(TEST_TAGS)' -benchtime=$(BENCHTIME) -bench=. -benchmem -run=^$$ ./pkg/... ./cmd/...
+	$(GOTEST) -p=1 -count=1 -tags '$(TEST_TAGS)' -benchtime=$(BENCHTIME) -bench=. -benchmem -run=^$$ ./pkg/... ./cmd/... ./internal/...
 
 .PHONY: benchmark-quick
 benchmark-quick: ## Run quick benchmarks (1 iteration per bench)
 	@echo "$(BLUE)Running quick benchmarks...$(NC)"
-	$(GOTEST) -p=1 -count=1 -tags '$(TEST_TAGS)' -benchtime=1x -bench=. -benchmem -run=^$$ ./pkg/... ./cmd/...
+	$(GOTEST) -p=1 -count=1 -tags '$(TEST_TAGS)' -benchtime=1x -bench=. -benchmem -run=^$$ ./pkg/... ./cmd/... ./internal/...
 
 .PHONY: benchmark-full
 benchmark-full: ## Run full-length benchmarks (default Go benchtime)
 	@echo "$(BLUE)Running full-length benchmarks...$(NC)"
-	$(GOTEST) -p=1 -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/... ./cmd/...
+	$(GOTEST) -p=1 -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/... ./cmd/... ./internal/...
 
 .PHONY: benchmark-fips
 benchmark-fips: ## Run benchmarks in FIPS mode
@@ -3415,7 +3542,7 @@ endef
 
 # COVER_PKGS is the package set `coverage` measures; narrow it to one package to
 # exercise the gate (make coverage COVER_PKGS=./pkg/x COVERAGE_THRESHOLD=100).
-COVER_PKGS ?= ./pkg/... ./cmd/...
+COVER_PKGS ?= ./pkg/... ./cmd/... ./internal/...
 
 # RACE_TIMEOUT is the per-package -timeout of every -race pass (`race` and
 # `coverage`). pkg/iam alone takes 655s under contention, past Go's 10m
@@ -3781,7 +3908,7 @@ endif
 	# the package and took the whole target red. A budget exists to catch a
 	# hang, so it belongs well above the honest worst case rather than beside
 	# it. Do not buy headroom by trimming the package set: every package races.
-	CGO_ENABLED=1 $(GOCMD) test -race -p 2 $(BUILD_TAGS_ARG) -timeout=$(RACE_TIMEOUT) ./pkg/... ./cmd/... || \
+	CGO_ENABLED=1 $(GOCMD) test -race -p 2 $(BUILD_TAGS_ARG) -timeout=$(RACE_TIMEOUT) ./pkg/... ./cmd/... ./internal/... || \
 		(echo "$(RED)Race detector found issues$(NC)" && exit 1)
 	@echo "$(GREEN)Race detector tests passed$(NC)"
 
@@ -4766,7 +4893,7 @@ integration-test-fleet-enrollment: ## Run the fleet enrollment E2E (register -> 
 	@echo "$(GREEN)Fleet enrollment E2E passed$(NC)"
 
 .PHONY: integration-test-init
-integration-test-init: build-daemon ## Run canonical init/start/transport matrix (15 software-only cells + negative)
+integration-test-init: build-daemon ## Run canonical init/start/transport matrix (13 software-only cells + negative)
 	@echo "$(BLUE)Running canonical init matrix integration tests...$(NC)"
 	@INTEGRATION_TEST=1 QUICBAASD_BINARY="$(abspath $(BIN_DIR)/$(APP_NAME)d)" \
 		go test -v -tags integration -timeout 5m -count 1 ./test/integration/init/...
@@ -4942,7 +5069,8 @@ integration-test-orchestration: ## Run orchestrator E2E integration tests in Doc
 	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/orchestration/..." OLLAMA_CPU=$${OLLAMA_CPU:-1}
 
 .PHONY: integration-test-orchestrator
-integration-test-orchestrator: ## Run multi-protocol CLI orchestrator inference tests (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
+integration-test-orchestrator: ## Run the orchestrator integration suite and the multi-protocol CLI orchestrator inference tests (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
+	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/orchestrator/..."
 	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="-run TestOrchestratorInference ./test/integration/cli/..." OLLAMA_CPU=$${OLLAMA_CPU:-1}
 
 .PHONY: integration-test-agents
@@ -5539,6 +5667,7 @@ verify-integration-teardown: ## Fail if the integration stack can outlive a run 
 	@echo "$(BLUE)verify-integration-teardown: checking the stack comes down on the early-exit path...$(NC)"
 	@$(GOCMD) run ./scripts/verifyteardown
 
+# GOMODAUTH_TOKEN_FILE must be set: the decoy token file's path relative to the gate's throwaway HOME, e.g. `.gate/tokens.env`.
 .PHONY: verify-gomodauth
 verify-gomodauth: ## Fail if a Docker test build receives module credentials, or the staged secret file is not empty and 0600
 	@echo "$(BLUE)verify-gomodauth: checking module credentials are staged on any host and cleared after the build...$(NC)"
@@ -5854,22 +5983,22 @@ coverage-prompts: ## Generate coverage report for the prompt-set package
 .PHONY: test-containerruntime
 test-containerruntime: ## Run in-process container runtime unit tests (cgo)
 	@echo "$(BLUE)Running container runtime tests...$(NC)"
-	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/containerruntime/...
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./internal/containerruntime/...
 	@echo "$(GREEN)Container runtime unit tests passed$(NC)"
 
 .PHONY: coverage-containerruntime
 coverage-containerruntime: ## Generate coverage report for the in-process container runtime (cgo)
 	@mkdir -p $(COVERAGE_DIR)
 	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
-		-coverprofile=$(COVERAGE_DIR)/coverage-containerruntime.out -covermode=atomic ./pkg/containerruntime/...
+		-coverprofile=$(COVERAGE_DIR)/coverage-containerruntime.out -covermode=atomic ./internal/containerruntime/...
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-containerruntime.out | grep total
 
 .PHONY: bench-containerruntime
 bench-containerruntime: ## Run in-process container runtime benchmarks (cgo)
 	@echo "$(BLUE)Running container runtime benchmarks...$(NC)"
-	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/containerruntime/...
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./internal/containerruntime/...
 
-# Runs pkg/containerruntime end to end in a privileged container against a
+# Runs internal/containerruntime end to end in a privileged container against a
 # local registry: real pulls, storage-unpacked root filesystems and
 # libcontainer containers. The EXIT trap tears the stack down on every path,
 # and the test container's exit code is the target's.

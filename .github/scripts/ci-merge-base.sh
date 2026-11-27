@@ -1,57 +1,5 @@
 #!/usr/bin/env bash
-# ci-merge-base.sh -- validate the MERGE RESULT, not the pull request head.
-#
-# WHY THIS SCRIPT EXISTS, and why the obvious `actions/checkout` option does
-# not do the job on this server (#436):
-#
-# On github.com a `pull_request` run already builds the merge result. GitHub
-# pre-computes a merge commit, publishes it as `refs/pull/<n>/merge`, and
-# points `github.ref` at it, so checkout lands on merge(base, head) without
-# anyone asking. Anyone who has configured this on github.com will reach for a
-# `ref:` on the checkout step and conclude the problem is already solved.
-#
-# GITEA DOES NOT PUBLISH THAT REF. Measured on this server 2026-09-03:
-#
-#   git ls-remote origin 'refs/pull/*'   -> 118 refs, every one .../head,
-#                                           not a single .../merge
-#   git fetch origin refs/pull/437/merge -> fatal: couldn't find remote ref
-#
-# and the run metadata agrees: `"path": "ci.yml@refs/pull/438/head"`. There is
-# no merge commit to check out, so no checkout option can reach one -- the
-# workflow has to construct the merge itself. That is all this script does.
-#
-# THE DEFECT IT CLOSES: two pull requests, each green against its own base, can
-# be individually correct and jointly broken. #374 made `GetUserByEmail` take a
-# tenant argument; #385 added a caller using the old two-argument form. No
-# textual conflict, so git merged both without complaint and reported nothing
-# wrong -- ABSENCE OF CONFLICTING HUNKS IS NOT A COMPILING TREE. `feature/software-factory`
-# did not build for about an hour (fixed in 0b05ac46). Nothing in the pipeline
-# had ever compiled the two together, because the pipeline only ever compiles
-# one head at a time.
-#
-# Usage:  ci-merge-base.sh <event-name> <base-ref> [pinned-base-sha]
-#
-#   event-name       github.event_name. Anything other than `pull_request` is a
-#                    no-op: a push to main has no base to merge into.
-#   base-ref         github.base_ref, the branch the PR targets.
-#   pinned-base-sha  optional. The base commit resolved ONCE for the run (CI
-#                    passes github.event.pull_request.base.sha, which every job
-#                    of one run sees alike), so all of them validate the
-#                    same tree even when the base branch moves mid-run -- runs
-#                    here last up to two hours and pull requests do merge inside
-#                    that window. Omitted (or empty), the script resolves the
-#                    base tip itself and says so, which is correct but no longer
-#                    guarantees that two jobs saw the same base.
-#
-# The merge is LOCAL to the runner workspace. Nothing here pushes anything.
-#
-# FAILURE CLASSES ARE KEPT APART ON PURPOSE. Twice on this fleet a real finding
-# was read as infrastructure noise and waved through. So a merge that fails
-# because the branch genuinely conflicts prints a banner that names the
-# conflicting paths and says what to do about it, and exits 2; everything else
-# -- an unreachable remote, a missing base ref, a base sha that no longer
-# resolves -- says CI INFRASTRUCTURE in its first line, states that it is not a
-# finding about the branch, and exits 3. Neither is allowed to pass.
+# ci-merge-base.sh: validate the merge result, not the pull request head.
 set -uo pipefail
 
 EVENT="${1:-}"

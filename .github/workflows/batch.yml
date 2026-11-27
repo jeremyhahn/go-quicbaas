@@ -1,47 +1,4 @@
-# batch-template: v1.1 — token-free CPU work on the batch runners: fuzz,
-# race-full, soak, bench. Dispatch only; never in a merge gate.
-#
-# Owner order 2026-10-12 10:43 EDT (relayed by the Company Agent 17:24Z):
-# "the fleet is still not working hard. [one host] is 21%, [two servers] are
-# under 50%. we need to give them more work!" Lanes are bound by Claude
-# accounts; this workflow is work that needs none and still finds defects in
-# the release-candidate products.
-#
-# WHO RUNS IT. The project's coordinator dispatches it on `main` when the
-# workflow lands and again after every merge to `main`:
-#   POST /repos/{owner}/{repo}/actions/workflows/batch.yml/dispatches
-#        {"ref":"main","inputs":{"jobs":"all"}}
-# and files ONE issue per real finding, quoting the log lines that start
-# with `BATCH-FINDING`:
-#   fuzz       a crasher (the new corpus file is in the log and the artifact)
-#   race-full  a DATA RACE report, or a test that fails in any of the 3 runs
-#   soak       an iteration that fails
-#   bench      a regression > 20 % against the previous dispatch on main
-#              (benchstat old.txt new.txt; the coordinator compares, the
-#              workflow does not, because a run cannot read another run's
-#              artifact on Gitea)
-# A finding that is already an open issue gets a comment, not a new issue.
-#
-# RUNNERS. Every job runs on ubuntu-latest (4 vCPU, 16 GB RAM, a 6 h job
-# limit), so each is sized to finish well inside that limit: fuzz and
-# race-full are matrices of four shards, and every timeout leaves headroom.
-#
-# ARTIFACTS. actions/upload-artifact v4 and later refuse any server that is
-# not github.com ("not currently supported on GHES"; Gitea presents as one),
-# so Gitea uploads with v3 and github.com with v6. Every finding is ALSO
-# printed in the log, so a coordinator can file it without the artifact.
-#
-# CUSTOMIZE, per repo (keep everything else verbatim):
-#   FUZZ_TAGS, RACE_TAGS   build tags the repo's fuzz and unit suites need
-#                          (go-quicraft: quicraft_fuzz)
-#   RACE_PKGS              the unit-test package scope, the same as ci.yml's
-#                          Test job (dark or environment-bound suites excluded)
-#   SOAK_CMD               the repo's integration suite. go-quicraft and
-#                          go-qrdb run their cluster suites, and their soak
-#                          job's runs-on names the raft-guest runner label
-#                          where Infrastructure has registered one
-#   BENCH_PKGS             benchmark scope (harness modules excluded)
-# A repo with no Fuzz* targets keeps the fuzz job; it finds none and passes.
+# batch-template: v1.1. CPU work on the batch runners: fuzz, race-full, soak and bench.
 
 name: Batch
 
@@ -51,30 +8,15 @@ permissions:
 env:
   # In lockstep with ci-template's GO_VERSION.
   GO_VERSION: '1.27.4'
-  # The unit suite's tags: `make test`'s TEST_TAGS with the default WITH_*
-  # features, de-duplicated, minus the documentary `!integration`. None needs
-  # cgo or a system library (the desktop/webkit2_41 tags are a separate pass
-  # and are not in it), so the batch runner compiles it as ci.yml's test job
-  # does. The repo has no Fuzz* targets yet; the fuzz job compiles with these
-  # tags so that one added behind a transport tag (rest, quic, mcp) is found.
+  # The unit suite's tags: `make test`'s TEST_TAGS with the default WITH_* features.
   FUZZ_TAGS: 'hashicorpmetrics,local,raft,timeseries,qrdb_ts,vector,qrdb_vector,rag,rest,quic,mcp,quicbaas_mqtt,quicbaas_amqp,quicbaas_stomp,codec_json,codec_yaml,codec_toml,codec_msgpack,codec_bson,codec_cbor,codec_protobuf,gms_pure_go,canary,otel,l2_redis'  # CUSTOMIZE
-  # The same set. ci.yml's Race Detector compiles untagged (plus codec_json
-  # for pkg/sdlc and pkg/service) because the tagged race build has known
-  # sealed-window races; off the gate, those are exactly what this job is for.
+  # The same set; ci.yml's race job compiles untagged, so this job covers the tagged race build.
   RACE_TAGS: 'hashicorpmetrics,local,raft,timeseries,qrdb_ts,vector,qrdb_vector,rag,rest,quic,mcp,quicbaas_mqtt,quicbaas_amqp,quicbaas_stomp,codec_json,codec_yaml,codec_toml,codec_msgpack,codec_bson,codec_cbor,codec_protobuf,gms_pure_go,canary,otel,l2_redis'  # CUSTOMIZE
-  # The Race Detector's scope, root module only. sdk/go is its own module and
-  # a root-module pattern cannot reach it; ci.yml's sdk-go leg races it.
+  # The race scope, root module only; ci.yml's sdk-go leg races sdk/go.
   RACE_PKGS: './pkg/... ./cmd/...'  # CUSTOMIZE
-  # integration.yml's suite. The ollama/gpu test files are build-tagged out of
-  # it, and the nvidia-smi shim keeps the target from starting the Ollama and
-  # GPU overlay on a runner that has a GPU. The target tears its compose
-  # stack down on entry and on exit, so it is safe to run in a loop.
+  # integration.yml's suite.
   SOAK_CMD: 'shim="${RUNNER_TEMP:-/tmp}/batch-no-gpu" && mkdir -p "$shim" && printf "#!/bin/sh\nexit 1\n" > "$shim/nvidia-smi" && chmod +x "$shim/nvidia-smi" && PATH="$shim:$PATH" make integration-test GPU_HOST= OLLAMA_CPU='  # CUSTOMIZE
-  # `make benchmark`'s scope and flags: the unit tags, and -p=1 because
-  # benchmarks bind ports and must not compete for cores. Flags ride in this
-  # word-split list since the template's bench step passes no tags. The
-  # test/benchmark and test/performance harnesses need a live server and
-  # are excluded.
+  # `make benchmark`'s scope and flags; -p=1 because benchmarks bind ports.
   BENCH_PKGS: '-p=1 -tags=hashicorpmetrics,local,raft,timeseries,qrdb_ts,vector,qrdb_vector,rag,rest,quic,mcp,quicbaas_mqtt,quicbaas_amqp,quicbaas_stomp,codec_json,codec_yaml,codec_toml,codec_msgpack,codec_bson,codec_cbor,codec_protobuf,gms_pure_go,canary,otel,l2_redis ./pkg/... ./cmd/...'  # CUSTOMIZE
 
 on:
@@ -92,18 +34,13 @@ on:
         description: 'how long soak loops the integration suite'
         default: '60'
 
-# One run per ref at a time. A dispatch while one runs waits; a newer one
-# replaces a waiting one (where the server honours concurrency).
+# One run per ref at a time.
 concurrency:
   group: batch-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   # Every package with Fuzz* targets; every target fuzzed for `fuzztime`.
-  # The runner does not expand a matrix built from another job's output
-  # (go-quicraft ci.yml), so the targets are split over a static matrix of
-  # four shards, and each shard fuzzes two targets at a time with
-  # -parallel=2: the runner's 4 cores, 20 minutes per pair of targets.
   fuzz:
     name: Fuzz (shard ${{ matrix.shard }}/4)
     if: inputs.jobs == 'all' || inputs.jobs == 'fuzz'
@@ -121,9 +58,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: List this shard's fuzz targets
-        # `go test -list` prints a package's matching tests, then its
-        # "ok <pkg>" line. Targets are numbered across the whole module and
-        # dealt to shards round-robin, so every shard sees the same order.
+        # `go test -list` prints a package's matching tests, then its "ok <pkg>" line.
         run: |
           set -o pipefail
           go test -tags="$FUZZ_TAGS" -run='^$' -list='^Fuzz' ./... |
@@ -146,9 +81,7 @@ jobs:
               echo "ok   $pkg $target"
             elif grep -q 'context deadline exceeded' "$log" &&
                  ! grep -q 'Failing input written to' "$log"; then
-              # A target stopped by a duration -fuzztime can fail on the
-              # deadline itself with no failing input written: there is no
-              # crasher and no reproducer, so it is not a finding (handbook #306).
+              # A deadline stop with no failing input is not a finding.
               echo "deadline $pkg $target (no failing input; not a finding)"
             else
               echo "BATCH-FINDING fuzz $pkg $target"
@@ -191,12 +124,7 @@ jobs:
             fuzz-logs/
           retention-days: 30
 
-  # The unit suite under the race detector, three times, on main, dealt over
-  # four shards by `make shard-packages` (the deal ci.yml's unit shards use).
-  # Basis: ci.yml's single -race pass is sized at about 40 minutes a shard on
-  # this runner; three runs of a shard are about two hours, so a shard gets a
-  # 240-minute job and a 220-minute go test -timeout. -p 2 bounds the race
-  # detector's memory to what 16 GB holds.
+  # The unit suite under the race detector, three times, over four shards from `make shard-packages`.
   race-full:
     name: Race (full, -count=3, shard ${{ matrix.shard }}/4)
     if: inputs.jobs == 'all' || inputs.jobs == 'race-full'
@@ -214,8 +142,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: UDP buffers for QUIC suites
-        # QUIC suites need larger socket buffers (go-quicraft ci.yml); a runner
-        # that refuses sudo runs them with the defaults (handbook #306).
+        # QUIC suites need larger socket buffers; a runner that refuses sudo runs them with the defaults.
         run: |
           sudo -n sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032 ||
             echo "batch: sysctl not permitted; UDP buffers left at the defaults"
@@ -232,9 +159,7 @@ jobs:
           grep -E '^(--- FAIL|FAIL)' race.log | sed 's/^/BATCH-FINDING race-fail /' || true
           exit "$rc"
 
-  # The integration suite in a loop for soak_minutes. Every iteration runs to
-  # the end; a failing one is reported and the loop goes on, so one flake does
-  # not hide a second, different failure.
+  # The integration suite in a loop for soak_minutes.
   soak:
     name: Soak (${{ inputs.soak_minutes }} min)
     if: inputs.jobs == 'all' || inputs.jobs == 'soak'
@@ -248,8 +173,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: UDP buffers for QUIC suites
-        # QUIC suites need larger socket buffers (go-quicraft ci.yml); a runner
-        # that refuses sudo runs them with the defaults (handbook #306).
+        # QUIC suites need larger socket buffers; a runner that refuses sudo runs them with the defaults.
         run: |
           sudo -n sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032 ||
             echo "batch: sysctl not permitted; UDP buffers left at the defaults"
@@ -268,14 +192,11 @@ jobs:
             else
               failed=$((failed + 1))
               echo "BATCH-FINDING soak iteration $i failed"
-              # grep -m, not `grep | head`: under pipefail, head closing the
-              # pipe kills grep with SIGPIPE and the step with it (exit 141),
-              # and a log with no match must not end the loop either (#1317).
+              # grep -m, not `grep | head`: under pipefail a closed pipe fails the step, and no match must not end the loop.
               grep -E -m 40 '^(--- FAIL|FAIL|panic:)|WARNING: DATA RACE' "soak-logs/$i.log" || true
               # testify prints the error itself on the line after `Error:`.
               grep -E -m 20 -A 1 '^[[:space:]]+Error:[[:space:]]' "soak-logs/$i.log" || true
-              # The target writes the stack's service logs here on a failed
-              # run and overwrites them on the next; keep this iteration's.
+              # The target writes the stack's service logs here on a failed run; keep this iteration's.
               if [ -f integration-compose.log ]; then
                 mv integration-compose.log "soak-logs/$i.compose.log"
               fi
@@ -284,10 +205,7 @@ jobs:
           echo "soak: $i iterations, $failed failed"
           [ "$failed" -eq 0 ]
 
-      # The target's EXIT trap brings the stack down on every way out of an
-      # iteration, but not when the runner kills the step at timeout or on
-      # cancel. RUN_ID is the same for every make call in this job, so this
-      # names the same compose project the loop used.
+      # The target's EXIT trap does not run when the runner kills the step, so tear down here too.
       - name: Tear down the integration stack
         if: always()
         run: |
@@ -310,8 +228,7 @@ jobs:
           path: soak-logs/
           retention-days: 30
 
-  # Benchmarks with allocations. -count=5 gives benchstat enough samples to
-  # tell a 20 % regression from noise; one sample cannot.
+  # Benchmarks with allocations; -count=5 gives benchstat enough samples.
   bench:
     name: Bench
     if: inputs.jobs == 'all' || inputs.jobs == 'bench'
