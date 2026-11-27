@@ -335,6 +335,54 @@ func TestRankerAdapter_PipelineQueryHonoursHybridWeights(t *testing.T) {
 	assert.Equal(t, []string{"keyword-best", "vector-best"}, order(0.25, 0.75))
 }
 
+// TestRankerAdapter_PipelineScoresAreSimilarities proves a hybrid query's
+// results report the vector similarity, not the fused RRF score (about
+// 1/60): every score is at least MinScore and never rises down the list,
+// while the fused ranking still decides the order.
+func TestRankerAdapter_PipelineScoresAreSimilarities(t *testing.T) {
+	docs := []pipeline.Result{
+		{ID: "vector-best", Content: "alpha beta gamma delta", Score: 0.9},
+		{ID: "keyword-best", Content: "connection pool pool settings", Score: 0.8},
+	}
+	query := func(vectorWeight, keywordWeight float32) []pipeline.Result {
+		cfg := ranking.DefaultConfig()
+		cfg.EnableRerank = false
+		cfg.VectorWeight = vectorWeight
+		cfg.KeywordWeight = keywordWeight
+		adapter, err := NewRankerAdapter(ranking.NewHybridRanker(cfg, nil), WithRankerConfig(&RankerConfig{
+			EnableHybrid: true, VectorWeight: vectorWeight, KeywordWeight: keywordWeight,
+		}))
+		require.NoError(t, err)
+
+		pcfg := pipeline.DefaultConfig()
+		pcfg.EnableCircuitBreaker = false
+		pcfg.EnableMetrics = false
+		p, err := pipeline.NewPipeline(pcfg, weightQueryHandler{}, weightVectorSearcher{results: docs}, adapter, weightContextBuilder{})
+		require.NoError(t, err)
+
+		resp, err := p.Query(context.Background(), "pool", pipeline.QueryOptions{TopK: 10, MinScore: 0.75})
+		require.NoError(t, err)
+		require.Len(t, resp.Results, 2)
+		for i, r := range resp.Results {
+			assert.GreaterOrEqual(t, r.Score, float32(0.75), "result %d", i)
+			if i > 0 {
+				assert.LessOrEqual(t, r.Score, resp.Results[i-1].Score, "result %d", i)
+			}
+		}
+		return resp.Results
+	}
+
+	vectorLed := query(0.75, 0.25)
+	assert.Equal(t, "vector-best", vectorLed[0].ID)
+	assert.InDelta(t, 0.9, vectorLed[0].Score, 1e-6)
+	assert.InDelta(t, 0.8, vectorLed[1].Score, 1e-6)
+
+	keywordLed := query(0.25, 0.75)
+	assert.Equal(t, "keyword-best", keywordLed[0].ID)
+	assert.InDelta(t, 0.8, keywordLed[0].Score, 1e-6)
+	assert.InDelta(t, 0.8, keywordLed[1].Score, 1e-6) // capped at the result above
+}
+
 // TestRankerAdapter_PipelineDefaultMinScoreFiltersVectorScores proves the
 // pipeline's default threshold (0.7) applies to the vector similarity scores
 // before ranking, not to the small fused RRF scores: with the default hybrid

@@ -233,6 +233,10 @@ func (p *pipelineImpl) executePipeline(ctx context.Context, query string, opts Q
 	}
 	rankTime := time.Since(rankStart)
 
+	// The ranker decides the order; each result reports its similarity on
+	// the scale MinScore and the API document, not the fused ranking score.
+	reportSimilarityScores(rankedResults, vectorResults)
+
 	// Limit to TopK
 	if len(rankedResults) > opts.TopK {
 		rankedResults = rankedResults[:opts.TopK]
@@ -295,6 +299,29 @@ func (p *pipelineImpl) executePipeline(ctx context.Context, query string, opts Q
 	}
 
 	return response, nil
+}
+
+// reportSimilarityScores sets each ranked result's Score to its vector
+// similarity, capped at the score of the result ranked above it. Fused
+// ranking scores (RRF, about 1/60) are on another scale than the 0-1
+// similarity that MinScore filters and the API reports, so the ranker keeps
+// the order and the score stays a similarity: never below MinScore, since
+// every vector result passed it, and never rising down the list. A ranked
+// result with no vector similarity takes the score of the one above it.
+func reportSimilarityScores(ranked, vectorResults []Result) {
+	similarity := make(map[string]float32, len(vectorResults))
+	for _, r := range vectorResults {
+		similarity[r.ID] = r.Score
+	}
+	for i := range ranked {
+		score, ok := similarity[ranked[i].ID]
+		if i > 0 && (!ok || score > ranked[i-1].Score) {
+			score = ranked[i-1].Score
+		}
+		if ok || i > 0 {
+			ranked[i].Score = score
+		}
+	}
 }
 
 // applyDefaults applies default values to query options.
