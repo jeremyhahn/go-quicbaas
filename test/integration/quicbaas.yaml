@@ -71,18 +71,19 @@ auth:
 # (test/integration/certfixture).
 # Cert/key paths are overridden per-node via QUICBAAS_RAFT_TLS_* env vars.
 #
-# Container-friendly Raft timing to prevent leader oscillation with mTLS:
-#   election timeout = 15 * 200ms = 3000ms
-#   heartbeat interval = 2 * 200ms = 400ms
-# These non-default values bypass the server's low-latency override
-# (50ms RTT → 1s election) which is too aggressive for Docker + mTLS.
+# Container-friendly Raft timing, the same as quicbaas-cluster.yaml:
+#   election timeout = 30 * 200ms = 6000ms
+#   heartbeat interval = 3 * 200ms = 600ms
+# CI runner disk latency delays raft log syncs, and the 3 s election
+# stepped leaders down mid-run. These non-default values bypass the
+# server's low-latency override (50ms RTT → 1s election).
 raft:
   mutual_tls: true
   tls_ca_file: /etc/quicbaas/certs/ca.crt
   tls_cert_file: /etc/quicbaas/certs/node1.crt
   tls_key_file: /etc/quicbaas/certs/node1.key
-  election_rtt: 15
-  heartbeat_rtt: 2
+  election_rtt: 30
+  heartbeat_rtt: 3
   rtt_millisecond: 200
 
 # Storage configuration
