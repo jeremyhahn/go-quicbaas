@@ -16,7 +16,6 @@
 package cluster
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -964,11 +963,10 @@ func (c *embeddedClusterClient) AddNode(ctx context.Context, shardID, nodeID uin
 	}
 
 	// Use the Cluster() sub-client to add a node
-	// The SDK AddNodeRequest uses Address and Name (string), not ShardID/NodeID (uint64)
-	// Convert nodeID to string for the Name field
 	err := c.client.Cluster().AddNode(ctx, &quicbaas.AddNodeRequest{
+		ShardID: shardID,
+		NodeID:  nodeID,
 		Address: address,
-		Name:    strconv.FormatUint(nodeID, 10),
 	})
 	if err != nil {
 		return &AddNodeResult{
