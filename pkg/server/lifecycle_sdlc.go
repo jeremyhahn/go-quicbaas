@@ -598,6 +598,10 @@ func (s *Server) startSDLC() error {
 	}
 
 	rulers := sdlc.RulerPolicy{Default: cfg.Rulers.Default, Tenants: cfg.Rulers.Tenants}
+	forgeTokens, err := newSDLCForgeTokenSources(cfg.Forge.TokenCommands)
+	if err != nil {
+		return &SDLCInitError{Component: "forge token commands", Cause: err}
+	}
 	sdlcService, err := service.NewSDLCService(service.SDLCServiceConfig{
 		Store: store, Routes: routes, Projects: projectSvc, ProjectWriter: projectStores.Store(),
 		Secrets: secrets, Guard: guard, Verification: verification, Tasks: agents,
@@ -613,9 +617,9 @@ func (s *Server) startSDLC() error {
 		Agents:  agentCatalog,
 		SSHKeys: sshKeys,
 		// The node's public origin, which onboarding provisions forge
-		// webhooks to point at. Validated at load; refused here too, because
-		// a module that reached this line without one would bind projects
-		// nothing ever delivers to.
+		// webhooks to point at. Optional and validated at load: empty means
+		// the node takes no deliveries, so only poll-only bindings onboard
+		// and a binding naming a webhook secret is refused (go-quicbaas#2225).
 		WebhookPublicURL: cfg.Webhook.PublicURL,
 		ForgeTransport: sdlc.ForgeTransport{
 			ReadTimeout:       cfg.Forge.ReadTimeout,
@@ -624,6 +628,12 @@ func (s *Server) startSDLC() error {
 			ReadAttempts:      cfg.Forge.ReadAttempts,
 			RetryBackoff:      cfg.Forge.RetryBackoff,
 		},
+		// The node's forge token commands; a forge type without one reads
+		// each binding's token secret.
+		ForgeTokens: forgeTokens,
+		// The tenants and repositories each command may serve; a binding
+		// no grant names is refused the node's token.
+		ForgeTokenGrants: newSDLCForgeTokenGrants(cfg.Forge.TokenCommands),
 	})
 	if err != nil {
 		return &SDLCInitError{Component: "binding service", Cause: err}
@@ -875,6 +885,51 @@ func newSDLCTriage(cfg sdlc.TriageRunnerConfig, jobs sdlc.TriageJobStarter, stor
 		return nil, nil, &SDLCInitError{Component: "triage scheduler", Cause: err}
 	}
 	return runner, scheduler, nil
+}
+
+// newSDLCForgeTokenSources builds one command token source per forge type in
+// sdlc.forge.token_commands. Each command learns its forge type from its
+// environment; the base URL is added per call. No commands yields nil.
+func newSDLCForgeTokenSources(commands map[string]config.SDLCForgeTokenCommand) (map[sdlc.ForgeType]sdlc.ForgeTokenSource, error) {
+	if len(commands) == 0 {
+		return nil, nil
+	}
+	sources := make(map[sdlc.ForgeType]sdlc.ForgeTokenSource, len(commands))
+	for forgeType, command := range commands {
+		source, err := sdlc.NewCommandTokenSource(sdlc.CommandTokenSourceConfig{
+			Argv:            command.Argv,
+			Env:             []string{sdlc.ForgeCommandEnvType + "=" + forgeType},
+			RefreshBefore:   command.RefreshBefore,
+			Timeout:         command.Timeout,
+			AllowedBaseURLs: command.AllowedBaseURLs,
+		})
+		if err != nil {
+			return nil, err
+		}
+		sources[sdlc.ForgeType(forgeType)] = source
+	}
+	return sources, nil
+}
+
+// newSDLCForgeTokenGrants maps each token command's configured grants to its
+// forge type. A command with no grants maps to none, so its type serves no
+// binding (the config validator refuses that shape at load).
+func newSDLCForgeTokenGrants(commands map[string]config.SDLCForgeTokenCommand) map[sdlc.ForgeType]sdlc.ForgeTokenGrants {
+	if len(commands) == 0 {
+		return nil
+	}
+	grants := make(map[sdlc.ForgeType]sdlc.ForgeTokenGrants, len(commands))
+	for forgeType, command := range commands {
+		typed := make(sdlc.ForgeTokenGrants, 0, len(command.Grants))
+		for _, grant := range command.Grants {
+			typed = append(typed, sdlc.ForgeTokenGrant{
+				TenantID:     grant.Tenant,
+				Repositories: append([]string(nil), grant.Repositories...),
+			})
+		}
+		grants[sdlc.ForgeType(forgeType)] = typed
+	}
+	return grants
 }
 
 func (s *Server) stopSDLC() {

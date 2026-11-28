@@ -591,17 +591,25 @@ func (h *Hooks) resolveConcluded(ctx context.Context, tenantID string, task *orc
 	return &attempt{project: project, binding: binding, task: task, repo: repo, issue: issue, forge: forge}, nil
 }
 
+// noRunSummaryEvidence is what a concluded task with no run summary says in
+// place of its raw result output.
+const noRunSummaryEvidence = "the run recorded no public summary; see the task's audit trail"
+
 // conclusionEvidence is what the concluded task itself says about why it
-// stopped: the park reason for a parked task, and otherwise the last attempt's
-// result — which is where the runner records the failure that ended the
-// attempt, and where a worker's final reply is carried when the attempt kept
-// one.
+// stopped: the park reason for a parked task, and otherwise the last
+// attempt's structured run summary. The raw result output, which can carry
+// command output, hosts, paths and tokens, is never published: a task with
+// a result but no summary, including one concluded before summaries existed,
+// says noRunSummaryEvidence, and the raw error stays on its audit trail.
 func conclusionEvidence(task *orchestration.Task) string {
 	if reason := strings.TrimSpace(task.BlockedReason); reason != "" {
 		return reason
 	}
+	if summary, ok := latestRunSummary(task); ok {
+		return summary.Render()
+	}
 	if task.Result != nil {
-		return strings.TrimSpace(task.Result.Output)
+		return noRunSummaryEvidence
 	}
 	return ""
 }

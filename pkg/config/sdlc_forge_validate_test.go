@@ -55,6 +55,52 @@ func TestSDLCForge_NegativeIsRefusedAndZeroIsNot(t *testing.T) {
 	}
 }
 
+func TestSDLCForge_TokenCommandRefusalsNameTheirKey(t *testing.T) {
+	const argv = "/usr/local/bin/forge-token-helper"
+	const api = "https://api.github.com"
+	cases := map[string]map[string]SDLCForgeTokenCommand{
+		"sdlc.forge.token_commands.gitlab":                   {"gitlab": {Argv: []string{argv}}},
+		"sdlc.forge.token_commands.github.argv":              {"github": {}},
+		"sdlc.forge.token_commands.gitea.argv":               {"gitea": {Argv: []string{"bin/forge-token-helper"}}},
+		"sdlc.forge.token_commands.github.refresh_before":    {"github": {Argv: []string{argv}, RefreshBefore: -time.Second, AllowedBaseURLs: []string{api}}},
+		"sdlc.forge.token_commands.github.timeout":           {"github": {Argv: []string{argv}, Timeout: -time.Second, AllowedBaseURLs: []string{api}}},
+		"sdlc.forge.token_commands.github.allowed_base_urls": {"github": {Argv: []string{argv}}},
+		"sdlc.forge.token_commands.gitea.allowed_base_urls":  {"gitea": {Argv: []string{argv}, AllowedBaseURLs: []string{"https://user:pw@gitea.test"}}},
+		"sdlc.forge.token_commands.github.grants":            {"github": {Argv: []string{argv}, AllowedBaseURLs: []string{api}}},
+		"sdlc.forge.token_commands.github.grants[0].tenant": {"github": {Argv: []string{argv}, AllowedBaseURLs: []string{api},
+			Grants: []SDLCForgeTokenGrant{{Repositories: []string{"acme/web"}}}}},
+		"sdlc.forge.token_commands.github.grants[0].repositories": {"github": {Argv: []string{argv}, AllowedBaseURLs: []string{api},
+			Grants: []SDLCForgeTokenGrant{{Tenant: "acme"}}}},
+		"sdlc.forge.token_commands.gitea.grants[1].repositories": {"gitea": {Argv: []string{argv}, AllowedBaseURLs: []string{api},
+			Grants: []SDLCForgeTokenGrant{{Tenant: "acme", Repositories: []string{"acme/web"}}, {Tenant: "beta", Repositories: []string{"*/*"}}}}},
+	}
+	for key, commands := range cases {
+		t.Run(key, func(t *testing.T) {
+			cfg := enabledSDLCSection()
+			cfg.Forge.TokenCommands = commands
+			v := NewValidator()
+			v.validateSDLC(cfg)
+			err := v.Errors()
+			if err == nil || !strings.Contains(err.Error(), key) {
+				t.Errorf("validateSDLC = %v, want %s refused", err, key)
+			}
+		})
+	}
+
+	cfg := enabledSDLCSection()
+	cfg.Forge.TokenCommands = map[string]SDLCForgeTokenCommand{
+		"github": {Argv: []string{argv, "--app", "pilot"}, RefreshBefore: 5 * time.Minute, Timeout: 30 * time.Second, AllowedBaseURLs: []string{api},
+			Grants: []SDLCForgeTokenGrant{{Tenant: "acme", Repositories: []string{"acme/web", "acme-tools/*"}}}},
+		"gitea": {Argv: []string{argv}, AllowedBaseURLs: []string{"https://gitea.test/api/v1"},
+			Grants: []SDLCForgeTokenGrant{{Tenant: "acme", Repositories: []string{"acme/web"}}}},
+	}
+	v := NewValidator()
+	v.validateSDLC(cfg)
+	if err := v.Errors(); err != nil {
+		t.Errorf("valid token commands were refused: %v", err)
+	}
+}
+
 // enabledSDLCSection is the default SDLC section with the module on and the
 // one value enabling it requires.
 func enabledSDLCSection() *SDLCConfig {

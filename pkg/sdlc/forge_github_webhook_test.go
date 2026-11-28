@@ -26,7 +26,7 @@ import (
 )
 
 // githubWebhookSecret signs every delivery in these tests.
-var githubWebhookSecret = []byte("s3cret")
+var githubWebhookSecret = []byte("s3cret-hook-value")
 
 // githubSign is the X-Hub-Signature-256 value GitHub sends for payload.
 func githubSign(payload, secret []byte) string {
@@ -58,10 +58,11 @@ func TestGitHubVerifyWebhook_RefusesEveryUnprovenDelivery(t *testing.T) {
 		"no signature":        {payload, "", githubWebhookSecret},
 		"the legacy sha1":     {payload, "sha1=" + strings.TrimPrefix(valid, githubSignaturePrefix), githubWebhookSecret},
 		"not hex":             {payload, "sha256=zz", githubWebhookSecret},
-		"another secret":      {payload, githubSign(payload, []byte("other")), githubWebhookSecret},
+		"another secret":      {payload, githubSign(payload, []byte("other-hook-value")), githubWebhookSecret},
 		"a tampered payload":  {[]byte(`{"action":"closed"}`), valid, githubWebhookSecret},
 		"a truncated digest":  {payload, valid[:len(valid)-2], githubWebhookSecret},
 		"an unprefixed match": {payload, strings.TrimPrefix(valid, githubSignaturePrefix), githubWebhookSecret},
+		"a short secret":      {[]byte(shortSecretPayload), githubSignaturePrefix + shortSecretSignature, []byte(shortSecret)},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -204,9 +205,10 @@ func TestGitHubEnsureWebhook_RefusesAnIncompleteSpec(t *testing.T) {
 		spec   WebhookSpec
 		secret []byte
 	}{
-		"no url":    {WebhookSpec{Events: githubHookSpec.Events}, githubWebhookSecret},
-		"no events": {WebhookSpec{URL: githubHookURL}, githubWebhookSecret},
-		"no secret": {githubHookSpec, nil},
+		"no url":         {WebhookSpec{Events: githubHookSpec.Events}, githubWebhookSecret},
+		"no events":      {WebhookSpec{URL: githubHookURL}, githubWebhookSecret},
+		"no secret":      {githubHookSpec, nil},
+		"a short secret": {githubHookSpec, []byte(shortSecret)},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

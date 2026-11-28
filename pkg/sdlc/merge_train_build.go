@@ -104,6 +104,9 @@ func (b *containerTrainBuilder) Base() (string, error) {
 // train that no reviewer approved; the change is ejected with the conflicted
 // files named, and its worker merges the target into its own branch.
 func (b *containerTrainBuilder) Add(car TrainCar) (string, *TrainEjection, error) {
+	if err := b.publisher.refreshCredential(); err != nil {
+		return "", nil, err
+	}
 	fetch := credentialHelperArgs(b.project.Git.RepoURL)
 	fetch = append(fetch, "fetch", gitRemote, "refs/heads/"+car.Branch)
 	if _, err := b.run(b.workDir, fetch...); err != nil {

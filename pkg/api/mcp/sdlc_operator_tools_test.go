@@ -111,6 +111,49 @@ func TestSDLCOperatorTools_RulersSurviveARebind(t *testing.T) {
 	}
 }
 
+func TestSDLCOperatorTools_ProfileSurvivesARebindAndIsChecked(t *testing.T) {
+	registry, forge := newMCPSDLCRegistry(t)
+	ctx := context.Background()
+	bind := func(binding map[string]interface{}) error {
+		_, err := registry.ExecuteTool(ctx, "sdlc_bind", map[string]interface{}{
+			"tenant_id": "tenant-a", "project_id": "p1", "binding": binding,
+		})
+		return err
+	}
+
+	// This rig's operator allowlist carries no verification command, so the
+	// ai-native profile is refused on its first link. That refusal is only
+	// reached when the MCP schema carried the profile into the binding.
+	binding := profiledToolBinding(t, forge)
+	binding["review"] = map[string]interface{}{
+		"required_approvals": 1.0, "require_independent_reviewer": true, "require_green_checks": true,
+	}
+	binding["readiness"] = map[string]interface{}{"require_acceptance_criteria": true}
+	binding["profile"] = "ai-native"
+	var conflict *sdlc.ProfileConflictError
+	if err := bind(binding); !errors.As(err, &conflict) || conflict.Field != "verification" || !errors.Is(err, sdlc.ErrInvalidInput) {
+		t.Fatalf("an ai-native bind with no verification = %v, want a profile conflict on verification", err)
+	}
+
+	binding["profile"] = "yolo"
+	var invalid *sdlc.InvalidInputError
+	if err := bind(binding); !errors.As(err, &invalid) || invalid.Field != "profile" {
+		t.Fatalf("an unknown profile = %v, want an invalid profile", err)
+	}
+
+	delete(binding, "profile")
+	if err := bind(binding); err != nil {
+		t.Fatalf("a standard bind: %v", err)
+	}
+	read, err := registry.ExecuteTool(ctx, "sdlc_binding", map[string]interface{}{"tenant_id": "tenant-a", "project_id": "p1"})
+	if err != nil {
+		t.Fatalf("sdlc_binding: %v", err)
+	}
+	if profile := read.(*sdlc.ProjectBinding).Profile; profile != sdlc.ProfileStandard {
+		t.Fatalf("profile = %q, want the standard profile", profile)
+	}
+}
+
 func TestSDLCOperatorTools_RegisteredGatedAndRefusedWithoutTheModule(t *testing.T) {
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
 	if err != nil {

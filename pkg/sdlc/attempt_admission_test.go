@@ -316,3 +316,38 @@ func TestAttemptWithdrawnError_NamesTheTaskAndWhy(t *testing.T) {
 		t.Fatalf("a withdrawal with no block kind names one: %q", plain.Error())
 	}
 }
+
+// TestPublisher_ABlockDuringCredentialRefreshStopsThePush: the credential
+// refresh can wait on the node's token command, so a block that lands while
+// it runs must still stop the push.
+func TestPublisher_ABlockDuringCredentialRefreshStopsThePush(t *testing.T) {
+	container := &fakeContainer{ahead: true}
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
+	blocked, refreshed := false, false
+	pub.refresh = func() error {
+		// The block lands while the token command runs.
+		refreshed, blocked = true, true
+		return nil
+	}
+	pub.admit = func() error {
+		if blocked {
+			return &AttemptWithdrawnError{TaskID: testTask, Status: orchestration.TaskStatusBlocked}
+		}
+		return nil
+	}
+
+	if _, err := pub.Push(testPublishPlan()); !errors.Is(err, ErrAttemptWithdrawn) {
+		t.Fatalf("Push = %v, want ErrAttemptWithdrawn", err)
+	}
+	if !refreshed {
+		t.Fatal("precondition: the credential refresh never ran")
+	}
+	if len(container.pushes) != 0 {
+		t.Fatalf("pushes = %+v, want none", container.pushes)
+	}
+	for _, command := range container.commandsRun() {
+		if strings.Contains(command, " push") {
+			t.Fatalf("a task blocked during the credential refresh was pushed: %q", command)
+		}
+	}
+}

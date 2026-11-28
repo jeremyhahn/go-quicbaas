@@ -1,6 +1,7 @@
 package sdlc
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strconv"
@@ -43,6 +44,49 @@ const deliverForgeCredentialScript = `umask 077 && rm -f -- "$1" && cat > "$1" &
 type forgeCredential struct {
 	// token is the daemon's copy, wiped on wipe.
 	token []byte
+
+	// resolve re-reads the token from its source, nil when the token cannot
+	// change during a session (a tenant secret). A node token command mints
+	// tokens that expire within the hour, so a session that pushes after
+	// its checkout re-resolves first (see Refresh).
+	resolve func(ctx context.Context) ([]byte, error)
+
+	// undelivered is set while the token held was not written to the
+	// container: a Refresh whose delivery failed. The next Refresh delivers
+	// it again even when the source answers the same token.
+	undelivered bool
+}
+
+// Refresh re-resolves the token and, when its source answers a new one,
+// redelivers it to the container's credential tier so the git operation
+// that follows authenticates with a token that has not expired. A
+// credential with no resolver, or one whose source answers the same token
+// it already delivered, sends nothing. A refresh whose delivery failed is
+// retried by the next Refresh, even when the source answers the same token.
+func (c *forgeCredential) Refresh(ctx context.Context, exec sessionExecFunc, taskID, sessionID string) error {
+	if c == nil || c.resolve == nil {
+		return nil
+	}
+	if len(c.token) == 0 {
+		return &ForgeCredentialDeliveryError{TaskID: taskID, SessionID: sessionID, Cause: ErrForgeCredentialWiped}
+	}
+	fresh, err := c.resolve(ctx)
+	if err != nil {
+		return &ForgeCredentialDeliveryError{TaskID: taskID, SessionID: sessionID, Cause: err}
+	}
+	if len(fresh) == 0 {
+		return &ForgeCredentialDeliveryError{TaskID: taskID, SessionID: sessionID, Cause: ErrForgeCredentialWiped}
+	}
+	if bytes.Equal(fresh, c.token) && !c.undelivered {
+		return nil
+	}
+	held := make([]byte, len(fresh))
+	copy(held, fresh)
+	clear(c.token)
+	c.token = held
+	err = c.Deliver(exec, taskID, sessionID)
+	c.undelivered = err != nil
+	return err
 }
 
 // newForgeCredential holds a copy of token, or answers nil when there is

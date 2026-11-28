@@ -1321,11 +1321,19 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 #
 #   OPENVINO_BASE_URL=http://gpu-01:9000 OPENVINO_MODEL=qwen3-8b \
 #     go test -tags openvino_live -run TestOpenVINOBackend_Live ./pkg/orchestration/
+#
+# github_live drives a REAL GitHub scratch repository with live tokens
+# (cmd/quicbaasd/sdlc_train_github_e2e_test.go). It is exempt for the same
+# reason: no CI pass has the GITHUB_ITEST_* credentials, and a pass that
+# compiled it could not run it. Drive it with:
+#
+#   make integration-test-train-github
 TAG_GATE_EXEMPT := linux darwin windows unix ignore integration coverage production \
 	pkcs11 swtpm \
 	awskms gcpkms azurekv vault awss3 gcpstorage azureblob minio \
 	gpu \
-	openvino_live
+	openvino_live \
+	github_live
 
 # IAM_TEST_TAGS: retained alias for TEST_TAGS. IAM is now always compiled
 # (the 'iam' build tag was removed in phase C1-G), so no extra tag is needed
@@ -1812,11 +1820,11 @@ integration-test-orchestration-gpu: ## Run GPU-accelerated orchestration integra
 # every feature.
 INTEGRATION_FEATURES := account agent agents api attestation auth backup batch \
 	cache-redis cli cluster containerruntime dataplane dek durability embedded \
-	fleet-enrollment fleet-runtime forge-gitea iam init kms lifecycle login mcp merge-result messaging \
+	fleet-enrollment fleet-runtime forge-gitea forge-github iam init kms lifecycle login mcp merge-result messaging \
 	observability orchestration orchestration-gpu orchestrator parameter_store \
 	placement project quicbaasd raft rag registry routing scheduler sdk-go sdk-js seal \
 	seal-hardware secrets secrets-resolver server session-attach signalbridge \
-	standalone storage storage-file tenantbarrier timeseries transactions transport vector \
+	standalone storage storage-file tenantbarrier timeseries train-github transactions transport vector \
 	workerimage
 FEATURE_PATHS_account           := test/integration/cli/account_test.go
 FEATURE_PATHS_agent             := test/integration/agent/
@@ -1837,6 +1845,7 @@ FEATURE_PATHS_embedded          := test/integration/embedded/
 FEATURE_PATHS_fleet-enrollment  := test/integration/fleet_enrollment/
 FEATURE_PATHS_fleet-runtime     := test/integration/fleet_runtime/
 FEATURE_PATHS_forge-gitea       := pkg/sdlc/forge_gitea_live_test.go
+FEATURE_PATHS_forge-github      := pkg/sdlc/forge_github_live_test.go
 FEATURE_PATHS_iam               := test/integration/iam/
 FEATURE_PATHS_init              := test/integration/init/
 FEATURE_PATHS_kms               := test/integration/kms/
@@ -1872,6 +1881,7 @@ FEATURE_PATHS_storage           := test/integration/storage/
 FEATURE_PATHS_storage-file      := pkg/storage/file/integration_test.go
 FEATURE_PATHS_tenantbarrier     := test/integration/tenantbarrier/
 FEATURE_PATHS_timeseries        := test/integration/timeseries/
+FEATURE_PATHS_train-github      := cmd/quicbaasd/sdlc_train_github_e2e_test.go
 FEATURE_PATHS_transactions      := test/integration/transactions/
 FEATURE_PATHS_transport         := test/integration/transport/
 FEATURE_PATHS_vector            := test/integration/vector/
@@ -2039,6 +2049,20 @@ integration-test-forge-gitea: ## Run the live Gitea forge suite (needs FORGE_ITE
 	@echo "$(YELLOW)Requires FORGE_ITEST_BASE_URL, _TOKEN, _OWNER, _REPO against a SCRATCH repo$(NC)"
 	$(GOTEST) -tags integration -count=1 -v -timeout=10m -run 'TestLive_' ./pkg/sdlc/
 	@echo "$(GREEN)✓ Live Gitea forge tests passed$(NC)"
+
+.PHONY: integration-test-forge-github
+integration-test-forge-github: ## Run the live GitHub forge suite (needs GITHUB_ITEST_* env)
+	@echo "$(BLUE)Running live GitHub forge integration tests...$(NC)"
+	@echo "$(YELLOW)Requires GITHUB_ITEST_TOKEN, _OWNER, _REPO, _REVIEWER_TOKEN against a SCRATCH repo$(NC)"
+	$(GOTEST) -tags integration -count=1 -v -timeout=15m -run 'TestLiveGitHub_' ./pkg/sdlc/
+	@echo "$(GREEN)✓ Live GitHub forge tests passed$(NC)"
+
+.PHONY: integration-test-train-github
+integration-test-train-github: ## Run the live GitHub merge-train e2e (needs GITHUB_ITEST_* env)
+	@echo "$(BLUE)Running the live GitHub merge-train e2e...$(NC)"
+	@echo "$(YELLOW)Requires GITHUB_ITEST_TOKEN, _OWNER, _REPO, _REVIEWER_TOKEN against a SCRATCH repo$(NC)"
+	$(GOTEST) -tags 'integration github_live $(strip $(INTEGRATION_BUILD_TAGS))' -count=1 -v -timeout=75m -run '^TestGitHubTrain_' ./cmd/quicbaasd/
+	@echo "$(GREEN)✓ Live GitHub merge-train e2e passed$(NC)"
 
 # The merge-result snapshot suite. It measures what the tree a verification
 # judges actually HOLDS, which needs real git against a real working tree:

@@ -174,6 +174,21 @@ func TestTrainedDelivery_ALandedCarsBranchIsDeleted(t *testing.T) {
 	}
 }
 
+func TestHooks_CompleteAfterTrainLandingConfirmsIssuesClosed(t *testing.T) {
+	rig, _ := trainedRunnerRig(t, landIt)
+	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	comments := issueClosedComments(rig.forge, 25)
+	if len(comments) != 1 || !strings.Contains(comments[0], issueClosedMarker+" pr=900") ||
+		!strings.Contains(comments[0], "#900 at "+shortSHA("train-merge-sha")) {
+		t.Fatalf("confirm comments = %q, want one naming train pull request #900 and its landing", comments)
+	}
+	if rig.forge.issues[25].State != "closed" {
+		t.Fatalf("issue 25 state = %s, want closed after the train landed", rig.forge.issues[25].State)
+	}
+}
+
 // TestTrainedDelivery_AFailedBranchDeleteFailsCompletionAndARetryFinishesIt
 // proves a branch the forge would not delete is not silently left behind:
 // Complete reports it, and the retried Complete — which finds the pull

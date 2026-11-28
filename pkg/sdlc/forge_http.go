@@ -42,6 +42,14 @@ type forgeRequest struct {
 	path   string
 	query  url.Values
 
+	// endpoint is an absolute URL that replaces baseURL+path, for the one
+	// route that does not live under the REST root: GitHub's GraphQL.
+	// Empty means baseURL+path. path still names the call in errors.
+	endpoint string
+
+	// headers are extra request headers, set after the dialect's.
+	headers map[string]string
+
 	// body is marshalled as JSON when non-nil.
 	body any
 
@@ -164,16 +172,28 @@ type forgeHTTP struct {
 	dialect   forgeDialect
 	baseURL   string
 	token     string
+	tokenFunc ForgeTokenFunc
 	custody   CustodyCredential
 	client    *http.Client
 	transport ForgeTransport
 	waiter    RetryWaiter
 }
 
+// ForgeTokenFunc resolves the forge token for one API request. An adapter
+// configured with one calls it before every request, so a token that a
+// short-lived source (a node token command) refreshes is never used past
+// its expiry by a long-lived adapter.
+type ForgeTokenFunc func(ctx context.Context) (string, error)
+
+// errEmptyForgeToken is what a request answers when its ForgeTokenFunc
+// resolves no token: sending it unauthenticated could only fail.
+var errEmptyForgeToken = errors.New("the forge token source returned an empty token")
+
 // forgeHTTPConfig is what newForgeHTTP validates and resolves.
 type forgeHTTPConfig struct {
 	baseURL   string
 	token     string
+	tokenFunc ForgeTokenFunc
 	custody   CustodyCredential
 	client    *http.Client
 	transport ForgeTransport
@@ -189,7 +209,7 @@ func newForgeHTTP(forge ForgeType, dialect forgeDialect, cfg forgeHTTPConfig) (f
 	if _, err := url.Parse(base); err != nil {
 		return forgeHTTP{}, &InvalidInputError{Field: "base_url", Message: "is not a valid URL"}
 	}
-	if cfg.token == "" {
+	if cfg.token == "" && cfg.tokenFunc == nil {
 		return forgeHTTP{}, &InvalidInputError{
 			Field:   "token",
 			Message: "must not be empty; an unauthenticated adapter can only fail on first use",
@@ -213,7 +233,7 @@ func newForgeHTTP(forge ForgeType, dialect forgeDialect, cfg forgeHTTPConfig) (f
 		waiter = backoffWaiter{base: transport.RetryBackoff}
 	}
 	return forgeHTTP{
-		forge: forge, dialect: dialect, baseURL: base, token: cfg.token, custody: cfg.custody,
+		forge: forge, dialect: dialect, baseURL: base, token: cfg.token, tokenFunc: cfg.tokenFunc, custody: cfg.custody,
 		client: client, transport: transport, waiter: waiter,
 	}, nil
 }
@@ -270,10 +290,29 @@ func (h *forgeHTTP) scrubCredentials(body []byte, secrets ...[]byte) []byte {
 // send performs one attempt at an API call, bounded by deadline, and decodes
 // its response. do decides whether an unanswered attempt is sent again.
 func (h *forgeHTTP) send(ctx context.Context, req forgeRequest, deadline time.Duration) error {
+	if h.tokenFunc != nil {
+		// Resolve the token for this request, then send with a copy that
+		// carries it, so the Authorization header, the read bound and the
+		// response scrubbing all use the token this request sent.
+		token, err := h.tokenFunc(ctx)
+		if err != nil {
+			return backendError(req.operation+".token", err)
+		}
+		if token == "" {
+			return backendError(req.operation+".token", errEmptyForgeToken)
+		}
+		current := *h
+		current.tokenFunc = nil
+		current.token = token
+		return current.send(ctx, req, deadline)
+	}
 	attemptCtx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 
 	endpoint := h.baseURL + req.path
+	if req.endpoint != "" {
+		endpoint = req.endpoint
+	}
 	if len(req.query) > 0 {
 		endpoint += "?" + req.query.Encode()
 	}
@@ -315,6 +354,9 @@ func (h *forgeHTTP) send(ctx context.Context, req forgeRequest, deadline time.Du
 		httpReq.Header.Set("Authorization", h.dialect.tokenScheme+h.token)
 	}
 	for name, value := range h.dialect.headers {
+		httpReq.Header.Set(name, value)
+	}
+	for name, value := range req.headers {
 		httpReq.Header.Set(name, value)
 	}
 	if req.body != nil {

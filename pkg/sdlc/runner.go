@@ -453,6 +453,13 @@ type runnerRun struct {
 	// replacement would leave the run charged for a fault it did not have.
 	credentialReplaced      bool
 	credentialReplacedRound int
+
+	// lastState is the last state this run handled other than escalating:
+	// the stage its summary names.
+	lastState orchestration.JobState
+
+	// failedChecks are the failed checks of this run's latest verification.
+	failedChecks []orchestration.ValidationResult
 }
 
 // handler drives one state and answers the next.
@@ -460,7 +467,7 @@ type handler func(ctx context.Context) (orchestration.JobState, error)
 
 // drive is the dispatch loop. Map-based rather than a switch so a state
 // answers in constant time and the table reads as the sequence it is.
-func (s *runnerRun) drive(ctx context.Context) error {
+func (s *runnerRun) drive(ctx context.Context) (err error) {
 	handlers := map[orchestration.JobState]handler{
 		orchestration.JobStateInitializing: s.initialize,
 		orchestration.JobStateExecuting:    s.execute,
@@ -485,6 +492,9 @@ func (s *runnerRun) drive(ctx context.Context) error {
 	// Deferred so it also covers the panic, and it is the same teardownWorker
 	// a completion runs rather than a second, thinner copy of it.
 	defer s.abandonWorker(ctx)
+	// The run's public summary is recorded on every exit, and before the
+	// teardown above: deferred calls run last-in first-out.
+	defer func() { s.recordSummary(ctx, err) }()
 
 	state := s.job.StartState
 	if state == "" {
@@ -500,6 +510,9 @@ func (s *runnerRun) drive(ctx context.Context) error {
 		// in a run that lasts hours (go-quicbaas#1054, attempt_admission.go).
 		if err := s.runner.hooks.admitAttempt(ctx, s.job.TenantID, s.taskID(), s.job.JobID); err != nil {
 			return err
+		}
+		if state != orchestration.JobStateEscalating {
+			s.lastState = state
 		}
 		step, ok := handlers[state]
 		if !ok {
@@ -519,6 +532,33 @@ func (s *runnerRun) drive(ctx context.Context) error {
 			return err
 		}
 		state = next
+	}
+}
+
+// recordSummary records the run's structured public summary as a task
+// artifact. A run whose own context was cancelled records none: it did not
+// conclude, and the run that resumes it will. The run's context is the only
+// cancellation signal. An error wrapping context.Canceled or
+// context.DeadlineExceeded while that context is live is a stage's own
+// timeout or cancel: the attempt concluded, the task concludes from it, and
+// so its summary is recorded as a failed run. A summary that cannot be
+// recorded is put on the job's audit trail and never replaces the run's own
+// error.
+func (s *runnerRun) recordSummary(ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		return
+	}
+	job := s.job.Context()
+	if job == nil || job.TaskID == "" {
+		return
+	}
+	summary := summarizeRun(runSummaryInput{
+		TaskID: job.TaskID, JobID: s.job.JobID, Attempt: job.Attempt, Err: err,
+		LastState: s.lastState, ParkKind: s.parked.kind, FaultClass: s.parked.faultClass,
+		FailedChecks: s.failedChecks, Delivery: s.delivery,
+	})
+	if rerr := s.runner.hooks.recordRunSummary(ctx, job, summary); rerr != nil {
+		s.job.Audit(auditRunSummary, "the run summary was not recorded: "+rerr.Error())
 	}
 }
 
@@ -1019,6 +1059,9 @@ func (s *runnerRun) containerExec(ctx context.Context) func(*orchestration.ExecS
 // publisher is the git side of this attempt, bound to the worker's container.
 func (s *runnerRun) publisher(ctx context.Context) *publisher {
 	return &publisher{
+		refresh: func() error {
+			return s.workspace.forgeCredential().Refresh(ctx, s.containerExec(ctx), s.taskID(), s.sessionID)
+		},
 		exec:    s.containerExec(ctx),
 		cleanup: s.containerCleanupExec(ctx),
 		project: s.job.Project,
@@ -1419,8 +1462,9 @@ func (s *runnerRun) conversationToCarry(ctx context.Context) (carriedConversatio
 }
 
 // refusedPush answers a publication that failed: a push the publisher refused
-// for an untrusted signature parks the task escalated for a person, and any
-// other failure is returned as it was.
+// for an untrusted signature, or for an AI attribution trailer in a commit
+// message, parks the task escalated for a person, and any other failure is
+// returned as it was.
 //
 // PARKED, NOT RETRIED. The factory never rewrites a pushed branch to re-sign
 // a commit, so every later attempt would verify the same commits and refuse
@@ -1430,10 +1474,14 @@ func (s *runnerRun) conversationToCarry(ctx context.Context) (carriedConversatio
 // ejected car the same way (trainEjected).
 func (s *runnerRun) refusedPush(err error) (orchestration.JobState, error) {
 	var unsigned *UnsignedCommitError
-	if !errors.As(err, &unsigned) {
-		return "", err
+	if errors.As(err, &unsigned) {
+		return s.park(orchestration.TaskBlockKindEscalated, untrustedSignerReason(unsigned), orchestration.FaultUntrustedSigner), nil
 	}
-	return s.park(orchestration.TaskBlockKindEscalated, untrustedSignerReason(unsigned), orchestration.FaultUntrustedSigner), nil
+	var trailer *AttributionTrailerError
+	if errors.As(err, &trailer) {
+		return s.park(orchestration.TaskBlockKindEscalated, attributionTrailerReason(trailer), orchestration.FaultUntrustedSigner), nil
+	}
+	return "", err
 }
 
 // untrustedSignerReason is what a person reads on a park for an untrusted
@@ -1446,6 +1494,14 @@ func untrustedSignerReason(unsigned *UnsignedCommitError) string {
 	}
 	return detail + "). The factory never rewrites a pushed branch. Record the signing key in the project's trusted " +
 		"signing history if it was the project's, or replace the commit, then readmit the task."
+}
+
+// attributionTrailerReason is the escalation a person reads when a push was
+// refused for an AI attribution trailer: the commit, the line, and the way out.
+func attributionTrailerReason(trailer *AttributionTrailerError) string {
+	return "Commit `" + shortSHA(trailer.Commit) + "` carries an AI attribution trailer in its message (" +
+		strconv.Quote(trailer.Line) + "). The factory never rewrites a pushed branch. Replace the commit with one " +
+		"whose message carries no attribution trailer, then readmit the task."
 }
 
 // refusedVerification answers a verification command the operator's allowlist
@@ -2322,6 +2378,7 @@ func (s *runnerRun) validate(ctx context.Context) (orchestration.JobState, error
 	// was misread as a vanished container, and nothing on the job said the
 	// build had run at all.
 	failed := auditVerificationResults(s.job, results)
+	s.failedChecks = failed
 	if err != nil {
 		return s.refusedVerification(err)
 	}
@@ -2334,7 +2391,7 @@ func (s *runnerRun) validate(ctx context.Context) (orchestration.JobState, error
 	})
 	s.job.Memory().AddFeedback(s.feedback)
 	return s.nextRoundWithEvidence(ctx, "verification failed", func(budget int) string {
-		return verificationFailureEvidence(failed, budget)
+		return publicVerificationSummary(s.job.JobID, failed, budget)
 	})
 }
 
@@ -2717,51 +2774,16 @@ func (s *runnerRun) nextRoundWithEvidence(ctx context.Context, reason string, ev
 //
 // COMMAND OUTPUT IS NOT TRUSTED TO BE PROSE. An `unblock[` in it would be
 // refused by ComposeBlockedReason as an injected condition, and the park
-// would fail on the very output it exists to report; the marker is defused
-// instead, because the output is what a person must read. A verification
-// summary arrives already defused (verificationSummaryLines), so its
-// measured length holds; this is the guard for any other evidence.
+// would fail on the very evidence it exists to report; the marker is defused
+// instead. A failed verification's evidence is the structured public summary
+// (publicVerificationSummary), which carries no output; its command name is
+// still configuration text, so the guard stays.
 func escalationEvidence(evidence string) string {
 	trimmed := strings.TrimSpace(evidence)
 	if trimmed == "" {
 		return ""
 	}
 	return "\n\n" + defuseUnblockMarker(trimmed)
-}
-
-// verificationVerdict says how a failed command failed: the exit status it
-// ran to, or plainly "failed" for one refused before it ran, which has none.
-func verificationVerdict(result orchestration.ValidationResult) string {
-	if result.ExitCode != 0 {
-		return "exited " + strconv.Itoa(result.ExitCode)
-	}
-	return "failed"
-}
-
-// verificationFailureEvidence renders each failed command's failing lines in
-// at most budget bytes, the room split evenly between the commands so one
-// long failure cannot crowd another out of the escalation.
-func verificationFailureEvidence(failed []orchestration.ValidationResult, budget int) string {
-	if len(failed) == 0 || budget <= 0 {
-		return ""
-	}
-	const separator = "\n\n"
-	share := (budget - len(separator)*(len(failed)-1)) / len(failed)
-	blocks := make([]string, 0, len(failed))
-	for _, result := range failed {
-		head := "`" + result.Name + "` " + verificationVerdict(result) + ":\n```\n"
-		const tail = "\n```"
-		room := share - len(head) - len(tail)
-		if room <= 0 {
-			continue
-		}
-		excerpt := verificationExcerpt(result, room)
-		if excerpt == "" {
-			continue
-		}
-		blocks = append(blocks, head+excerpt+tail)
-	}
-	return strings.Join(blocks, separator)
 }
 
 // =============================================================================

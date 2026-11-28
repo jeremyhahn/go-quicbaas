@@ -206,6 +206,7 @@ func init() {
 	addServerFlags(nodeCmd)
 	addServerFlags(clusterCmd)
 	addAddressFlags(startCmd, nodeCmd, clusterCmd)
+	addSDLCFlags(startCmd, nodeCmd, clusterCmd)
 
 	// Raft-specific flags for node and cluster commands.
 	addRaftFlags(nodeCmd)
@@ -318,6 +319,10 @@ func initConfig() {
 	// Bind environment variables to config keys.
 	bindEnvVars()
 	if err := bindAddressKeys(viper.GetViper()); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid configuration: %v\n", err)
+		os.Exit(1)
+	}
+	if err := bindSDLCKeys(viper.GetViper()); err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid configuration: %v\n", err)
 		os.Exit(1)
 	}

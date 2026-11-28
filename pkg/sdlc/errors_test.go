@@ -53,6 +53,7 @@ func TestTypedErrors_NameTheirSubjectAndUnwrap(t *testing.T) {
 		{&HeadMovedError{Subject: "s", Reviewed: "a", Current: "b"}, ErrHeadMoved, "from reviewed a to b"},
 		{&MergeConflictError{Subject: "s", Base: "main", Head: "abc", Attempts: 6}, ErrMergeConflict, "s at abc conflicts with its base main"},
 		{&NoChangesError{TaskID: "t", WorkDir: "/w"}, ErrNoChanges, "task t produced no changes in /w"},
+		{&AttributionTrailerError{TaskID: "t", Commit: "c1", Line: "Co-Authored-By: Claude"}, ErrAttributionTrailer, `task t: commit c1 carries an AI attribution trailer: "Co-Authored-By: Claude"`},
 		{&TaskNotForgeIssueError{TaskID: "t", Kind: "operator"}, ErrTaskNotForgeIssue, `"operator"`},
 		{&IncompleteResponseError{Op: "VerifyToken", Missing: "identity"}, ErrIncompleteResponse, "returned no identity"},
 		{&IncompleteResponseError{Op: "VerifyToken", Missing: "identity"}, ErrBackend, "returned no identity"},
@@ -72,6 +73,8 @@ func TestTypedErrors_NameTheirSubjectAndUnwrap(t *testing.T) {
 		{&ReviewerNotConfiguredError{ProjectID: "p"}, ErrReview, `project "p" binds no reviewer`},
 		{&ReviewerNotIndependentError{ProjectID: "p", Family: "anthropic"}, ErrReview, `both "anthropic"`},
 		{&ReviewSessionError{PullRequest: 41, Message: "no session"}, ErrReview, "pull request #41: no session"},
+		{&UntracedBriefError{Objective: "port the brief"}, ErrUntracedBrief, `"port the brief" names neither a SPEC row`},
+		{&MissingBriefLineError{Missing: []string{"Turn budget", "Acceptance"}}, ErrBriefIncomplete, "Turn budget, Acceptance"},
 	}
 	for _, tc := range cases {
 		if !strings.Contains(tc.err.Error(), tc.contains) {

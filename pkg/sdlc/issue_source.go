@@ -216,6 +216,13 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 		return nil, unavailable(err)
 	}
 	scope.Closing = closing
+	// The base branch's CI, read once per sweep. While its head has a failed
+	// check only main-fix issues are adopted; the rest are adopted on a later
+	// sweep once the base is green (see base_admission.go).
+	base, err := readBaseState(ctx, forge, repo, project.Git.DefaultBranch, s.now())
+	if err != nil {
+		return nil, unavailable(err)
+	}
 	skipped := map[int]ClosingClaim{}
 	// The contracts' wording is the project's, resolved once per sweep for
 	// the same reason again. A set that cannot be resolved adopts nothing:
@@ -236,6 +243,9 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 			skipped[issue.Number] = finding.Claim
 		}
 		if !finding.Verdict.Adoptable() {
+			continue
+		}
+		if !admitOnBase(base, issue.Labels, DefaultMainFixLabel) {
 			continue
 		}
 		cluster, clusterErr := s.clusterOf(ctx, project, issue.Number)
@@ -264,7 +274,7 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 			},
 			Subject:     strings.TrimSpace(issue.Title),
 			Description: contract,
-			Priority:    inputs.ComputedFor(issue.Labels),
+			Priority:    inputs.ComputedForIssue(issue),
 			Runner:      JobRunnerName,
 			Park:        park,
 			Metadata:    issueSpecMetadata(repo, binding, issue.Number, members),

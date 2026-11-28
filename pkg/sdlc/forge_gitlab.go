@@ -68,6 +68,10 @@ type GitLabConfig struct {
 	// token, or an OAuth token. Never logged, never placed in an error.
 	Token string
 
+	// TokenFunc, when set, resolves the token per request; see
+	// ForgeCredentials.TokenFunc.
+	TokenFunc ForgeTokenFunc
+
 	// HTTPClient is optional; see GiteaConfig.HTTPClient.
 	HTTPClient *http.Client
 
@@ -93,7 +97,7 @@ func NewGitLabBackend(cfg GitLabConfig) (*GitLabBackend, error) {
 		base = gitlabDefaultBaseURL
 	}
 	core, err := newForgeHTTP(ForgeGitLab, gitlabDialect, forgeHTTPConfig{
-		baseURL: base, token: cfg.Token,
+		baseURL: base, token: cfg.Token, tokenFunc: cfg.TokenFunc,
 		client: cfg.HTTPClient, transport: cfg.Transport, waiter: cfg.Waiter,
 	})
 	if err != nil {
@@ -118,6 +122,7 @@ func init() {
 		return NewGitLabBackend(GitLabConfig{
 			BaseURL:   cfg.BaseURL,
 			Token:     creds.Token,
+			TokenFunc: creds.TokenFunc,
 			Transport: transport,
 		})
 	})

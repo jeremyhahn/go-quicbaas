@@ -136,3 +136,28 @@ func TestSDLCBinding_RulersSurviveARebindAndAreChecked(t *testing.T) {
 	rec = sdlcCall(t, server, "tenant-a", http.MethodPut, "/api/v1/sdlc/projects/p1/binding", binding)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
+
+func TestSDLCBinding_ProfileSurvivesARebindAndIsChecked(t *testing.T) {
+	server, _ := setupSDLCServer(t)
+	seedBindableProject("p1")
+
+	binding := restBinding("p1")
+	binding.Profile = sdlc.ProfileAINative
+	binding.Reviewer = sdlc.ReviewerConfig{Agent: "codex-reviewer", Login: "codex", TokenSecretRef: "codex-tok"}
+	binding.Review.RequireIndependentReviewer = true
+	binding.Review.RequireGreenChecks = true
+	binding.Readiness.RequireAcceptanceCriteria = true
+	rec := sdlcCall(t, server, "tenant-a", http.MethodPut, "/api/v1/sdlc/projects/p1/binding", binding)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var bound sdlc.ProjectBinding
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bound))
+	assert.Equal(t, sdlc.ProfileAINative, bound.Profile)
+
+	binding.MergeTrain.Disabled = true
+	rec = sdlcCall(t, server, "tenant-a", http.MethodPut, "/api/v1/sdlc/projects/p1/binding", binding)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	binding.MergeTrain.Disabled = false
+	binding.Profile = "yolo"
+	rec = sdlcCall(t, server, "tenant-a", http.MethodPut, "/api/v1/sdlc/projects/p1/binding", binding)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+}

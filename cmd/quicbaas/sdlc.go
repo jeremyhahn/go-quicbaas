@@ -506,6 +506,7 @@ func formatSDLCBinding(binding *sdlcSDK.ProjectBinding, format string, w io.Writ
 		fmt.Fprintf(tw, "Forge:\t%s %s/%s (%s)\n", binding.Forge.Type, binding.Forge.Owner, binding.Forge.Repo, orDash(binding.Forge.BaseURL))
 		fmt.Fprintf(tw, "Trigger label:\t%s\n", orDash(binding.Forge.TriggerLabel))
 		fmt.Fprintf(tw, "Strategy:\t%s\n", orDash(binding.Strategy))
+		fmt.Fprintf(tw, "Profile:\t%s\n", profileLabel(binding.Profile))
 		fmt.Fprintf(tw, "Worker:\t%s\n", workerLabel(binding.Worker))
 		fmt.Fprintf(tw, "Worker prompt append:\t%s\n", promptAppendLabel(binding.WorkerPromptAppend))
 		fmt.Fprintf(tw, "Verification:\t%s\n", orDash(strings.Join(binding.Verification, "; ")))
@@ -631,6 +632,14 @@ func yesNo(b bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+// profileLabel names the binding's SDLC profile; empty is the standard one.
+func profileLabel(profile string) string {
+	if profile == "" {
+		return "standard"
+	}
+	return profile
 }
 
 // triageLabel renders the triage row, saying plainly when it falls back to the

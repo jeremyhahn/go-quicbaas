@@ -212,6 +212,65 @@ func TestGitLabBackend_SendsBearerToken(t *testing.T) {
 	}
 }
 
+// TestForgeHTTP_TokenFuncResolvesEveryRequest proves an adapter built on a
+// ForgeTokenFunc sends the token its source answers at the time of each
+// request: once the first token expires and the source mints a new one, the
+// same adapter authenticates with the new token, never the one it was built
+// with. A source that fails or answers nothing sends no request.
+func TestForgeHTTP_TokenFuncResolvesEveryRequest(t *testing.T) {
+	stub := newForgeStub(t, gitlabAPIRoot, "gitlab")
+	stub.escaped = true
+	stub.json("GET /user", http.StatusOK, map[string]any{"id": 9, "username": "agent-widgets"})
+
+	tokens := []string{"glpat-before-expiry", "glpat-after-expiry"}
+	calls := 0
+	var sourceErr error
+	backend, err := NewGitLabBackend(GitLabConfig{
+		BaseURL: stub.api(),
+		TokenFunc: func(context.Context) (string, error) {
+			if sourceErr != nil {
+				return "", sourceErr
+			}
+			token := tokens[min(calls, len(tokens)-1)]
+			calls++
+			return token, nil
+		},
+		Waiter: &immediateWaiter{},
+	})
+	if err != nil {
+		t.Fatalf("NewGitLabBackend with only a TokenFunc: %v", err)
+	}
+
+	for range 2 {
+		if _, err := backend.AuthenticatedUser(context.Background()); err != nil {
+			t.Fatalf("AuthenticatedUser: %v", err)
+		}
+	}
+	sent := stub.requests("GET /user")
+	if len(sent) != 2 {
+		t.Fatalf("requests = %d, want 2", len(sent))
+	}
+	for i, want := range tokens {
+		if got := sent[i].Header.Get("Authorization"); got != "Bearer "+want {
+			t.Errorf("request %d Authorization = %q, want the token the source answered then (%q)", i, got, want)
+		}
+	}
+
+	sourceErr = errors.New("token command exited 1")
+	if _, err := backend.AuthenticatedUser(context.Background()); err == nil {
+		t.Fatal("AuthenticatedUser succeeded with a failing token source")
+	}
+	sourceErr = nil
+	tokens = []string{""}
+	calls = 0
+	if _, err := backend.AuthenticatedUser(context.Background()); !errors.Is(err, errEmptyForgeToken) {
+		t.Fatalf("AuthenticatedUser with an empty token = %v, want errEmptyForgeToken", err)
+	}
+	if got := len(stub.requests("GET /user")); got != 2 {
+		t.Errorf("requests = %d after the source failed, want still 2 (nothing sent unauthenticated)", got)
+	}
+}
+
 // TestGitLabBackend_AuthenticatedUser_Refusals proves a 401 is a typed backend
 // error that never carries the token, and an anonymous answer is refused.
 func TestGitLabBackend_AuthenticatedUser_Refusals(t *testing.T) {

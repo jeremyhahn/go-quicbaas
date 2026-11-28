@@ -158,6 +158,8 @@ export interface ProjectBinding {
   triage?: AgentRef;
   /** Prompt material appended after the triage charter for every triage session. At most 64 KiB. */
   triage_prompt_append?: string;
+  /** The SDLC profile the binding is held to: empty for the standard profile, or "ai-native". */
+  profile?: string;
   /** Commands that must pass before the work is offered for review, in order. */
   verification?: string[];
   review: ReviewPolicy;

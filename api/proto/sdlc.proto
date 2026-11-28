@@ -300,6 +300,11 @@ message ProjectBinding {
     // session of that slot. At most 64 KiB each.
     string worker_prompt_append       = 20;
     string triage_prompt_append       = 21;
+
+    // profile is the SDLC profile the binding is held to: empty for the
+    // standard profile, or "ai-native". A bind replaces the whole record, so
+    // a transport that did not carry it would drop the profile on a rebind.
+    string profile                    = 22;
 }
 
 // PullRequest is the pull request an attempt opened.

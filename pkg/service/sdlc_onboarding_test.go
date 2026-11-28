@@ -411,3 +411,45 @@ func TestSDLCService_ConformanceChangesNothing(t *testing.T) {
 		t.Error("a read-only report wrote labels")
 	}
 }
+
+// TestSDLCService_BindRefusesAWebhookBindingOnAPollOnlyNodeBeforeChangingAnything:
+// a node with no public URL refuses a binding that names a webhook secret, and
+// the refusal leaves nothing behind — no stored binding, no autonomy switched
+// on, no labels created. Refused only when the webhook was provisioned, the
+// binding was already stored and active.
+func TestSDLCService_BindRefusesAWebhookBindingOnAPollOnlyNodeBeforeChangingAnything(t *testing.T) {
+	rig := newSDLCServiceRigAt(t, "")
+	ctx := context.Background()
+
+	_, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{})
+	if !errors.Is(err, sdlc.ErrWebhookPublicURLMissing) {
+		t.Fatalf("Bind = %v, want ErrWebhookPublicURLMissing", err)
+	}
+	if _, err := rig.store.GetBinding(ctx, sdlcTestTenant, sdlcTestProject); err == nil {
+		t.Fatal("the refused binding was stored")
+	}
+	if rig.projects.projects[sdlcTestProject].Autonomous {
+		t.Fatal("the refused binding switched autonomy on")
+	}
+	if names := rig.forge.LabelNames(); len(names) != 0 {
+		t.Fatalf("labels = %v, want none created for a refused binding", names)
+	}
+	if hooks := rig.forge.HookURLs(); len(hooks) != 0 {
+		t.Fatalf("hooks = %v, want none", hooks)
+	}
+}
+
+// TestSDLCService_BindAPollOnlyBindingOnAPollOnlyNode: the same node binds a
+// binding that names no webhook secret, and provisions no delivery for it.
+func TestSDLCService_BindAPollOnlyBindingOnAPollOnlyNode(t *testing.T) {
+	rig := newSDLCServiceRigAt(t, "")
+	binding := rig.binding()
+	binding.Forge.WebhookSecretRef = ""
+
+	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding, BindOptions{}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if hooks := rig.forge.HookURLs(); len(hooks) != 0 {
+		t.Fatalf("hooks = %v, want none for a poll-only binding", hooks)
+	}
+}

@@ -3224,7 +3224,12 @@ how the third seam is reached for a workflow job:
 | Workflow | `WorkflowSettings.Hooks` | Selects the hook set per workflow; see the table above. |
 
 Per-moment bounds are `orchestration.stage_timeouts.{prepare,reviewable,complete,cleanup,blocked}`;
-a zero bound takes `orchestration.DefaultStageTimeouts`.
+a zero bound takes `orchestration.DefaultStageTimeouts`. The operator's policy
+(these bounds, the `ExecutionGuard` allowlist and `agent_config_dir`) has one
+source: `JobRun.Policy` reads it from the agent service the job runs over
+(`JobLifecyclePolicyProvider`, which the daemon's agent service satisfies), and
+validators are judged through the engine's registry. `JobRunConfig` carries
+neither (#724).
 
 **A job that is an attempt at a Task.** `JobConfig.TaskID` names the Task the
 job is an attempt at, and it is an accounting relationship only: it is the

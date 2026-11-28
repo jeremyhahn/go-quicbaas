@@ -188,6 +188,9 @@ func (m *mergeResult) Note() string {
 // have verification judge a tree it never counted — the same confusion one
 // layer down.
 func (p *publisher) FetchBase(plan publishPlan) (string, error) {
+	if err := p.refreshCredential(); err != nil {
+		return "", err
+	}
 	args := credentialHelperArgs(p.project.Git.RepoURL)
 	args = append(args, "fetch", gitRemote, plan.Base)
 	if _, err := p.git(plan, args...); err != nil {

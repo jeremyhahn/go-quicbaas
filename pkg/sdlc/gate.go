@@ -63,6 +63,11 @@ const (
 	// GateBlockedAuthorUnknown is an independence rule with no author family.
 	GateBlockedAuthorUnknown GateBlockReason = "author_unknown"
 
+	// GateBlockedSelfApproval is an approval from the forge account that
+	// opened the pull request. It is a refusal, not a wait: the author's own
+	// approval never counts, so only another reviewer can clear it.
+	GateBlockedSelfApproval GateBlockReason = "self_approval"
+
 	// GateBlockedReviewerNotIndependent is an approval from the author's family.
 	GateBlockedReviewerNotIndependent GateBlockReason = "reviewer_not_independent"
 
@@ -122,6 +127,12 @@ type GateInput struct {
 	// a pool — because any of them may have written the change. An empty
 	// family among them is an author nobody can name.
 	AuthorModelFamilies []string
+
+	// AuthorLogin is the forge account that opened the pull request. An
+	// approval from it is never counted, whether or not independence is
+	// required. Empty means the opener is not known, and nothing is excluded
+	// on that ground.
+	AuthorLogin string
 
 	// Draft is the author's own statement that the change is unfinished.
 	Draft bool
@@ -212,9 +223,15 @@ func EvaluateReviewGate(in GateInput) GateDecision {
 		}
 	}
 
-	independent, excluded := countIndependentApprovals(verdicts, in.Policy, in.AuthorModelFamilies)
+	independent, excluded, self := countIndependentApprovals(verdicts, in.Policy, in.AuthorModelFamilies, in.AuthorLogin)
 	decision.Approvals = independent
 	if independent < in.Policy.RequiredApprovals {
+		if self > 0 {
+			decision.Reason = GateBlockedSelfApproval
+			decision.Detail = "an approval came from " + strings.TrimSpace(in.AuthorLogin) +
+				", the account that opened the pull request, and is not counted"
+			return decision
+		}
 		if excluded > 0 {
 			decision.Reason = GateBlockedReviewerNotIndependent
 			decision.Detail = strconv.Itoa(excluded) +
@@ -348,9 +365,15 @@ func runsExcludingContexts(runs []ForgeCheckRun, contexts []string) []ForgeCheck
 
 // countIndependentApprovals counts approvals satisfying the independence
 // policy and how many it excluded, so the caller names the right refusal.
-func countIndependentApprovals(verdicts []ReviewRecord, policy ReviewPolicy, authorFamilies []string) (independent, excluded int) {
+func countIndependentApprovals(verdicts []ReviewRecord, policy ReviewPolicy, authorFamilies []string, authorLogin string) (independent, excluded, self int) {
+	author := strings.TrimSpace(authorLogin)
 	for _, review := range verdicts {
 		if review.Verdict != VerdictApprove {
+			continue
+		}
+		// The author's own approval never counts, independence or not.
+		if author != "" && strings.EqualFold(strings.TrimSpace(review.Reviewer), author) {
+			self++
 			continue
 		}
 		if !policy.RequireIndependentReviewer {
@@ -363,7 +386,7 @@ func countIndependentApprovals(verdicts []ReviewRecord, policy ReviewPolicy, aut
 		}
 		independent++
 	}
-	return independent, excluded
+	return independent, excluded, self
 }
 
 // latestVerdictsForHead reduces the reviews bound to one head to each
@@ -642,7 +665,7 @@ func evaluateChecksFailure(checks []CheckRecord, headSHA string, now time.Time, 
 		}
 		// A skipped check is not a failure to triage, and cifault would refuse
 		// the conclusion; it is passed over here as the gate passes over it.
-		if check.Status != CheckSuccess && check.Status != CheckSkipped {
+		if checkFailed(check.Status) {
 			failure.Failed = append(failure.Failed, check)
 		}
 	}
@@ -654,6 +677,12 @@ func evaluateChecksFailure(checks []CheckRecord, headSHA string, now time.Time, 
 	}
 	sort.SliceStable(failure.Failed, func(i, j int) bool { return failure.Failed[i].Name < failure.Failed[j].Name })
 	return failure, true
+}
+
+// checkFailed reports whether a finished check's status is a failure to act
+// on: anything but a success or a skip.
+func checkFailed(status CheckStatus) bool {
+	return status != CheckSuccess && status != CheckSkipped
 }
 
 // Findings renders the failure for the worker: what failed, what this module

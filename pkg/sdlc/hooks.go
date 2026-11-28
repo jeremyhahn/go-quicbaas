@@ -266,6 +266,12 @@ func branchPlanFor(a *attempt, issue *ForgeIssue) (BranchPlan, error) {
 	if err != nil {
 		return BranchPlan{}, err
 	}
+	// THE AI-NATIVE PROFILE HAS NO CARVE-OUT. Its chain promises a pull
+	// request, review, checks and train for every change, so a strategy's
+	// direct-push exemption does not apply under it.
+	if a.binding.Profile == ProfileAINative {
+		plan.RequiresPullRequest = true
+	}
 	return pinnedBranch(plan, a.task).Resolve(a.project.Git.DefaultBranch), nil
 }
 
@@ -621,14 +627,26 @@ func (h *Hooks) Complete(ctx context.Context, job *orchestration.JobContext) err
 	if err != nil {
 		return err
 	}
-	if landed != nil {
+	switch {
+	case landed != nil:
 		if err := h.closeLanded(ctx, a, pr, landed); err != nil {
 			return err
 		}
 		if err := h.deleteLandedBranch(ctx, a, delivery); err != nil {
 			return err
 		}
-	} else if !pr.Merged {
+		trainPR := landed.TrainPullRequest
+		if trainPR <= 0 {
+			trainPR = pr.Number
+		}
+		if err := h.confirmClosed(ctx, a, trainPR, landed.MergeSHA); err != nil {
+			return err
+		}
+	case pr.Merged:
+		if err := h.confirmClosed(ctx, a, pr.Number, pr.MergeSHA); err != nil {
+			return err
+		}
+	default:
 		if delivery.HeadSHA == "" {
 			return &HeadMovedError{Subject: subject, Reviewed: "", Current: pr.HeadSHA}
 		}
@@ -656,6 +674,17 @@ func (h *Hooks) Complete(ctx context.Context, job *orchestration.JobContext) err
 		if err := h.merge(ctx, a.forge, a.repo, pr.Number, spec, delivery.HeadSHA); err != nil {
 			return err
 		}
+		merged, err := a.forge.GetPullRequest(ctx, a.repo, pr.Number)
+		if err != nil {
+			return err
+		}
+		mergeSHA := ""
+		if merged != nil {
+			mergeSHA = merged.MergeSHA
+		}
+		if err := h.confirmClosed(ctx, a, pr.Number, mergeSHA); err != nil {
+			return err
+		}
 	}
 	if err := h.updateDelivery(ctx, job, delivery, func(d *Delivery) {
 		d.PullRequest.State = PullRequestMerged
@@ -678,6 +707,69 @@ func (h *Hooks) Complete(ctx context.Context, job *orchestration.JobContext) err
 		return h.trains.DeleteTrainEntry(ctx, job.TenantID, job.ProjectID, job.TaskID)
 	}
 	return nil
+}
+
+// issueClosedMarker tags the comment confirmClosed leaves on an issue it
+// closes itself, so a retried Complete finds it and does not post again.
+const issueClosedMarker = "quicbaas-sdlc:issue-closed"
+
+// confirmClosed reads back every issue the landed change closes and closes
+// any the forge left open.
+//
+// THE CLOSING KEYWORDS ARE A REQUEST, NOT A GUARANTEE: a forge ignores them
+// for a non-default target branch, under a project setting, or when it drops
+// the squash body that carried them. The issue is read back after the merge,
+// and one still open is closed with a comment saying where its change landed.
+// pr is the pull request that landed the change (the train's for a train
+// landing), and mergeSHA the commit on the target, empty when unknown.
+//
+// IDEMPOTENT: a closed issue is skipped, and the comment is posted once per
+// pull request, so a retried Complete neither comments nor closes twice.
+func (h *Hooks) confirmClosed(ctx context.Context, a *attempt, pr int, mergeSHA string) error {
+	marker := issueClosedMarker + " pr=" + strconv.Itoa(pr)
+	for _, number := range a.closes() {
+		issue, err := a.forge.GetIssue(ctx, a.repo, number)
+		if err != nil {
+			return err
+		}
+		if issue == nil {
+			return &NotFoundError{Entity: "issue", ID: IssueRefString(a.repo, number)}
+		}
+		if strings.EqualFold(issue.State, "closed") {
+			continue
+		}
+		comments, err := a.forge.ListIssueComments(ctx, a.repo, number)
+		if err != nil {
+			return err
+		}
+		posted := false
+		for _, comment := range comments {
+			if strings.Contains(comment.Body, marker) {
+				posted = true
+				break
+			}
+		}
+		if !posted {
+			if _, err := a.forge.CommentOnIssue(ctx, a.repo, number, issueClosedComment(pr, mergeSHA)); err != nil {
+				return err
+			}
+		}
+		if err := a.forge.CloseIssue(ctx, a.repo, number); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// issueClosedComment is the comment confirmClosed leaves on an issue the
+// forge did not close.
+func issueClosedComment(pr int, mergeSHA string) string {
+	line := "The change landed in #" + strconv.Itoa(pr)
+	if mergeSHA != "" {
+		line += " at " + shortSHA(mergeSHA)
+	}
+	return "<!-- " + issueClosedMarker + " pr=" + strconv.Itoa(pr) + " -->\n" +
+		line + ", and the forge left this issue open, so it is closed here.\n"
 }
 
 // merge issues the merge, retrying only while the forge reports itself

@@ -202,7 +202,7 @@ func (a *IssueAdopter) Adopt(ctx context.Context, tenantID string, req AdoptIssu
 			Ref:  IssueRefString(repo, issue.Number),
 			URL:  issue.URL,
 		},
-		Priority:  inputs.ComputedFor(issue.Labels),
+		Priority:  inputs.ComputedForIssue(issue),
 		Runner:    JobRunnerName,
 		AutoSpawn: true,
 		Metadata:  metadata,

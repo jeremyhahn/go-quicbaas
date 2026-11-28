@@ -334,6 +334,24 @@ func TestFormatSDLC_EveryFormat(t *testing.T) {
 	assert.Equal(t, "-", boolWord(false))
 }
 
+func TestFormatSDLCBinding_NamesTheProfile(t *testing.T) {
+	mc := &mockSDLCClient{}
+	binding, err := mc.Binding(context.Background(), "t", "proj-1")
+	require.NoError(t, err)
+	binding.Profile = ""
+	var out bytes.Buffer
+	require.NoError(t, formatSDLCBinding(binding, "table", &out))
+	assert.Regexp(t, `Profile:\s+standard`, out.String())
+
+	binding.Profile = "ai-native"
+	out.Reset()
+	require.NoError(t, formatSDLCBinding(binding, "table", &out))
+	assert.Regexp(t, `Profile:\s+ai-native`, out.String())
+	out.Reset()
+	require.NoError(t, formatSDLCBinding(binding, "json", &out))
+	assert.Contains(t, out.String(), `"profile": "ai-native"`)
+}
+
 func TestSDLCCommand_Shape(t *testing.T) {
 	cmd := newSDLCCommand()
 	names := map[string]bool{}

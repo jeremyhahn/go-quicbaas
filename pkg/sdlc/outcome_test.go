@@ -15,7 +15,9 @@ package sdlc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -126,7 +128,7 @@ func TestRenderOutcome_ExhaustedCarriesTheEvidence(t *testing.T) {
 	for _, want := range []string{
 		"### This task has spent its attempt budget",
 		"**Outcome:** `exhausted`",
-		"> sdlc: task task-1 produced no changes in /workspace/api",
+		"> " + noRunSummaryEvidence,
 		"**Attempt:** 3 of 3",
 		"**Attempt history:** `job-1`, `job-2`, `job-3`",
 		"**Labels:** `task:ready` → `factory:escalated`",
@@ -234,8 +236,8 @@ func TestRenderOutcome_CarriesTheTypedCondition(t *testing.T) {
 // attempt's result — which is where the worker's final word lands.
 func TestConclusionEvidence_PrefersThePark(t *testing.T) {
 	task := exhaustedTask()
-	if got := conclusionEvidence(task); got != "sdlc: task task-1 produced no changes in /workspace/api" {
-		t.Fatalf("failed task evidence: %q", got)
+	if got := conclusionEvidence(task); got != "the run recorded no public summary; see the task's audit trail" {
+		t.Fatalf("a failed task with no run summary must not quote its output: %q", got)
 	}
 	task.BlockedReason = "  the pipeline is red  "
 	if got := conclusionEvidence(task); got != "the pipeline is red" {
@@ -285,7 +287,7 @@ func TestHooks_TaskConcluded_ExhaustedPostsOnceAndSwapsTheLabel(t *testing.T) {
 		t.Fatalf("expected exactly one comment, got %d", len(comments))
 	}
 	for _, want := range []string{"### This task has spent its attempt budget", "**Outcome:** `exhausted`",
-		"produced no changes", "`job-1`, `job-2`, `job-3`", blockedMarker(task.ID, 3, OutcomeExhausted)} {
+		noRunSummaryEvidence, "`job-1`, `job-2`, `job-3`", blockedMarker(task.ID, 3, OutcomeExhausted)} {
 		if !strings.Contains(comments[0].Body, want) {
 			t.Fatalf("comment lacks %q:\n%s", want, comments[0].Body)
 		}
@@ -302,6 +304,103 @@ func TestHooks_TaskConcluded_ExhaustedPostsOnceAndSwapsTheLabel(t *testing.T) {
 	}
 	if artifacts[0].Metadata["outcome"] != "exhausted" || artifacts[0].Ref.Path != task.Source.URL {
 		t.Fatalf("the record does not name the write: %+v", artifacts[0])
+	}
+}
+
+// runSummaryArtifact is the inline run_summary artifact of one attempt.
+func runSummaryArtifact(t *testing.T, summary RunSummary) orchestration.Artifact {
+	t.Helper()
+	content, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return orchestration.Artifact{
+		Kind:     orchestration.ArtifactKindInline,
+		Name:     orchestration.ArtifactNameForAttempt(runSummaryArtifactName, summary.Attempt),
+		MIMEType: "application/json",
+		Size:     int64(len(content)),
+		Content:  content,
+		Metadata: map[string]string{"attempt": strconv.Itoa(summary.Attempt), "outcome": string(summary.Outcome)},
+	}
+}
+
+func TestConclusionEvidence_PrefersTheRunSummaryOverTheResult(t *testing.T) {
+	task := exhaustedTask()
+	second := summarizeRun(runSummaryInput{TaskID: task.ID, JobID: "job-2", Attempt: 2, Err: &NoChangesError{WorkDir: "/workspace/api"}})
+	first := summarizeRun(runSummaryInput{TaskID: task.ID, JobID: "job-1", Attempt: 1, Err: errors.New("boom")})
+	task.OutputArtifacts = append(task.OutputArtifacts, runSummaryArtifact(t, second), runSummaryArtifact(t, first))
+
+	got := conclusionEvidence(task)
+	if got != second.Render() {
+		t.Fatalf("evidence = %q, want the latest attempt's summary %q", got, second.Render())
+	}
+	if !strings.Contains(got, "cause: `no_changes`") || strings.Contains(got, "/workspace/api") {
+		t.Fatalf("evidence = %q, want the summary and not the result output", got)
+	}
+
+	task.BlockedReason = "waiting on an owner ruling"
+	if got := conclusionEvidence(task); got != task.BlockedReason {
+		t.Fatalf("evidence = %q, want the park reason", got)
+	}
+}
+
+func TestHooks_TaskConcluded_PostsTheRunSummaryNotTheOutput(t *testing.T) {
+	rig := concludedRig(t)
+	task := exhaustedTask()
+	task.Result.Output = "sdlc: push to https://bot:hunter2@git.example.com failed with qbx_live_9f8e7d6c5b4a3f2e1d0c"
+	summary := summarizeRun(runSummaryInput{
+		TaskID: task.ID, JobID: "job-3", Attempt: 3, Err: &PublishCommandError{Command: "push origin", ExitCode: 1, Output: task.Result.Output},
+	})
+	task.OutputArtifacts = append(task.OutputArtifacts, runSummaryArtifact(t, summary))
+	rig.tasks.replace(task)
+
+	err := rig.hooks.TaskConcluded(context.Background(), orchestration.TaskConclusion{
+		TenantID: testTenant, Reason: orchestration.TaskConcludedBudgetExhausted, Task: task, JobID: "job-3",
+	})
+	if err != nil {
+		t.Fatalf("TaskConcluded: %v", err)
+	}
+	comments := rig.forge.commentsOn(25)
+	if len(comments) != 1 {
+		t.Fatalf("expected exactly one comment, got %d", len(comments))
+	}
+	body := comments[0].Body
+	if !strings.Contains(body, "outcome: `failed`") {
+		t.Fatalf("the comment does not quote the run summary:\n%s", body)
+	}
+	for _, private := range []string{"https://bot:hunter2@git.example.com", "qbx_live_9f8e7d6c5b4a3f2e1d0c"} {
+		if strings.Contains(body, private) {
+			t.Fatalf("the comment carries %q:\n%s", private, body)
+		}
+	}
+}
+
+// TestHooks_TaskConcluded_WithNoSummaryPostsNoOutput: a task that concluded
+// with no run summary posts the fixed line, never its raw result output.
+func TestHooks_TaskConcluded_WithNoSummaryPostsNoOutput(t *testing.T) {
+	rig := concludedRig(t)
+	task := exhaustedTask()
+	task.Result.Output = "sdlc: push to https://bot:hunter2@git.example.com failed with qbx_live_9f8e7d6c5b4a3f2e1d0c"
+	rig.tasks.replace(task)
+
+	err := rig.hooks.TaskConcluded(context.Background(), orchestration.TaskConclusion{
+		TenantID: testTenant, Reason: orchestration.TaskConcludedBudgetExhausted, Task: task, JobID: "job-3",
+	})
+	if err != nil {
+		t.Fatalf("TaskConcluded: %v", err)
+	}
+	comments := rig.forge.commentsOn(25)
+	if len(comments) != 1 {
+		t.Fatalf("expected exactly one comment, got %d", len(comments))
+	}
+	body := comments[0].Body
+	if !strings.Contains(body, "the run recorded no public summary; see the task's audit trail") {
+		t.Fatalf("the comment lacks the fixed line:\n%s", body)
+	}
+	for _, private := range []string{"https://bot:hunter2@git.example.com", "qbx_live_9f8e7d6c5b4a3f2e1d0c", "sdlc: push"} {
+		if strings.Contains(body, private) {
+			t.Fatalf("the comment carries %q:\n%s", private, body)
+		}
 	}
 }
 

@@ -84,6 +84,10 @@ var (
 	// the named secret resolved empty.
 	ErrWebhookSecretMissing = errors.New("sdlc: no webhook verification secret is configured")
 
+	// ErrWebhookPublicURLMissing indicates a binding asks for webhook
+	// deliveries on a node with no public webhook URL.
+	ErrWebhookPublicURLMissing = errors.New("sdlc: this node has no webhook public URL")
+
 	// ErrWebhookRepoMismatch indicates a delivery describes a repository other
 	// than the one the binding names.
 	// ErrWebhookRepoMismatch indicates a delivery describes a repository other
@@ -113,6 +117,19 @@ var (
 	// ErrUnsignedCommit is returned when a commit the attempt would publish
 	// is not signed by the attempt's signing key.
 	ErrUnsignedCommit = errors.New("sdlc: an outgoing commit is not signed by the attempt's key")
+
+	// ErrUntracedBrief is returned when a lane brief is asked for from a
+	// spec that names neither a SPEC row nor the owner's words.
+	ErrUntracedBrief = errors.New("sdlc: a lane brief names neither a SPEC row nor the owner's words")
+
+	// ErrBriefIncomplete is returned when a lane brief lacks a line the
+	// worker needs: turn budget, file map, expected edit, acceptance, or a
+	// resume reason on a resume.
+	ErrBriefIncomplete = errors.New("sdlc: a lane brief is missing a required line")
+
+	// ErrAttributionTrailer is returned when a commit the attempt would
+	// publish carries an AI attribution trailer in its message.
+	ErrAttributionTrailer = errors.New("sdlc: an outgoing commit carries an AI attribution trailer")
 
 	// ErrDeliveryAbsent indicates a lifecycle moment ran for a task whose
 	// attempt has no Delivery record, so Prepare never completed.
@@ -192,6 +209,25 @@ func (e *InvalidInputError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *InvalidInputError) Unwrap() error { return ErrInvalidInput }
+
+// ProfileConflictError reports a binding whose settings leave a link of its
+// SDLC profile's artifact chain off. It is a refused input, so it unwraps
+// to ErrInvalidInput and every transport answers it as one.
+type ProfileConflictError struct {
+	Profile SDLCProfile
+	Stage   ArtifactStage
+	Field   string
+	Want    string
+}
+
+// Error implements the error interface.
+func (e *ProfileConflictError) Error() string {
+	return "sdlc: invalid " + e.Field + ": the " + string(e.Profile) + " profile requires " + e.Want +
+		" (artifact chain link " + string(e.Stage) + ")"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *ProfileConflictError) Unwrap() error { return ErrInvalidInput }
 
 // RepoURLRefusedError reports a repository URL outside the operator's
 // allowlist of forge hosts.
@@ -492,6 +528,22 @@ func (e *WebhookSecretMissingError) Error() string {
 // Unwrap returns the sentinel for errors.Is support.
 func (e *WebhookSecretMissingError) Unwrap() error { return ErrWebhookSecretMissing }
 
+// WebhookPublicURLMissingError reports a binding that asks for webhook
+// deliveries on a node that takes none: sdlc.webhook.public_url is unset, so
+// there is no origin a forge could deliver to (go-quicbaas#2225).
+type WebhookPublicURLMissingError struct {
+	ProjectID string
+}
+
+// Error implements the error interface.
+func (e *WebhookPublicURLMissingError) Error() string {
+	return "sdlc: project " + e.ProjectID + " names a webhook secret, but this node takes no webhook deliveries: " +
+		"set sdlc.webhook.public_url, or drop the binding's webhook secret to make it poll-only"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *WebhookPublicURLMissingError) Unwrap() error { return ErrWebhookPublicURLMissing }
+
 // WebhookRepoMismatchError reports a delivery about a repository the binding
 // does not name.
 type WebhookRepoMismatchError struct {
@@ -682,6 +734,58 @@ func (e *UnsignedCommitError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *UnsignedCommitError) Unwrap() error { return ErrUnsignedCommit }
+
+// UntracedBriefError reports a lane brief spec that traces to neither a
+// SPEC row nor the owner's words, so no brief is rendered from it.
+type UntracedBriefError struct {
+	// Objective is the spec's objective, naming the brief refused.
+	Objective string
+}
+
+// Error implements the error interface.
+func (e *UntracedBriefError) Error() string {
+	return "sdlc: lane brief " + strconv.Quote(e.Objective) + " names neither a SPEC row nor the owner's words"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *UntracedBriefError) Unwrap() error { return ErrUntracedBrief }
+
+// MissingBriefLineError reports every required line a lane brief lacks, in
+// the order ValidateLaneBrief checks them.
+type MissingBriefLineError struct {
+	// Missing names each gap, e.g. "Turn budget" or "Expected edit".
+	Missing []string
+}
+
+// Error implements the error interface.
+func (e *MissingBriefLineError) Error() string {
+	return "sdlc: lane brief is missing a required line: " + strings.Join(e.Missing, ", ")
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *MissingBriefLineError) Unwrap() error { return ErrBriefIncomplete }
+
+// AttributionTrailerError reports an outgoing commit whose message carries an
+// AI attribution trailer (a Co-Authored-By naming an AI tool, or a "Generated
+// with" footer). The push is refused before it reaches the forge.
+type AttributionTrailerError struct {
+	TaskID string
+
+	// Commit is the first outgoing commit whose message matched.
+	Commit string
+
+	// Line is the offending message line, trimmed.
+	Line string
+}
+
+// Error implements the error interface.
+func (e *AttributionTrailerError) Error() string {
+	return "sdlc: task " + e.TaskID + ": commit " + e.Commit +
+		" carries an AI attribution trailer: " + strconv.Quote(e.Line)
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *AttributionTrailerError) Unwrap() error { return ErrAttributionTrailer }
 
 // TaskNotForgeIssueError reports a task the module was asked to act on that
 // did not originate from a forge issue.

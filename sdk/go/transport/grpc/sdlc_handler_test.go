@@ -259,3 +259,13 @@ func TestSDLCBindingConverters_SlotAppendsSurviveTheWire(t *testing.T) {
 		t.Fatalf("the converters invented an append: %+v", empty)
 	}
 }
+
+func TestSDLCHandler_ProfileSurvivesTheWire(t *testing.T) {
+	back := sdlcBindingFromProto(sdlcBindingToProto(&sdlc.ProjectBinding{ProjectID: "p1", Profile: "ai-native"}))
+	if back.Profile != "ai-native" {
+		t.Fatalf("profile = %q, want ai-native: a rebind through gRPC would drop it", back.Profile)
+	}
+	if empty := sdlcBindingFromProto(sdlcBindingToProto(&sdlc.ProjectBinding{ProjectID: "p2"})); empty.Profile != "" {
+		t.Fatalf("the converters invented a profile: %q", empty.Profile)
+	}
+}

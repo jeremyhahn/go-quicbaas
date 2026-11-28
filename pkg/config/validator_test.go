@@ -1381,7 +1381,6 @@ func TestValidateSDLC_RefusesTheZerosThatMeanNever(t *testing.T) {
 		"page limit":           {func(c *SDLCConfig) { c.IssuePageLimit = 0 }, "sdlc.issue_page_limit"},
 		"merge attempts":       {func(c *SDLCConfig) { c.MergeAttempts = 0 }, "sdlc.merge_attempts"},
 		"webhook body":         {func(c *SDLCConfig) { c.Webhook.MaxBody = 0 }, "sdlc.webhook.max_body"},
-		"empty command":        {func(c *SDLCConfig) { c.VerificationCommands = []string{"make test", " "} }, "sdlc.verification_commands[1]"},
 		"empty host":           {func(c *SDLCConfig) { c.RepoHosts = []string{""} }, "sdlc.repo_hosts[0]"},
 		"negative retries":     {func(c *SDLCConfig) { c.Surfacing.RetryAttempts = -1 }, "sdlc.surfacing.retry_attempts"},
 		"negative interval":    {func(c *SDLCConfig) { c.Surfacing.RetryInterval = -1 }, "sdlc.surfacing.retry_interval"},
@@ -1398,6 +1397,49 @@ func TestValidateSDLC_RefusesTheZerosThatMeanNever(t *testing.T) {
 			err := Validate(cfg)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.field)
+		})
+	}
+}
+
+// TestValidateSDLC_EmptyPublicURLMeansPollOnly proves an enabled module with
+// no public URL loads: the node takes no webhook deliveries and onboards only
+// poll-only bindings (go-quicbaas#2225).
+func TestValidateSDLC_EmptyPublicURLMeansPollOnly(t *testing.T) {
+	for name, public := range map[string]string{"absent": "", "blank": "   "} {
+		t.Run(name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tmp := t.TempDir()
+			cfg.Storage.DataDir = tmp
+			cfg.Storage.WALDir = filepath.Join(tmp, "wal")
+			cfg.SDLC.Enabled = true
+			cfg.SDLC.Webhook.PublicURL = public
+
+			err := Validate(cfg)
+			if err != nil {
+				assert.NotContains(t, err.Error(), "sdlc.webhook.public_url")
+			}
+		})
+	}
+}
+
+// TestValidateSDLC_MalformedPublicURLIsStillRefused proves that allowing an
+// empty public URL loosened nothing else: a set but malformed one is refused.
+func TestValidateSDLC_MalformedPublicURLIsStillRefused(t *testing.T) {
+	for name, public := range map[string]string{
+		"wrong scheme": "ftp://x",
+		"query":        "https://x?y=1",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tmp := t.TempDir()
+			cfg.Storage.DataDir = tmp
+			cfg.Storage.WALDir = filepath.Join(tmp, "wal")
+			cfg.SDLC.Enabled = true
+			cfg.SDLC.Webhook.PublicURL = public
+
+			err := Validate(cfg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "sdlc.webhook.public_url")
 		})
 	}
 }
