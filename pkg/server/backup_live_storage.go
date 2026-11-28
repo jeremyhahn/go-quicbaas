@@ -18,6 +18,9 @@ import (
 	"context"
 	"sort"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
@@ -112,6 +115,75 @@ func (a *backupLiveStorage) SetWithContext(ctx context.Context, key, value []byt
 		return err
 	}
 	return kv.Put(ctx, string(key), value)
+}
+
+// Restore batch bounds. Each chunk WriteBatch sends is one Raft proposal,
+// and both bounds keep it well under the QuicRaft entry limit (see
+// batchProposalMaxBytes in pkg/service).
+const (
+	backupRestoreBatchMaxBytes = 2 << 20
+	backupRestoreBatchMaxOps   = 512
+	// backupRestoreOpOverhead is the per-op framing allowance counted
+	// against backupRestoreBatchMaxBytes.
+	backupRestoreOpOverhead = 64
+)
+
+// backupBatchExecutor is the kv store capability that applies many ops as
+// one atomic qrdb batch.
+type backupBatchExecutor interface {
+	ExecuteBatch(ctx context.Context, ops []qrdbtransport.Op) error
+}
+
+var _ backup.BatchWriter = (*backupLiveStorage)(nil)
+
+// WriteBatch writes kvs to the live keyspace. When the kv store can execute
+// qrdb batches it sends them in size-bounded chunks, one proposal each;
+// otherwise it puts them one by one. It stops at the first error or when
+// ctx is done.
+func (a *backupLiveStorage) WriteBatch(ctx context.Context, kvs []backup.KeyValue) error {
+	kv, err := a.resolve()
+	if err != nil {
+		return err
+	}
+
+	exec, ok := kv.(backupBatchExecutor)
+	if !ok {
+		for _, k := range kvs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := kv.Put(ctx, string(k.Key), k.Value); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	flush := func(ops []qrdbtransport.Op) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return exec.ExecuteBatch(ctx, ops)
+	}
+
+	ops := make([]qrdbtransport.Op, 0, min(len(kvs), backupRestoreBatchMaxOps))
+	size := 0
+	for _, k := range kvs {
+		opSize := len(k.Key) + len(k.Value) + backupRestoreOpOverhead
+		if len(ops) > 0 && (len(ops) >= backupRestoreBatchMaxOps || size+opSize > backupRestoreBatchMaxBytes) {
+			if err := flush(ops); err != nil {
+				return err
+			}
+			ops = make([]qrdbtransport.Op, 0, min(len(kvs), backupRestoreBatchMaxOps))
+			size = 0
+		}
+		ops = append(ops, qrdbtransport.Op{Type: qrdbtransport.OpPut, Key: k.Key, Value: k.Value})
+		size += opSize
+	}
+	if len(ops) > 0 {
+		return flush(ops)
+	}
+	return nil
 }
 
 // Batch implements interfaces.Storage. Writes are staged and applied in
