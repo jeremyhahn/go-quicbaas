@@ -404,6 +404,63 @@ func TestDCRRegistration_TenantComesFromPrincipal(t *testing.T) {
 	assert.Empty(t, appsB, "a caller must not be able to name another tenant")
 }
 
+// TestDCRRegistration_TenantFromProjectedIdentity: the unified server never
+// sets an AuthorizedContext; the verified caller reaches the handler only as
+// the Subject projectQRDBIdentity derives from the go-qrdb identity, and that
+// caller's tenant owns the new client.
+func TestDCRRegistration_TenantFromProjectedIdentity(t *testing.T) {
+	const tenantA, tenantB = "tenant-projected-a", "tenant-projected-b"
+	handler, cleanup := dcrTenantHandler(t, tenantA, tenantB, qrdbsdk.SystemTenantID)
+	defer cleanup()
+
+	manager, err := handler.server.service.(interface {
+		GetAppManager(ctx context.Context) (*iam.AppManager, error)
+	}).GetAppManager(context.Background())
+	require.NoError(t, err)
+
+	register := func(identity *qrdbsdk.Identity, header string) *httptest.ResponseRecorder {
+		req := dcrRegisterRequest(`{"grant_types":["client_credentials"],"client_name":"projected"}`)
+		if header != "" {
+			req.Header.Set("X-Tenant-ID", header)
+		}
+		if identity != nil {
+			req = req.WithContext(qrdbsdk.WithIdentity(req.Context(), identity))
+		}
+		w := httptest.NewRecorder()
+		handler.server.projectQRDBIdentity(http.HandlerFunc(handler.RegisterDynamicClient)).ServeHTTP(w, req)
+		return w
+	}
+
+	// (a) Verified into A while naming B in the header: the client lands in A.
+	w := register(&qrdbsdk.Identity{Subject: "operator-a", TenantID: tenantA, Roles: []string{"admin"}}, tenantB)
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	appsA, err := manager.ListApps(context.Background(), tenantA, iam.ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, appsA, 1)
+
+	appsB, err := manager.ListApps(context.Background(), tenantB, iam.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, appsB, "a caller must not be able to name another tenant")
+
+	// (b) The bootstrap admin of the system tenant registers into the system tenant.
+	w = register(&qrdbsdk.Identity{Subject: "admin", TenantID: qrdbsdk.SystemTenantID, Roles: []string{"admin"}}, "")
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	appsSystem, err := manager.ListApps(context.Background(), qrdbsdk.SystemTenantID, iam.ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, appsSystem, 1)
+
+	// (c) No verified caller: still refused, whatever the header names.
+	w = register(nil, tenantA)
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "initial access token is required")
+
+	appsA, err = manager.ListApps(context.Background(), tenantA, iam.ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, appsA, 1)
+}
+
 // -----------------------------------------------------------------------------
 // Route wiring: the create verb stays gated, the management verbs are the
 // deliberate (and narrowly scoped) pre-auth carve-out.

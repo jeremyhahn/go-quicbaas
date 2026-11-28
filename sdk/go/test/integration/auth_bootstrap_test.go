@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -137,8 +138,11 @@ var (
 //     composed node as part of its own session-login plane.)
 //  2. POST /oauth2/register (RFC 7591 Dynamic Client Registration) with that
 //     bearer to mint a confidential client allowed the client_credentials
-//     grant.
-//  3. POST /oauth2/token (public) with grant_type=client_credentials and the
+//     grant. Registration grants the client no permissions.
+//  3. PUT /api/v1/tenants/system/apps/{client_id} with the same bearer to
+//     grant the app the data-plane scopes as the admin (the grantor gate
+//     checks the admin holds every scope it grants).
+//  4. POST /oauth2/token (public) with grant_type=client_credentials and the
 //     required data-plane scopes to mint the suite's Bearer access token.
 //
 // Every HTTPS client pins the integration CA fixture (see newHTTPClient).
@@ -159,6 +163,9 @@ func doAcquirePlatformToken(ctx context.Context) (string, error) {
 	}
 	clientID, clientSecret, err := registerBootstrapClient(ctx, initialAccessToken)
 	if err != nil {
+		return "", err
+	}
+	if err := grantBootstrapScopes(ctx, initialAccessToken, clientID); err != nil {
 		return "", err
 	}
 	return clientCredentialsToken(ctx, clientID, clientSecret)
@@ -271,6 +278,38 @@ func registerBootstrapClient(ctx context.Context, initialAccessToken string) (cl
 		return "", "", &qberrors.MessageError{Message: "DCR returned empty client credentials: " + string(respBody)}
 	}
 	return dcr.ClientID, dcr.ClientSecret, nil
+}
+
+// grantBootstrapScopes grants the registered client the data-plane scopes
+// through the admin app-update route, presenting the initial access token.
+// DCR registers the client in the caller's tenant, which for the PIV system
+// admin is the system tenant. The token endpoint refuses ungranted scopes, so
+// this must run before clientCredentialsToken.
+func grantBootstrapScopes(ctx context.Context, initialAccessToken, clientID string) error {
+	body, _ := json.Marshal(map[string]interface{}{"scopes": dataPlaneScopes})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
+		GetRESTAddress()+"/api/v1/tenants/"+qrdbsdk.SystemTenantID+"/apps/"+url.PathEscape(clientID),
+		bytes.NewReader(body))
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "build app scope grant request", Cause: err}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+initialAccessToken)
+
+	resp, err := newHTTPClient(15 * time.Second).Do(req)
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "app scope grant request failed", Cause: err}
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return &qberrors.MessageError{
+			Message: "app scope grant failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
+		}
+	}
+	return nil
 }
 
 // clientCredentialsToken exchanges the bootstrap client credentials for a
