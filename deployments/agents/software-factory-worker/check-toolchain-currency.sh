@@ -87,8 +87,10 @@ latest_github() {
 	esac
 }
 
+# The newest release in the dist index; prereleases (v27.0.0-alpha...) are skipped.
 latest_node() {
-	fetch 'https://nodejs.org/dist/index.json' | json_string version
+	fetch 'https://nodejs.org/dist/index.json' |
+		first_match '"version" *: *"v[0-9]+\.[0-9]+\.[0-9]+"' | sed -E 's/.*: *"([^"]*)"/\1/'
 }
 
 # From the dist-tags document, which holds nothing but tags: the /latest
