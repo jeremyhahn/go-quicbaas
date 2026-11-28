@@ -63,7 +63,8 @@ func workflowJobs(body []byte) (*yaml.Node, error) {
 // gate job's env.
 func gateStep(t *testing.T) (string, map[string]string) {
 	t.Helper()
-	jobs, err := workflowJobs([]byte(readFile(t, codeReviewWorkflowPath)))
+	body := []byte(readFile(t, codeReviewWorkflowPath))
+	jobs, err := workflowJobs(body)
 	if err != nil {
 		t.Fatalf("parse %s: %v", codeReviewWorkflowPath, err)
 	}
@@ -71,9 +72,14 @@ func gateStep(t *testing.T) (string, map[string]string) {
 	if gate == nil {
 		t.Fatal("code-review.yml has no gate job")
 	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse %s: %v", codeReviewWorkflowPath, err)
+	}
+	// The workflow env (NON_CODE_PATHS, ROW_BRANCH), then the gate job's.
 	env := map[string]string{}
-	if e := mapValue(gate, "env"); e != nil {
-		for i := 0; i+1 < len(e.Content); i += 2 {
+	for _, e := range []*yaml.Node{mapValue(doc.Content[0], "env"), mapValue(gate, "env")} {
+		for i := 0; e != nil && i+1 < len(e.Content); i += 2 {
 			env[e.Content[i].Value] = e.Content[i+1].Value
 		}
 	}
@@ -241,9 +247,9 @@ func runGate(t *testing.T, tc gateCase) gateResult {
 		"BASE_SHA=" + gateBaseSHA,
 		"BASE_REF=main",
 		fmt.Sprintf("GITHUB_RUN_ID=%d", gateRunID),
-		"NO_REVIEW_PATHS=" + env["NO_REVIEW_PATHS"],
-		"DOCS_PATHS=" + env["DOCS_PATHS"],
-		"SCOPE_SKIP=false",
+		"NON_CODE_PATHS=" + env["NON_CODE_PATHS"],
+		"ROW_BRANCH=" + env["ROW_BRANCH"],
+		"HEAD_REF=row/1-gate",
 		"SCOPE_RESULT=success",
 		"REVIEW_RESULT=skipped",
 	}
