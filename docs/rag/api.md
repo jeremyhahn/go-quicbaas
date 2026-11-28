@@ -33,15 +33,61 @@ Every row below is derived from source, not from prose. The columns mean:
 
 ### `quicbaas.RAG` — SDK package `sdk/go/client/rag`
 
-Dedicated transport handlers: rest=yes, grpc=yes, mcp=no; embedded routes registered: 0; MCP tools registered server-side: 2.
+Dedicated transport handlers: rest=yes, grpc=yes, mcp=no; embedded routes registered: 2 (`rag` builds); MCP tools registered server-side: 2.
 
 MCP tools: `quicbaas_rag_build_context`, `quicbaas_rag_query`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
-| `BuildContext` | `POST /api/v1/rag/context` | yes | yes | MISSING | MISSING | `rag:query` |
-| `Query` | `POST /api/v1/rag/query` | yes | yes | MISSING | MISSING | `rag:query` |
+| `BuildContext` | `POST /api/v1/rag/context` | yes | yes | MISSING | yes | `rag:query` |
+| `Query` | `POST /api/v1/rag/query` | yes | yes | MISSING | yes | `rag:query` |
 
+One service, every transport (#1611): `pkg/rag/ragservice` holds the only
+`Query` and `BuildContext`. The REST handlers, the server-side MCP tools,
+the node's gRPC `quicbaas.rag.v1.RAGService` (`pkg/api/grpc/server_rag.go`,
+registered by `registerRAGService`, authorized as `rag:query`) and the
+embedded routes `quicbaas.RAG/Query` and `quicbaas.RAG/BuildContext`
+(`sdk/go/transport/embedded/handlers_rag.go`) only convert their own types
+and call it. Its typed errors come back as invalid input (no query, no
+namespace, no results) or unavailable (Ollama or the vector store not
+configured), on every transport.
+
+The node also serves go-qrdb's own RAG service (`qrdb.v1` RAG) on REST,
+gRPC, QUIC, Unix, MCP and the embedded transport, built over its go-qrdb
+embedding service; each caller's documents live in the caller's own
+(tenant, database). The Go SDK re-exports go-qrdb's `RAGClient` as
+`quicbaas.QRDBRAGClient` (built with the `qrdb_vector` tag), reached with
+`quicbaas.QRDBRAG(client)`: over REST and QUIC it uses the SDK's REST
+transport, over MCP the SDK's MCP session, over gRPC and Unix go-qrdb's
+client with the `WithAuthToken` bearer as authorization metadata, and
+in-process the embedded servicer. `Client.RAG()` remains QuicBaaS's own RAG
+pipeline.
+
+```go
+// Build with -tags qrdb_vector.
+rc, err := quicbaas.QRDBRAG(client)
+if err != nil {
+	return err
+}
+if _, err := rc.RAGIngestDocument(ctx, &quicbaas.QRDBRAGIngestRequest{
+	DocumentID: "handbook",
+	Namespace:  "docs",
+	Text:       handbookText,
+}); err != nil {
+	return err
+}
+resp, err := rc.RAGQuery(ctx, &quicbaas.QRDBRAGQueryRequest{
+	Query:     "How do I rotate a key?",
+	Namespace: "docs",
+	TopK:      3,
+})
+if err != nil {
+	return err
+}
+for _, r := range resp.Results {
+	fmt.Printf("%s#%d %.2f %s\n", r.DocumentID, r.ChunkIndex, r.Score, r.ChunkText)
+}
+```
 
 ## Overview
 

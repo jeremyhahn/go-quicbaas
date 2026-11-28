@@ -437,3 +437,25 @@ func TestPipelineMetricsCollection(t *testing.T) {
 	assert.Equal(t, int64(10), stats.TotalQueries)
 	assert.Greater(t, stats.AvgLatencyMs, 0.0)
 }
+
+// TestReportSimilarityScores proves ranked results keep the ranker's order
+// and report their vector similarity, capped at the score above, and that a
+// result with no similarity takes the score above it.
+func TestReportSimilarityScores(t *testing.T) {
+	vector := []Result{{ID: "a", Score: 0.9}, {ID: "b", Score: 0.8}, {ID: "c", Score: 0.75}}
+	ranked := []Result{
+		{ID: "b", Score: 0.0166},
+		{ID: "a", Score: 0.0164},
+		{ID: "x", Score: 0.0160},
+		{ID: "c", Score: 0.0150},
+	}
+	reportSimilarityScores(ranked, vector)
+
+	ids := make([]string, len(ranked))
+	scores := make([]float32, len(ranked))
+	for i, r := range ranked {
+		ids[i], scores[i] = r.ID, r.Score
+	}
+	assert.Equal(t, []string{"b", "a", "x", "c"}, ids)
+	assert.InDeltaSlice(t, []float32{0.8, 0.8, 0.8, 0.75}, scores, 1e-6)
+}

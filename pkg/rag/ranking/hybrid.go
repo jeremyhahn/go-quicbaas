@@ -29,7 +29,7 @@ type HybridRanker struct {
 func NewHybridRanker(config Config, reranker Reranker) *HybridRanker {
 	return &HybridRanker{
 		bm25:     NewBM25(config.BM25K1, config.BM25B),
-		rrf:      NewRRF(config.RRFK),
+		rrf:      NewWeightedRRF(config.RRFK, config.VectorWeight, config.KeywordWeight),
 		reranker: reranker,
 		config:   config,
 	}
@@ -127,8 +127,16 @@ func (h *HybridRanker) RankHybrid(vectorResults, keywordResults []Result, query 
 		}
 	}
 
+	// RRF ranks by list position, so the keyword list must be in BM25 order,
+	// not the order the caller passed it in.
+	keywordRanked := make([]Result, len(keywordResults))
+	copy(keywordRanked, keywordResults)
+	sort.SliceStable(keywordRanked, func(i, j int) bool {
+		return keywordRanked[i].KeywordScore > keywordRanked[j].KeywordScore
+	})
+
 	// Fuse results using RRF
-	fusedResults := h.rrf.Fuse(vectorResults, keywordResults)
+	fusedResults := h.rrf.Fuse(vectorResults, keywordRanked)
 
 	// Apply reranking if enabled
 	if h.config.EnableRerank && h.reranker != nil {

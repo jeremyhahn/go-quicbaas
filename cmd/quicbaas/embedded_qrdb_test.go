@@ -109,6 +109,8 @@ func TestBuildEmbeddedQRDBServicers_EndToEnd(t *testing.T) {
 	}
 	assert.Equal(t, es.server.GetQRDBEmbeddingServicer() != nil, servicers.Embedding != nil,
 		"the embedding servicer is wired exactly when the node serves one")
+	assert.Equal(t, es.server.GetQRDBRAGServicer() != nil, servicers.RAG != nil,
+		"the go-qrdb RAG servicer is wired exactly when the node serves one")
 }
 
 // TestEmbeddedQRDBOption_EndToEnd verifies the SDK option helper returns a

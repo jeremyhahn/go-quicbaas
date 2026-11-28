@@ -119,6 +119,17 @@ expect test-api-grpc pkg/api/grpc "$TEST_TAGS"
 expect test-quicbaas-git-sign cmd/quicbaas-git-sign "$TEST_TAGS"
 # test-iam is an explicit target (a longer race timeout); it must keep the IAM tags.
 runs test-iam "-tags '$IAM_TEST_TAGS'" ./pkg/iam/...
+# test-rag must pass the tags on every line: the watcher and the REST and MCP
+# RAG handlers build only under rag, rest and mcp (#2067).
+runs test-rag "-tags '$TEST_TAGS' ./pkg/rag/..." \
+	"-tags '$TEST_TAGS' -run \"TestHandleRAG\" ./pkg/api/rest/..." \
+	"-tags '$TEST_TAGS' -run \"TestRAG|TestHandleRAGQuery_|TestExecuteRAGQuery_|TestExecuteRAGBuildContext_\" ./pkg/api/mcp/..." \
+	"-tags '$TEST_TAGS' -run \"TestRAG\" ./pkg/api/grpc/" \
+	"-tags '$TEST_TAGS' -run \"TestRegisterRAGService\" ./pkg/server/" \
+	"-tags rag -run \"TestEmbeddedRAG\" ./transport/embedded/"
+# test-sdk-go must run the qrdb_vector-tagged re-export of go-qrdb's RAG
+# client; untagged it never compiles.
+runs test-sdk-go "-tags qrdb_vector -run 'QRDBRAG' . ./transport/rest/ ./transport/mcp/"
 expect bench-iam-dpop pkg/iam/dpop "$IAM_TEST_TAGS"
 expect coverage-iam-dpop pkg/iam/dpop "$IAM_TEST_TAGS"
 expect test-iam-dpop pkg/iam/dpop "$IAM_TEST_TAGS"

@@ -23,6 +23,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,13 +33,21 @@ func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
 
 	assert.NotNil(t, config.Exclude)
-	assert.Equal(t, 100*time.Millisecond, config.DebounceDelay)
 	assert.Equal(t, 1*time.Second, config.BatchInterval)
 	assert.True(t, config.IgnoreHidden)
 	assert.False(t, config.FollowSymlinks)
 	assert.Equal(t, 0, config.MaxDepth)
 	assert.Equal(t, 1000, config.BufferSize)
 	assert.True(t, config.Recursive)
+}
+
+// TestConfig_NoDebounceDelayField guards #549: Config once carried a
+// DebounceDelay that was validated and documented but never read, so a
+// caller tuning it changed nothing. BatchInterval is the one coalescing
+// window; no knob that configures nothing comes back.
+func TestConfig_NoDebounceDelayField(t *testing.T) {
+	_, ok := reflect.TypeOf(Config{}).FieldByName("DebounceDelay")
+	assert.False(t, ok, "Config.DebounceDelay configures nothing; BatchInterval is the coalescing window")
 }
 
 func TestDefaultExclusions(t *testing.T) {
@@ -60,7 +69,6 @@ func TestConfig_Validate(t *testing.T) {
 			name: "valid config",
 			config: Config{
 				Paths:         []string{"/tmp"},
-				DebounceDelay: 100 * time.Millisecond,
 				BatchInterval: 1 * time.Second,
 				BufferSize:    1000,
 				MaxDepth:      10,
@@ -73,14 +81,6 @@ func TestConfig_Validate(t *testing.T) {
 				Paths: []string{},
 			},
 			expectErr: ErrNoPaths,
-		},
-		{
-			name: "negative debounce delay",
-			config: Config{
-				Paths:         []string{"/tmp"},
-				DebounceDelay: -1 * time.Millisecond,
-			},
-			expectErr: ErrInvalidDebounceDelay,
 		},
 		{
 			name: "negative batch interval",
@@ -143,7 +143,6 @@ func TestNew_ValidConfig_Coverage(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 	}
 
@@ -168,7 +167,6 @@ func TestFsWatcher_Stop_NotStarted(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 	}
 
@@ -190,7 +188,6 @@ func TestFsWatcher_StartAndStop(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 	}
 
@@ -223,7 +220,6 @@ func TestFsWatcher_RemovePath_Coverage(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 	}
 
@@ -262,7 +258,6 @@ func TestFsWatcher_AddPath_NonExistent(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 	}
 
@@ -302,7 +297,6 @@ func TestAddRecursive_ExcludedPath_Coverage(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		Exclude:       []string{".git/"},
 		Recursive:     true,
@@ -343,7 +337,6 @@ func TestFsWatcher_ContextCancellation(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 	}
 
@@ -372,7 +365,6 @@ func TestFsWatcher_Events_Channel(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 10 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 	}
 
@@ -399,7 +391,6 @@ func TestNew_WithGitIgnorePatterns(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		Exclude:       []string{"*.log", "node_modules/", ".git/"},
 	}
@@ -421,7 +412,6 @@ func TestFsWatcher_AddPath_ExistingPath(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 	}
 
@@ -462,7 +452,6 @@ func TestFsWatcher_AddPath_File(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 	}
 
@@ -496,7 +485,6 @@ func TestFsWatcher_RemovePath_NotStarted(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 	}
 
@@ -524,7 +512,6 @@ func TestFsWatcher_AddPath_NewSubdirectory(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		BufferSize:    100,
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		Recursive:     true,
 	}
@@ -570,7 +557,6 @@ func TestConfig_Validate_Coverage(t *testing.T) {
 			config: Config{
 				Paths:         []string{tmpDir},
 				BufferSize:    100,
-				DebounceDelay: 100 * time.Millisecond,
 				BatchInterval: 100 * time.Millisecond,
 			},
 			wantErr: false,
@@ -580,7 +566,6 @@ func TestConfig_Validate_Coverage(t *testing.T) {
 			config: Config{
 				Paths:         []string{},
 				BufferSize:    100,
-				DebounceDelay: 100 * time.Millisecond,
 				BatchInterval: 100 * time.Millisecond,
 			},
 			wantErr: true,
@@ -590,27 +575,15 @@ func TestConfig_Validate_Coverage(t *testing.T) {
 			config: Config{
 				Paths:         []string{tmpDir},
 				BufferSize:    0,
-				DebounceDelay: 100 * time.Millisecond,
 				BatchInterval: 100 * time.Millisecond,
 			},
 			wantErr: false, // Gets auto-corrected to 1000
-		},
-		{
-			name: "negative debounce delay",
-			config: Config{
-				Paths:         []string{tmpDir},
-				BufferSize:    100,
-				DebounceDelay: -1 * time.Millisecond,
-				BatchInterval: 100 * time.Millisecond,
-			},
-			wantErr: true,
 		},
 		{
 			name: "negative batch interval",
 			config: Config{
 				Paths:         []string{tmpDir},
 				BufferSize:    100,
-				DebounceDelay: 100 * time.Millisecond,
 				BatchInterval: -1 * time.Millisecond,
 			},
 			wantErr: true,
@@ -620,7 +593,6 @@ func TestConfig_Validate_Coverage(t *testing.T) {
 			config: Config{
 				Paths:         []string{tmpDir},
 				BufferSize:    100,
-				DebounceDelay: 100 * time.Millisecond,
 				BatchInterval: 100 * time.Millisecond,
 				MaxDepth:      -1,
 			},
@@ -644,10 +616,6 @@ func TestDefaultConfig_Coverage(t *testing.T) {
 
 	if config.BufferSize <= 0 {
 		t.Errorf("expected positive BufferSize, got %d", config.BufferSize)
-	}
-
-	if config.DebounceDelay <= 0 {
-		t.Errorf("expected positive DebounceDelay, got %v", config.DebounceDelay)
 	}
 
 	if config.BatchInterval <= 0 {

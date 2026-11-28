@@ -95,7 +95,8 @@ func Example_hybridRanking() {
 	}
 
 	fmt.Printf("Top result: %s (score: %.2f)\n", results[0].ID, results[0].FinalScore)
-	// Output: Top result: doc1 (score: 0.03)
+	// doc1 leads both lists: 0.7/60 + 0.3/60 under the default weights.
+	// Output: Top result: doc1 (score: 0.02)
 }
 
 // Example_rrfFusion demonstrates reciprocal rank fusion

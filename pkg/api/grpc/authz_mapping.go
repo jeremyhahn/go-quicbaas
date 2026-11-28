@@ -1053,6 +1053,12 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.ollama.v1.OllamaService/EmbedBatch":     {"ollama", "embed"},
 	"/quicbaas.ollama.v1.OllamaService/EmbedWithModel": {"ollama", "embed"},
 
+	// ---- quicbaas.rag.v1.RAGService ----
+	// rag:query, as REST /api/v1/rag/{query,context} and the MCP RAG tools
+	// require (#1611: one RAG service on every transport).
+	"/quicbaas.rag.v1.RAGService/Query":        {"rag", "query"},
+	"/quicbaas.rag.v1.RAGService/BuildContext": {"rag", "query"},
+
 	// ---- quicbaas.embedding.v1.EmbeddingService ----
 	"/quicbaas.embedding.v1.EmbeddingService/EmbeddingGenerate":           {"embedding", "embed"},
 	"/quicbaas.embedding.v1.EmbeddingService/EmbeddingBatchGenerate":      {"embedding", "embed"},

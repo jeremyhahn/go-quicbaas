@@ -150,6 +150,64 @@ func TestRAGHandler_HandleRequest_Query(t *testing.T) {
 	assert.Equal(t, float32(0.87), queryResp.Citations[1].Score)
 }
 
+// TestRAGHandler_Query_MinScoreRoundTrip checks the JSON the SDK sends for
+// min_score, decoded the way the server decodes it (into a *float32 where nil
+// takes the 0.7 default): an unset MinScore reaches the search as 0.7, an
+// explicit 0 as 0, and 0.42 as 0.42.
+func TestRAGHandler_Query_MinScoreRoundTrip(t *testing.T) {
+	const serverDefault = float32(0.7)
+	cases := []struct {
+		name        string
+		minScore    float32
+		minScoreSet bool
+		wantSent    bool
+		want        float32
+	}{
+		{name: "omitted", wantSent: false, want: 0.7},
+		{name: "explicit zero", minScore: 0, minScoreSet: true, wantSent: true, want: 0},
+		{name: "explicit 0.42", minScore: 0.42, minScoreSet: true, wantSent: true, want: 0.42},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var raw map[string]json.RawMessage
+			var decoded struct {
+				MinScore *float32 `json:"min_score,omitempty"`
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				assert.NoError(t, err)
+				assert.NoError(t, json.Unmarshal(body, &raw))
+				assert.NoError(t, json.Unmarshal(body, &decoded))
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"context":"","tokens":0,"truncated":false,"result_count":0}`))
+			}))
+			defer server.Close()
+
+			tr := &Transport{baseURL: server.URL, client: server.Client(), headers: map[string]string{}}
+			handler := newRAGHandler(tr)
+
+			req := &rag.QueryRequest{
+				Query:       "q",
+				Namespace:   "docs",
+				MinScore:    tc.minScore,
+				MinScoreSet: tc.minScoreSet,
+			}
+			_, err := handler.handleRequest(context.Background(), "quicbaas.RAG", "Query", req)
+			assert.NoError(t, err)
+
+			_, sent := raw["min_score"]
+			assert.Equal(t, tc.wantSent, sent, "min_score present in the request body")
+
+			got := serverDefault
+			if decoded.MinScore != nil {
+				got = *decoded.MinScore
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func TestRAGHandler_HandleRequest_Query_InvalidType(t *testing.T) {
 	tr := &Transport{
 		baseURL:  "http://localhost:8080",

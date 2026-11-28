@@ -372,6 +372,10 @@ func (c *RankingConfig) Validate() error {
 		return api.NewFloatRangeError("config.RankingConfig.Validate", "keyword_weight", 0, 1)
 	}
 
+	if c.RRFK < 0 {
+		return api.NewPositiveValueRequiredError("config.RankingConfig.Validate", "rrf_k")
+	}
+
 	return nil
 }
 

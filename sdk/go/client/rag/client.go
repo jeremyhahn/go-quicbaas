@@ -79,8 +79,13 @@ type QueryRequest struct {
 	// MaxTokens is the maximum tokens in generated context
 	MaxTokens int
 
-	// MinScore is the minimum similarity score threshold
+	// MinScore is the minimum similarity score threshold. 0 means the
+	// server's default (0.7) unless MinScoreSet is true.
 	MinScore float32
+
+	// MinScoreSet sends MinScore even when it is 0, which disables the
+	// similarity filter.
+	MinScoreSet bool
 
 	// Template is the context template format (markdown, json, xml, plain)
 	Template string

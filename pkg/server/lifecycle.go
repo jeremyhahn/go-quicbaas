@@ -2670,6 +2670,9 @@ func (s *Server) startGRPCServer() error {
 	// Register Ollama service (no-op when rag build tag is not set)
 	s.registerOllamaService(grpcServer)
 
+	// Register RAG service (no-op when rag build tag is not set)
+	s.registerRAGService(grpcServer)
+
 	// Register CertificateService (CA) gRPC handlers. They live on the same
 	// *grpcapi.Server that backs QuicBaaS and delegate to service.Certificate()
 	// which composes the xkms TrustedCA, keeping the gRPC certificate surface

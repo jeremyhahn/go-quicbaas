@@ -243,6 +243,33 @@ func TestBuilder_Build_MaxResultsPerChunk(t *testing.T) {
 	if len(context.Results) > 3 {
 		t.Errorf("Got %d results, want at most 3", len(context.Results))
 	}
+	// Dropping results past MaxResultsPerChunk is a truncation, whatever
+	// the truncation strategy: the caller must learn results were left out.
+	if !context.Truncated {
+		t.Error("Truncated = false after 7 of 10 results were dropped")
+	}
+
+	for _, strategy := range []TruncationStrategy{TruncationHard, TruncationNone} {
+		cfg := DefaultConfig()
+		cfg.MaxResultsPerChunk = 3
+		cfg.TruncationStrategy = strategy
+		got, err := NewBuilderWithConfig(cfg).Build(results, 8000)
+		if err != nil {
+			t.Fatalf("%s: Build() returned error: %v", strategy, err)
+		}
+		if len(got.Results) != 3 || !got.Truncated {
+			t.Errorf("%s: got %d results, Truncated=%v; want 3, true", strategy, len(got.Results), got.Truncated)
+		}
+	}
+
+	// At or under the cap nothing is dropped and nothing is reported.
+	got, err := builder.Build(results[:3], 8000)
+	if err != nil {
+		t.Fatalf("Build() returned error: %v", err)
+	}
+	if got.Truncated {
+		t.Error("Truncated = true with no result dropped")
+	}
 }
 
 func TestBuilder_Build_TruncationStrategies(t *testing.T) {

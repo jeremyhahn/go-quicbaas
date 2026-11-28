@@ -17,20 +17,19 @@ package watcher
 
 import (
 	"sync"
-	"time"
 )
 
 // debouncer collects events within a time window and deduplicates them.
 type debouncer struct {
-	delay  time.Duration
 	mu     sync.Mutex
 	events map[string]*Event // keyed by path
 }
 
-// newDebouncer creates a new debouncer with the given delay.
-func newDebouncer(delay time.Duration) *debouncer {
+// newDebouncer creates an empty debouncer. Its only window is the caller's
+// flush cadence (Config.BatchInterval): events for a path coalesce, last
+// write wins, until the next Flush.
+func newDebouncer() *debouncer {
 	return &debouncer{
-		delay:  delay,
 		events: make(map[string]*Event),
 	}
 }

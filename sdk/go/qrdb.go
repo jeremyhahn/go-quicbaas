@@ -919,6 +919,9 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	if s.Backup != nil {
 		embOpts = append(embOpts, qrdbembedded.WithBackupService(s.Backup))
 	}
+	if s.RAG != nil {
+		embOpts = append(embOpts, qrdbembedded.WithRAGService(s.RAG))
+	}
 	if s.TimeSeries != nil {
 		embOpts = append(embOpts, qrdbembedded.WithTimeSeriesService(s.TimeSeries))
 	}
