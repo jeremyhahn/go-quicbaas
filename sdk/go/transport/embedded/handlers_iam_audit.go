@@ -30,7 +30,7 @@ const auditServiceName = "quicbaas.IAM.Audit"
 // to the same iam.AuditLogger the REST and gRPC transports call. The handlers
 // add no storage, filtering or permission logic of their own: each applies
 // the tenant rule the other transports apply (iam.ResolveRequestTenant), and
-// Delete adds the audit:delete admin check REST makes.
+// Delete adds the audit_events:delete admin check REST makes.
 var iamAuditHandlers = map[string]handlerFunc{
 	auditServiceName + "/Query":       handleIAMAuditQuery,
 	auditServiceName + "/Get":         handleIAMAuditGet,
@@ -257,7 +257,7 @@ func handleIAMAuditDelete(ctx context.Context, svc service.QuicBaaS, req interfa
 	}, nil
 }
 
-// requireAuditDeletePermission is REST's audit:delete check: an authenticated
+// requireAuditDeletePermission is REST's audit_events:delete check: an authenticated
 // subject holding the permission in the target tenant. It fails closed when
 // no subject is bound.
 func requireAuditDeletePermission(ctx context.Context, svc service.QuicBaaS, tenantID string) error {

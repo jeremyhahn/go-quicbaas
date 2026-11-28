@@ -119,6 +119,40 @@ default) at startup; see Compliance below for archiving.
 count, err := logger.DeleteOlderThan(ctx, tenantID, cutoff)
 ```
 
+### Two audit surfaces
+
+A quicbaas node has two audit surfaces today:
+
+- **The quicbaas IAM audit store.** The `/api/v1/iam/audit` routes (and their
+  gRPC, MCP and embedded counterparts, `quicbaas.IAM.Audit`) record, query and
+  read quicbaas's own `AuditEvent` model. The store writes each event to the
+  node audit sink through `NodeAuditLogger` (`pkg/server/node_audit_logger.go`).
+  Fields that have no counterpart in the go-qrdb event ride in its attributes.
+  The routes run under the `audit:query`, `audit:read`, `audit_events:record`
+  and `audit_events:delete` permissions. The rest of this document describes
+  it.
+- **go-qrdb's audit service.** `Security().QRDBAudit()` returns go-qrdb's
+  `AuditClient` (`EmitAudit` / `QueryAudit`, permissions `audit:emit` and
+  `audit:query`). It is the one audit plane that capability modules emit onto.
+  On the node it is backed by the sink that `newQRDBAuditSink`
+  (`pkg/server/qrdb_node.go`) builds: a chained file logger under the data
+  directory, or an in-memory ring buffer when file audit is off. The embedded
+  SDK client reaches that sink through `QRDBEmbeddedServicers.Audit`, and every
+  query is confined to the caller's own tenant.
+
+The two surfaces are two API models over one store. On a node,
+`NodeAuditLogger` (built in `pkg/server/iam_init.go`) and go-qrdb's audit
+service both write to the same sink, the one `newQRDBAuditSink` builds. An
+event recorded through either surface lands on the same chain, and a query on
+either surface can return it, subject to that surface's filters and tenant
+scope.
+
+For export or evidence, query one surface only. Combining the results of both
+surfaces duplicates records. An event that one surface's model does not show
+is not missing from the chain.
+
+The quicbaas store stays until the owner rules on removing it.
+
 ## REST API
 
 ### Query Audit Events
@@ -180,13 +214,13 @@ DELETE /api/v1/iam/audit?tenant_id=tenant-123&before=2025-09-23T00:00:00Z
 Authorization: Bearer <admin_token>
 ```
 
-**Required Permission**: `audit:delete`
+**Required Permission**: `audit_events:delete`
 
 The chain is append-only, so an authorized request erases no event and
 always answers `deleted_count: 0`. The endpoint stays so that a delete
 attempt is authorized and audited, and callers learn the contract.
 
-**Access Control**: This operation is restricted to administrators with the `audit:delete` permission. Only `super_admin` role holders have this permission by default. Tenant admins and audit admins do NOT have delete permissions to ensure audit trail integrity.
+**Access Control**: This operation is restricted to administrators with the `audit_events:delete` permission. Only `super_admin` role holders have this permission by default. Tenant admins and audit admins do NOT have delete permissions to ensure audit trail integrity.
 
 | Admin Role | Can Delete Audit Events |
 |------------|------------------------|
@@ -208,7 +242,7 @@ Error Response (403 Forbidden):
 ```json
 {
   "error": "forbidden",
-  "error_description": "The audit:delete permission is required to delete audit events"
+  "error_description": "The audit_events:delete permission is required to delete audit events"
 }
 ```
 
@@ -220,18 +254,18 @@ The audit system uses the following permissions for access control:
 |------------|-------------|---------------|
 | `audit:read` | Query and view audit events | `super_admin`, `tenant_admin`, `audit_admin`, `read_only` |
 | `audit:export` | Export audit events to external systems | `super_admin`, `audit_admin` |
-| `audit:delete` | Call the delete endpoint (append-only: erases nothing) | `super_admin` only |
+| `audit_events:delete` | Call the delete endpoint (append-only: erases nothing) | `super_admin` only |
 
 ### Why Delete is Restricted
 
-The `audit:delete` permission is intentionally restricted to `super_admin` only:
+The `audit_events:delete` permission is intentionally restricted to `super_admin` only:
 
 1. **Audit Trail Integrity**: Audit logs provide a tamper-evident record of all security events
 2. **Compliance Requirements**: Regulations like SOC 2, HIPAA, and GDPR require audit log retention
 3. **Forensic Value**: Audit logs are critical for security incident investigation
 4. **Separation of Duties**: Tenant admins should not be able to cover their tracks
 
-To grant `audit:delete` to additional users, explicitly assign the permission:
+To grant `audit_events:delete` to additional users, explicitly assign the permission:
 
 ```go
 assignment := &iam.AdminAssignment{
@@ -401,7 +435,7 @@ When limit is reached, oldest events are automatically evicted (FIFO).
   `AuditService` methods carry no PEP mapping and are default-deny under
   `RequireAuthz`
 - Export operations require `audit:export` permission
-- Deletion operations require `audit:delete` permission (super_admin only by default)
+- Deletion operations require `audit_events:delete` permission (super_admin only by default)
 - Audit events are immutable after creation
 - Sensitive data should not be logged in details
 - Every audit surface (Query/Get/Delete/Record, REST and gRPC alike) confines
@@ -446,7 +480,7 @@ When limit is reached, oldest events are automatically evicted (FIFO).
 6. **No Cleanup Jobs**: No API erases audit events, and the sink prunes its own rotated files; do not schedule another cleanup
 7. **Secure Access**: Restrict audit log access to administrators
 8. **Archive and Export**: Archive rotated audit files to durable storage when your retention requirement is longer than the sink's retention, and integrate with a SIEM for security monitoring
-9. **Protect Delete Access**: Only grant `audit:delete` to trusted super admins
+9. **Protect Delete Access**: Only grant `audit_events:delete` to trusted super admins
 10. **Audit the Auditors**: Monitor who accesses audit logs and who attempts deletes
 
 ## Examples
@@ -517,7 +551,7 @@ logger.LogAdminAction(ctx, tenantID,
     "delete_audit_events",
     map[string]interface{}{
         "before":     cutoffTime,
-        "permission": "audit:delete",
+        "permission": "audit_events:delete",
     },
 )
 
@@ -566,7 +600,7 @@ count, err := logger.DeleteOlderThan(ctx, tenantID, cutoffTime)
 ### Audit Delete Permission Denied
 
 - Verify the user has `super_admin` role
-- Check if `audit:delete` is explicitly granted in the assignment
+- Check if `audit_events:delete` is explicitly granted in the assignment
 - Verify the assignment is active and not expired
 - Check tenant scope matches the target tenant
 

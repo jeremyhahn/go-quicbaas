@@ -984,11 +984,11 @@ DELETE /api/v1/iam/audit?tenant_id={tenant_id}&before={timestamp}
 Authorization: Bearer <admin_token>
 ```
 
-**Required Permission**: `audit:delete`
+**Required Permission**: `audit_events:delete`
 
-**Access Control**: This endpoint is restricted to administrators with the `audit:delete` permission. Only users with the `super_admin` role have this permission by default. Tenant admins and audit admins do NOT have delete permissions to preserve audit trail integrity.
+**Access Control**: This endpoint is restricted to administrators with the `audit_events:delete` permission. Only users with the `super_admin` role have this permission by default. Tenant admins and audit admins do NOT have delete permissions to preserve audit trail integrity.
 
-| Admin Role | Has audit:delete |
+| Admin Role | Has audit_events:delete |
 |------------|------------------|
 | `super_admin` | Yes |
 | `tenant_admin` | No |
@@ -1007,7 +1007,7 @@ Error Response (403 Forbidden):
 ```json
 {
   "error": "forbidden",
-  "error_description": "The audit:delete permission is required to delete audit events"
+  "error_description": "The audit_events:delete permission is required to delete audit events"
 }
 ```
 

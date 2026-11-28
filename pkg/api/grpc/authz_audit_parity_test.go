@@ -35,6 +35,8 @@ var auditGrants = map[string]methodPermission{
 	"/quicbaas.iam.v1.AuditService/QueryAuditEvents": {"audit", "query"},
 	// GET /api/v1/iam/audit/{id}
 	"/quicbaas.iam.v1.AuditService/GetAuditEvent": {"audit", "read"},
+	// POST /api/v1/iam/audit
+	"/quicbaas.iam.v1.AuditService/RecordAuditEvent": {"audit_events", "record"},
 }
 
 func TestAuditGRPCResourceAndAction(t *testing.T) {
@@ -106,11 +108,4 @@ func requireGRPCGrantEnforced(t *testing.T, grants map[string]methodPermission) 
 			assert.False(t, called, "handler must not run when authorization denies")
 		})
 	}
-}
-
-// TestAuditGRPCRecordStaysUnmapped pins RecordAuditEvent as unmapped, so it
-// stays default-denied: no REST grant is copied onto it.
-func TestAuditGRPCRecordStaysUnmapped(t *testing.T) {
-	_, mapped := grpcMethodPermissions["/quicbaas.iam.v1.AuditService/RecordAuditEvent"]
-	assert.False(t, mapped, "RecordAuditEvent must carry no grant")
 }

@@ -86,6 +86,11 @@ type QRDBUserServicer = qrdbsdk.UserServicer
 // interface. It serves the embedded transport's text embedding calls.
 type QRDBEmbeddingServicer = qrdbservice.EmbeddingServicer
 
+// QRDBNodeAuditLogger is a re-export of qrdb's NodeAuditLogger, go-qrdb's
+// compliance-grade audit sink. It backs Security().QRDBAudit() on the
+// embedded transport.
+type QRDBNodeAuditLogger = qrdbsdk.NodeAuditLogger
+
 // QRDBAuthFactorServicer is a re-export of the qrdb service.AuthFactorServicer
 // interface. Required to enable authentication factor enrollment and
 // verification through the embedded transport.
@@ -197,4 +202,8 @@ type QRDBEmbeddedServicers struct {
 	// Search().QRDBTimeSeries(). Optional: without it the time-series
 	// calls return an error.
 	TimeSeries QRDBTimeSeriesServicer
+	// Audit is the node's audit sink. When it is set, Security().QRDBAudit()
+	// emits to and queries this sink on the embedded transport. When it is
+	// nil, Security().QRDBAudit() answers Unavailable.
+	Audit QRDBNodeAuditLogger
 }

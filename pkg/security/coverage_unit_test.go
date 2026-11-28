@@ -756,10 +756,10 @@ func TestAL_LogTenantDEKOperationSuccessAndFailure(t *testing.T) {
 func TestAL_SignEventDeterministic(t *testing.T) {
 	log := createTestLogger(t)
 	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, SignLogs: true, SignKey: "my-secret-hmac-key"},
+		config:   &AuditConfig{Enabled: true, SignLogs: true, SignKey: testSignKey("my-secret-hmac-key")},
 		logger:   log,
 		writer:   &bytes.Buffer{},
-		signKey:  []byte("my-secret-hmac-key"),
+		signKey:  testSignKey("my-secret-hmac-key"),
 		shutdown: make(chan struct{}),
 	}
 
@@ -784,10 +784,10 @@ func TestAL_SignEventDeterministic(t *testing.T) {
 func TestAL_VerifySignatureCorrectSig(t *testing.T) {
 	log := createTestLogger(t)
 	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, SignLogs: true, SignKey: "verify-sig-hmac-key"},
+		config:   &AuditConfig{Enabled: true, SignLogs: true, SignKey: testSignKey("verify-sig-hmac-key")},
 		logger:   log,
 		writer:   &bytes.Buffer{},
-		signKey:  []byte("verify-sig-hmac-key"),
+		signKey:  testSignKey("verify-sig-hmac-key"),
 		shutdown: make(chan struct{}),
 	}
 
@@ -811,10 +811,10 @@ func TestAL_LogWithSigningInjectsSignature(t *testing.T) {
 	log := createTestLogger(t)
 	var buf bytes.Buffer
 	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, SignLogs: true, SignKey: "sign-event-hmac-key"},
+		config:   &AuditConfig{Enabled: true, SignLogs: true, SignKey: testSignKey("sign-event-hmac-key")},
 		logger:   log,
 		writer:   &buf,
-		signKey:  []byte("sign-event-hmac-key"),
+		signKey:  testSignKey("sign-event-hmac-key"),
 		shutdown: make(chan struct{}),
 	}
 
@@ -1368,7 +1368,7 @@ func TestNewAL_DisabledSetsDiscardWriter(t *testing.T) {
 
 func TestNewAL_SignLogsNoKeyReturnsError(t *testing.T) {
 	log := createTestLogger(t)
-	al, err := NewAuditLogger(&AuditConfig{Enabled: true, SignLogs: true, SignKey: ""}, log)
+	al, err := NewAuditLogger(&AuditConfig{Enabled: true, SignLogs: true, SignKey: testSignKey("")}, log)
 	assert.Error(t, err)
 	assert.Nil(t, al)
 }

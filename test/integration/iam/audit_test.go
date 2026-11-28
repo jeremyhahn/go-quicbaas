@@ -465,15 +465,15 @@ func TestAuditEventDelete(t *testing.T) {
 	deletePath := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&before=%s",
 		tenantID, url.QueryEscape(futureTime.Format(time.RFC3339)))
 
-	// The auditor holds no audit:delete grant and is refused.
+	// The auditor holds no audit_events:delete grant and is refused.
 	refusedResp, err := auditor.doHTTPRequest(http.MethodDelete, deletePath, nil)
 	require.NoError(t, err, "Should send the auditor's audit delete")
 	refusedBody, _ := io.ReadAll(refusedResp.Body)
 	refusedResp.Body.Close()
 	require.Equal(t, http.StatusForbidden, refusedResp.StatusCode,
-		"an auditor without audit:delete should be refused: %s", refusedBody)
+		"an auditor without audit_events:delete should be refused: %s", refusedBody)
 
-	// The first-boot super_admin holds audit:delete (pkg/server/iam_init.go),
+	// The first-boot super_admin holds audit_events:delete (pkg/server/iam_init.go),
 	// but its assignment is scoped to the system tenant, and the delete is
 	// tenant-scoped to the caller's own tenant (iam.ResolveRequestTenant)
 	// BEFORE the permission check. So the server refuses it on tenant scope:
@@ -505,7 +505,7 @@ func TestAuditEventDelete(t *testing.T) {
 	// The authorized path: the first-boot super_admin deletes from its OWN
 	// (system) tenant's chain. With no tenant_id the delete resolves to the
 	// caller's tenant (iam.ResolveRequestTenant), and the super_admin's
-	// system-scoped assignment holds audit:delete, so the server runs the
+	// system-scoped assignment holds audit_events:delete, so the server runs the
 	// delete. The chain is append-only, so it erases nothing.
 	systemAdmin := cluster.asSystemAdmin()
 	// Events at or before the cut-off are already written, so the set read

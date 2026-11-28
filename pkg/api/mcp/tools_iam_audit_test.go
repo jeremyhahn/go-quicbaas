@@ -111,7 +111,7 @@ func newAuditAdminManager(t *testing.T) *iam.AdminManager {
 }
 
 // auditDeleteCtx binds an authenticated subject (user 42) to the context and,
-// when grant is true, gives that user audit:delete on auditDeleteTenant.
+// when grant is true, gives that user audit_events:delete on auditDeleteTenant.
 func auditDeleteCtx(t *testing.T, reg *ToolRegistry, grant bool) context.Context {
 	t.Helper()
 	const userID = uint64(42)
@@ -308,10 +308,10 @@ func TestExecuteIAMAuditDelete_Success(t *testing.T) {
 	}
 }
 
-// TestExecuteIAMAuditDelete_WithoutAuditDeleteRefused proves the route
-// permission (audit:query) is not enough to prune audit history: the
-// executor refuses a subject lacking audit:delete, as REST and embedded do,
-// and never reaches DeleteOlderThan.
+// TestExecuteIAMAuditDelete_WithoutAuditDeleteRefused proves the executor's
+// own check, behind the audit_events:delete route permission: it refuses a subject
+// lacking audit_events:delete on the target tenant, as REST and embedded do, and
+// never reaches DeleteOlderThan.
 func TestExecuteIAMAuditDelete_WithoutAuditDeleteRefused(t *testing.T) {
 	deleteCalled := false
 	auditLog := &mockAuditLogger{
@@ -434,7 +434,7 @@ func TestIAMAuditDeleteSchemaDeclaresDryRun(t *testing.T) {
 }
 
 // TestExecuteIAMAuditDelete_OtherTenantGrantRefused proves the check is made
-// against the target tenant: audit:delete on t1 does not reach t2.
+// against the target tenant: audit_events:delete on t1 does not reach t2.
 func TestExecuteIAMAuditDelete_OtherTenantGrantRefused(t *testing.T) {
 	reg := newAuditRegistry(t, &mockAuditLogger{})
 

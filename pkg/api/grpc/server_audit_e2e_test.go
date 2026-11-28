@@ -164,7 +164,7 @@ func (l *grpcTestNodeBackedAuditLogger) Log(ctx context.Context, e *iam.AuditEve
 	if e.Actor != nil {
 		actor = e.Actor.UserID
 	}
-	l.sink.Emit(ctx, qrdbsdk.NodeAuditEvent{
+	return l.sink.Emit(ctx, qrdbsdk.NodeAuditEvent{
 		Timestamp:  e.Timestamp,
 		Actor:      actor,
 		TenantID:   e.TenantID,
@@ -173,7 +173,6 @@ func (l *grpcTestNodeBackedAuditLogger) Log(ctx context.Context, e *iam.AuditEve
 		Outcome:    string(e.Outcome),
 		Attributes: map[string]any{"iam_id": e.ID, "iam_event_type": string(e.EventType), "iam_category": string(e.Category)},
 	})
-	return nil
 }
 
 func (l *grpcTestNodeBackedAuditLogger) LogAsync(e *iam.AuditEvent) {

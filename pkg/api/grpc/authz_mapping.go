@@ -327,6 +327,14 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential":  {"users", "delete"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials": {"users", "delete"},
 
+	// ---- quicbaas.iam.v1.AuditService ----
+	// The same permissions REST and MCP require for these verbs (#1751):
+	// GET /api/v1/iam/audit (audit:query), GET /api/v1/iam/audit/{id}
+	// (audit:read) and POST /api/v1/iam/audit (audit_events:record).
+	"/quicbaas.iam.v1.AuditService/QueryAuditEvents": {"audit", "query"},
+	"/quicbaas.iam.v1.AuditService/GetAuditEvent":    {"audit", "read"},
+	"/quicbaas.iam.v1.AuditService/RecordAuditEvent": {"audit_events", "record"},
+
 	// ---- quicbaas.iam.v1.IAMService: built-in role reconciliation ----
 	//
 	// ReconcileRoles takes the role-create family rather than a verb of its
@@ -394,16 +402,6 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.SessionService/RevokeAllSessions": {"users", "update"},
 	// POST /api/v1/iam/sessions/revoke-others
 	"/quicbaas.iam.v1.SessionService/RevokeOtherSessions": {"users", "update"},
-
-	// ---- quicbaas.iam.v1.AuditService ----
-	//
-	// Each RPC takes the grant its REST twin requires. RecordAuditEvent stays
-	// unmapped, so it is default-denied on the node.
-	//
-	// GET /api/v1/iam/audit
-	"/quicbaas.iam.v1.AuditService/QueryAuditEvents": {"audit", "query"},
-	// GET /api/v1/iam/audit/{id}
-	"/quicbaas.iam.v1.AuditService/GetAuditEvent": {"audit", "read"},
 
 	// ---- quicbaas.iam.v1.PEPService ----
 	//

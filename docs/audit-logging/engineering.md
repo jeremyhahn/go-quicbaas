@@ -37,10 +37,19 @@ security:
   audit:
     enabled: true
     sign_logs: true
-    sign_key: "${AUDIT_SIGN_KEY}"  # HMAC-SHA256 key (environment variable)
+    sign_key: "kms://config/audit/sign-key"  # HMAC-SHA256 key, by reference
 ```
 
-`sign_key` must be at least 14 bytes (112 bits) — the HMAC key minimum in
+`sign_key` is a secret reference (`kms://…`, `credential://…`), resolved by
+the config secrets processor (`pkg/config/secrets`) into a sealed enclave.
+In Go, `AuditConfig.SignKey` is a `*secret.SecretValue`
+(`sdk/go/secret`), never a string. The logger seals its own copy of it,
+opens the key into mlocked memory only to compute an HMAC, and destroys it
+on `Close`. The key is never held as a Go `string` or a heap `[]byte`
+(#23). A reference that was never resolved is rejected with
+`AUDIT_SIGN_KEY_REQUIRED`.
+
+The key must be at least 14 bytes (112 bits) — the HMAC key minimum in
 FIPS 140-3 (SP 800-107). Shorter keys are rejected at startup with
 `AUDIT_SIGN_KEY_TOO_SHORT`; an empty key with `sign_logs: true` is rejected
 with `AUDIT_SIGN_KEY_REQUIRED`. Use a random 32-byte key.
@@ -343,8 +352,6 @@ SIEM events include signature IDs for correlation:
 
 ```go
 import (
-    "os"
-
     "github.com/jeremyhahn/go-quicbaas/pkg/security"
 )
 
@@ -353,9 +360,10 @@ cfg := &security.AuditConfig{
     Enabled:          true,
     File:             "/var/log/quicbaas/audit.log",
     SignLogs:         true,
-    // At least 14 bytes (112 bits). Generate with `openssl rand -base64 32`
-    // and load it from protected configuration rather than hardcoding it.
-    SignKey:          os.Getenv("AUDIT_SIGN_KEY"),
+    // At least 14 bytes (112 bits), sealed in an enclave. signKey is a
+    // *secret.SecretValue the config secrets processor resolved from a
+    // kms:// or credential:// reference; never build it from a string.
+    SignKey:          signKey,
     Compress:         true,
     CompressionLevel: security.CompressionLevelDefault,
     SyslogEnabled:    true,

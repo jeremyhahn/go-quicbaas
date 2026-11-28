@@ -62,6 +62,20 @@ type QRDBMVCCClient = qrdbtransport.MVCCClient
 // QRDBTransactionClient is a re-export of the qrdb TransactionClient interface.
 type QRDBTransactionClient = qrdbtransport.TransactionClient
 
+// QRDBAuditClient is a re-export of go-qrdb's audit service, the
+// AuditClient interface (SPEC row audit-logging, #1659): events emitted
+// through it land in go-qrdb's audit sink, not a QuicBaaS parallel store.
+type QRDBAuditClient = qrdbtransport.AuditClient
+
+// QRDBAuditEvent is a re-export of the qrdb AuditEvent type.
+type QRDBAuditEvent = qrdbtransport.AuditEvent
+
+// QRDBAuditFilter is a re-export of the qrdb AuditFilter type.
+type QRDBAuditFilter = qrdbtransport.AuditFilter
+
+// QRDBAuditPage is a re-export of the qrdb AuditPage type.
+type QRDBAuditPage = qrdbtransport.AuditPage
+
 // QRDBBatchClient is a re-export of the qrdb BatchClient interface.
 type QRDBBatchClient = qrdbtransport.BatchClient
 
@@ -922,6 +936,9 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	if s.TimeSeries != nil {
 		embOpts = append(embOpts, qrdbembedded.WithTimeSeriesService(s.TimeSeries))
 	}
+	if s.Audit != nil {
+		embOpts = append(embOpts, qrdbembedded.WithAuditLogger(s.Audit))
+	}
 
 	t, err := qrdbembedded.New(s.KV, s.Admin, embOpts...)
 	if err != nil {
@@ -973,4 +990,41 @@ func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
 		return &qrdbBearerEmbeddingClient{inner: ec, bearer: "Bearer " + c.opts.authToken}, nil
 	}
 	return ec, nil
+}
+
+// qrdbAudit returns go-qrdb's audit service client (EmitAudit / QueryAudit)
+// from the qrdb sub-client. On the embedded transport it is backed by
+// QRDBEmbeddedServicers.Audit and binds the tenant named with
+// transport.ContextWithTenant; network transports send the platform bearer:
+// REST and QUIC through the REST transport's audit client, MCP through the
+// MCP transport's, gRPC and Unix as gRPC metadata. It answers Unavailable
+// when the qrdb client is not configured or its transport does not serve the
+// audit service.
+func (c *client) qrdbAudit() (QRDBAuditClient, error) {
+	if rt, ok := c.transport.(interface {
+		QRDBAudit() *rest.QRDBAuditClient
+	}); ok && (c.opts == nil || (c.opts.embeddedQRDB == nil && (c.opts.transportType == TransportREST || c.opts.transportType == TransportQUIC))) {
+		return rt.QRDBAudit(), nil
+	}
+	if mt, ok := c.transport.(*qbmcp.Transport); ok && (c.opts == nil || (c.opts.embeddedQRDB == nil && c.opts.transportType == TransportMCP)) {
+		return mt.QRDBAudit(), nil
+	}
+	qrdb, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	if qrdb == nil {
+		return nil, sdkerrors.NewUnavailable("qrdbAudit", "the qrdb client is not configured")
+	}
+	ac := qrdb.Audit()
+	if ac == nil {
+		return nil, sdkerrors.NewUnavailable("qrdbAudit", "the qrdb transport does not serve the audit service")
+	}
+	if c.opts != nil && c.opts.embeddedQRDB == nil && c.opts.authToken != "" && qrdbSubClientSpeaksGRPC(c.opts.transportType) {
+		return &qrdbBearerAuditClient{inner: ac, bearer: "Bearer " + c.opts.authToken}, nil
+	}
+	if c.opts != nil && c.opts.embeddedQRDB != nil {
+		return &qrdbEmbeddedTenantAuditClient{inner: ac}, nil
+	}
+	return ac, nil
 }

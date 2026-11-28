@@ -88,6 +88,9 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 	if svc := es.server.GetQRDBEmbeddingServicer(); svc != nil {
 		servicers.Embedding = svc
 	}
+	if sink := es.server.GetQRDBAuditSink(); sink != nil {
+		servicers.Audit = sink
+	}
 	if uafSvc := es.server.GetQRDBUserAuthFactorServicer(); uafSvc != nil {
 		servicers.UserAuthFactor = uafSvc
 	}
@@ -155,6 +158,7 @@ var _ interface {
 	GetQRDBAdminServicer() quicbaas.QRDBAdminServicer
 	GetQRDBUserServicer() quicbaas.QRDBUserServicer
 	GetQRDBEmbeddingServicer() qrdbservice.EmbeddingServicer
+	GetQRDBAuditSink() quicbaas.QRDBNodeAuditLogger
 	GetQRDBUserAuthFactorServicer() quicbaas.QRDBUserAuthFactorServicer
 	GetCeremonyServices() *server.CeremonyServices
 	GetDataPlaneBarrierService() server.BaasBarrierService

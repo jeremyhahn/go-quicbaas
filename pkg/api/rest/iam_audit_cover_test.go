@@ -124,7 +124,7 @@ func TestDeleteOldAuditEvents_Success(t *testing.T) {
 	handler, admin, cleanup := setupAuditDeleteHandler(t)
 	defer cleanup()
 
-	// Grant the user the audit:delete permission for tenant1.
+	// Grant the user the audit_events:delete permission for tenant1.
 	_, err := admin.CreateAssignment(tenantctx.WithSystem(context.Background()), iam.CreateAdminAssignmentOptions{
 		UserID:      70001,
 		AdminRole:   iam.AdminRoleTenantAdmin,

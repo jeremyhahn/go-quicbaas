@@ -124,6 +124,16 @@ const (
 	// an event via RecordAuditEvent (api/proto/iam/iam.proto).
 	AuditRecord qrdbsdk.Permission = "audit_events:record"
 
+	// AuditDelete ("audit_events:delete") authorizes calling the audit
+	// delete endpoint (REST DELETE /api/v1/iam/audit, MCP
+	// quicbaas_iam_audit_delete, embedded quicbaas.IAM.Audit/Delete). The
+	// chain is append-only, so the call erases nothing; the verb still
+	// gates it apart from audit:query (#1752). It lives in the
+	// "audit_events" family for the same reason AuditRecord does: go-qrdb
+	// owns "audit" and TestAll_DoesNotShadowAQRDBPermission forbids adding
+	// an action to it.
+	AuditDelete qrdbsdk.Permission = "audit_events:delete"
+
 	// The SDLC module's verbs. A binding attaches a forge repository and
 	// its review policy to an orchestration Project; the module then holds
 	// forge credentials and drives autonomous work against that repository,
@@ -565,6 +575,21 @@ var contributions = []contribution{
 		// state — it is a plain data-plane write, the audit-resource
 		// equivalent of AttestationVerify's read-strength "outside the
 		// Security Officer's duties" classification.
+		duty: dutyOutsideSecurityOfficer,
+	},
+	{
+		// audit_events:delete is granted to Admin alone: calling the audit
+		// delete endpoint is an administrative act, never an operational or
+		// oversight one, so neither Operator nor Auditor holds it (the
+		// auditor must never act on the record it oversees). Self-scope:
+		// a caller reaches its own tenant's chain only, as the delete
+		// integration test pins (a super_admin is refused another tenant's
+		// chain on scope, not permission).
+		permission: AuditDelete,
+		scope:      scopeSelf,
+		roles:      []string{qrdbsdk.PermissionRoleAdmin},
+		// Not governance and no key material: the chain is append-only and
+		// the call erases nothing.
 		duty: dutyOutsideSecurityOfficer,
 	},
 	// SDLC bindings. Reads to Admin and Operator; bind and unbind to Admin

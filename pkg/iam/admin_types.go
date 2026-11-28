@@ -113,7 +113,7 @@ const (
 	// Audit permissions.
 	PermAuditRead   AdminPermission = "audit:read"
 	PermAuditExport AdminPermission = "audit:export"
-	PermAuditDelete AdminPermission = "audit:delete"
+	PermAuditDelete AdminPermission = "audit_events:delete"
 
 	// Session permissions.
 	PermSessionRead   AdminPermission = "session:read"
