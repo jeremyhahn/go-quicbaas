@@ -399,15 +399,17 @@ func TestSSHClientPropagatesTransportError(t *testing.T) {
 	assert.Equal(t, sdkerrors.CodeUnavailable, sdkerrors.Code(err))
 }
 
-// TestSSHSessionAndConsoleAreUnimplemented documents the deliberate carve-out:
-// an outbound SSH session must run in the caller's process, so no QuicBaaS
-// transport terminates one.
-func TestSSHSessionAndConsoleAreUnimplemented(t *testing.T) {
+// TestSSHSessionDialAndConsole: Session().Dial is served (it dials from the
+// caller's process; client/ssh's dial tests drive a real session), while the
+// interactive Console stays a local capability no transport terminates.
+func TestSSHSessionDialAndConsole(t *testing.T) {
 	ssh := newSSHTestClient(&sshRecordingTransport{})
 
+	// A request without a key is rejected by Dial itself, not refused as
+	// unimplemented.
 	_, err := ssh.Session().Dial(context.Background(), sshclient.SessionDialRequest{Host: "h", User: "u"})
 	require.Error(t, err)
-	assert.Equal(t, sdkerrors.CodeUnimplemented, sdkerrors.Code(err))
+	assert.Equal(t, sdkerrors.CodeInvalidInput, sdkerrors.Code(err))
 
 	_, err = ssh.Console(context.Background(), sshclient.ConsoleConnectRequest{Host: "h", User: "u"}, sshclient.ConsoleConfig{})
 	require.Error(t, err)

@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"testing"
 
@@ -160,6 +161,27 @@ func TestSSHTools_SignDecodesBase64Digest(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "ssh-ed25519", res.(*sshclient.SignResponse).Format)
+}
+
+func TestSSHTools_SignPassesAlgorithm(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	key, err := gossh.NewSignerFromKey(priv)
+	require.NoError(t, err)
+	fake := sshfake.NewClient()
+	fake.KeySigner = key
+
+	registry := newSSHRegistry(t, fake)
+	digest := []byte("digest")
+	res, err := registry.executeSSHTool(context.Background(), "quicbaas_ssh_key_sign", map[string]interface{}{
+		"scope": "user", "owner": "alice", "name": "laptop",
+		"digest_b64": base64.StdEncoding.EncodeToString(digest),
+		"algorithm":  gossh.KeyAlgoRSASHA512,
+	})
+	require.NoError(t, err)
+	sig := res.(*sshclient.SignResponse)
+	assert.Equal(t, gossh.KeyAlgoRSASHA512, sig.Format)
+	require.NoError(t, key.PublicKey().Verify(digest, &gossh.Signature{Format: sig.Format, Blob: sig.Blob}))
 }
 
 func TestSSHTools_KnownHostsAndAuthorized(t *testing.T) {

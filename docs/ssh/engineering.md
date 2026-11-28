@@ -543,15 +543,35 @@ those shapes.
 | QUIC | `OpOrchestrator` (0x8F) dispatch byte, SSH sub-op range `0x50-0x5D` |
 | MCP | `quicbaas_ssh_*` tools |
 
-### Session and Console are deliberately unimplemented
+### Session dials from the caller; Console is unimplemented
 
-`Session().Dial` and `Console` report `CodeUnimplemented` on every QuicBaaS
-transport. An outbound SSH session must run in the caller's own process;
-terminating one on the server would turn a key vault into an SSH jump host
-that dials arbitrary hosts on a caller's behalf. Remote keys still drive a
-local session — resolve `Keys().Signer` and pass it to your own dialer. This
-matches go-xkms, whose remote transports refuse both verbs for the same
-reason.
+`Session().Dial` connects from the caller's own process
+(`sdk/go/client/ssh/client.go`, with its own TCP dial and SSH handshake in
+`session_dial.go`, returning go-xkms's session error types), the same design as every go-xkms transport. The transport carries two RPCs only:
+`Keys().Signer`, whose forward-signing proxy ships each digest to the server
+so the private key never leaves it, and `KnownHosts().Callback`, which checks
+the presented host key against the pins of `HostKeyScope`/`HostKeyOwner`
+(default: the key's scope and owner). Verification fails closed: an unpinned
+host is `CodeNotFound` and a changed key is `*HostKeyMismatchError`, and the
+key signs nothing for a host that failed. The server never terminates or
+relays the SSH stream, so it is not a jump host. `Console` reports
+`CodeUnimplemented` on every transport: an interactive console needs a
+persistent byte stream no QuicBaaS transport carries. Tests:
+`sdk/go/client/ssh/client_dial_test.go` runs a real session against a
+loopback SSH server.
+
+The forward signer is an `ssh.AlgorithmSigner`, so an RSA key authenticates
+with rsa-sha2-256 or rsa-sha2-512 when the server asks for it, not with
+`ssh-rsa` (SHA-1). The chosen algorithm travels as `algorithm` on the sign
+request on every transport (`SSHSignDigestRequest.algorithm` on gRPC). The
+service refuses, as invalid argument, an algorithm that does not fit the key,
+or a SHA-2 algorithm that a remote go-xkms backend's signer cannot honour.
+
+Cancelling the dial context stops `Dial` at any stage, including a peer that
+accepts TCP and withholds its SSH banner. After `Dial` returns, the caller's
+context no longer governs the session: host-key checks on rekey run under the
+session's own context, each bounded by the dial timeout, and end when the
+session is closed.
 
 `Close()` is a no-op: the transport belongs to the parent SDK client.
 

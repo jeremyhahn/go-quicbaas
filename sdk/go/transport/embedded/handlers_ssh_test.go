@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"testing"
 
@@ -116,6 +117,24 @@ func TestEmbeddedSSHHandlers_SignDigest(t *testing.T) {
 	sig, ok := resp.(*sshclient.SignResponse)
 	require.True(t, ok)
 	assert.Equal(t, "ssh-ed25519", sig.Format)
+}
+
+func TestEmbeddedSSHHandlers_SignDigestCarriesAlgorithm(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	key, err := gossh.NewSignerFromKey(priv)
+	require.NoError(t, err)
+	fake := sshfake.NewClient()
+	fake.KeySigner = key
+	svc := newSSHTestService(fake)
+
+	resp, err := handleSSHSignDigest(context.Background(), svc, &sshclient.SignRequest{
+		Name: "rsa", Digest: []byte("digest"), Algorithm: gossh.KeyAlgoRSASHA512,
+	})
+	require.NoError(t, err)
+	sig, ok := resp.(*sshclient.SignResponse)
+	require.True(t, ok)
+	assert.Equal(t, gossh.KeyAlgoRSASHA512, sig.Format)
 }
 
 func TestEmbeddedSSHHandlers_KnownHostsAndAuthorized(t *testing.T) {

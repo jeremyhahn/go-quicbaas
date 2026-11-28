@@ -239,6 +239,30 @@ func TestSSHHandler_ImportSendsPassphraseB64(t *testing.T) {
 	}
 }
 
+// TestSSHHandler_SignSendsAlgorithm pins the sign body's algorithm field. A
+// dropped field signs RSA keys with legacy ssh-rsa, which SHA-2-only servers
+// reject.
+func TestSSHHandler_SignSendsAlgorithm(t *testing.T) {
+	var body map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"format":"rsa-sha2-256"}`))
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	_, err := tr.sshHandler.handleRequest(context.Background(), sshclient.MethodSignDigest,
+		&sshclient.SignRequest{Name: "rsa", Digest: []byte("d"), Algorithm: "rsa-sha2-256"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := body["algorithm"]; got != "rsa-sha2-256" {
+		t.Fatalf("algorithm = %v, want rsa-sha2-256", got)
+	}
+}
+
 // =============================================================================
 // Error paths
 // =============================================================================

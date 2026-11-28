@@ -89,12 +89,17 @@ func (h *sshMCPHandler) transformRequest(method string, req interface{}) (map[st
 			"passphrase_b64": typed.PassphraseB64,
 		}, nil
 	case *sshclient.SignRequest:
-		return map[string]interface{}{
+		args := map[string]interface{}{
 			"scope":      typed.Scope,
 			"owner":      typed.Owner,
 			"name":       typed.Name,
 			"digest_b64": base64.StdEncoding.EncodeToString(typed.Digest),
-		}, nil
+		}
+		// Left out when empty, so an older server sees an unchanged call.
+		if typed.Algorithm != "" {
+			args["algorithm"] = typed.Algorithm
+		}
+		return args, nil
 	}
 	return sshArgumentsFromRequest(method, req)
 }

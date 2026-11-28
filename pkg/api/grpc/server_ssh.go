@@ -188,6 +188,7 @@ func (s *SSHServer) SignSSHDigest(ctx context.Context, req *pb.SSHSignDigestRequ
 	}
 	sig, err := s.sshSvc.SignDigest(ctx, service.SSHSignRequest{
 		Scope: req.Scope, Owner: req.Owner, Name: req.Name, Digest: req.Digest,
+		Algorithm: req.GetAlgorithm(),
 	})
 	if err != nil {
 		return nil, convertSSHError(err)

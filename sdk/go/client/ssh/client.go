@@ -18,9 +18,13 @@ import (
 	"encoding/base64"
 	"io"
 	"net"
+	"strconv"
+	"sync/atomic"
+	"time"
 
 	gossh "golang.org/x/crypto/ssh"
 
+	xkmssession "github.com/jeremyhahn/go-xkms/pkg/ssh/session"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -63,16 +67,18 @@ func (c *client) KnownHosts() KnownHostsClient { return &knownHostsClient{t: c.t
 // AuthorizedKeys returns the authorized_keys sub-client.
 func (c *client) AuthorizedKeys() AuthorizedKeysClient { return &authorizedKeysClient{t: c.t} }
 
-// Session returns the session-dial sub-client. Dial reports Unimplemented:
-// an outbound SSH session belongs in the caller's own process, and proxying
-// it through the QuicBaaS server would turn a key vault into an SSH jump
-// host. Callers drive a local session with a remote key by resolving
-// Keys().Signer, which delegates each signature over the wire.
-func (c *client) Session() SessionClient { return sessionClient{} }
+// Session returns the session-dial sub-client. Dial connects from the
+// caller's own process, as every go-xkms transport does: the private key
+// stays on the server (each signature goes through Keys().Signer) and the
+// host key is checked against the server's pins (KnownHosts().Callback).
+// The server never carries the SSH byte stream, so it is not a jump host.
+func (c *client) Session() SessionClient {
+	return sessionClient{keys: &keysClient{t: c.t}, hosts: &knownHostsClient{t: c.t}}
+}
 
-// Console reports Unimplemented for the same reason Session().Dial does: the
-// PTY must run in the caller's process. This mirrors go-xkms, whose own
-// remote transports all refuse Console.
+// Console reports Unimplemented: an interactive console needs a persistent
+// byte stream, which no QuicBaaS transport carries. This mirrors go-xkms,
+// whose gRPC and MCP transports refuse Console too.
 func (c *client) Console(_ context.Context, _ ConsoleConnectRequest, _ ConsoleConfig) (ConsoleSession, error) {
 	return nil, errors.NewUnimplemented("ssh.Console",
 		"interactive console is a local capability; use Keys().Signer with a local dialer")
@@ -227,6 +233,12 @@ func (k *keysClient) ExportPublic(ctx context.Context, req ExportRequest) (*Publ
 // once and every Sign call ships only the digest, so the private key never
 // leaves the server-side store.
 func (k *keysClient) Signer(ctx context.Context, req GetKeyRequest) (gossh.Signer, error) {
+	return k.newRemoteSigner(ctx, req)
+}
+
+// newRemoteSigner builds the server-held key's signer. Its signing RPCs run
+// under context.Background() unless the caller sets its ctx.
+func (k *keysClient) newRemoteSigner(ctx context.Context, req GetKeyRequest) (*remoteSigner, error) {
 	const op = "ssh.Keys.Signer"
 	pub, err := k.ExportPublic(ctx, ExportRequest{Scope: req.Scope, Owner: req.Owner, Name: req.Name})
 	if err != nil {
@@ -244,7 +256,13 @@ type remoteSigner struct {
 	t   transport.Transport
 	ref GetKeyRequest
 	pub gossh.PublicKey
+	// ctx bounds the signing RPC. Session.Dial sets it to the dial's
+	// deadline-bound context; a signer from Keys().Signer leaves it nil and
+	// signs under context.Background().
+	ctx context.Context
 }
+
+var _ gossh.AlgorithmSigner = (*remoteSigner)(nil)
 
 // PublicKey returns the signer's public half.
 func (s *remoteSigner) PublicKey() gossh.PublicKey { return s.pub }
@@ -252,16 +270,29 @@ func (s *remoteSigner) PublicKey() gossh.PublicKey { return s.pub }
 // Sign ships the digest to the server and returns the resulting signature.
 // The io.Reader is ignored: randomness is the server's responsibility, which
 // is where the private key lives.
-func (s *remoteSigner) Sign(_ io.Reader, data []byte) (*gossh.Signature, error) {
+func (s *remoteSigner) Sign(r io.Reader, data []byte) (*gossh.Signature, error) {
+	return s.SignWithAlgorithm(r, data, "")
+}
+
+// SignWithAlgorithm signs data on the server with the named SSH signature
+// algorithm, e.g. rsa-sha2-256 or rsa-sha2-512 for an RSA key. An empty
+// algorithm signs with the key's default algorithm. Implementing
+// ssh.AlgorithmSigner lets an SSH client negotiate the RSA SHA-2 algorithms.
+func (s *remoteSigner) SignWithAlgorithm(_ io.Reader, data []byte, algorithm string) (*gossh.Signature, error) {
 	const op = "ssh.Keys.Signer.Sign"
 	if len(data) == 0 {
 		return nil, errors.NewInvalidInput(op, "digest is required")
 	}
-	resp, err := s.t.Request(context.Background(), ServiceName, MethodSignDigest, &SignRequest{
-		Scope:  s.ref.Scope,
-		Owner:  s.ref.Owner,
-		Name:   s.ref.Name,
-		Digest: data,
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resp, err := s.t.Request(ctx, ServiceName, MethodSignDigest, &SignRequest{
+		Scope:     s.ref.Scope,
+		Owner:     s.ref.Owner,
+		Name:      s.ref.Name,
+		Digest:    data,
+		Algorithm: algorithm,
 	})
 	if err != nil {
 		return nil, err
@@ -525,13 +556,106 @@ func (a *authorizedKeysClient) Verify(ctx context.Context, scope, owner string, 
 // Session
 // =============================================================================
 
-// sessionClient refuses outbound dials on every QuicBaaS transport.
-type sessionClient struct{}
+// defaultDialTimeout bounds the TCP connect and SSH handshake when the
+// request names no timeout.
+const defaultDialTimeout = 30 * time.Second
 
-// Dial reports Unimplemented. See client.Session for the rationale.
-func (sessionClient) Dial(_ context.Context, _ SessionDialRequest) (Session, error) {
-	return nil, errors.NewUnimplemented("ssh.Session.Dial",
-		"outbound SSH sessions are a local capability; use Keys().Signer with a local dialer")
+// sessionClient dials outbound SSH sessions from the caller's process. The
+// transport carries only the two RPCs go-xkms's remote transports use: the
+// forward-signing Keys().Signer and the KnownHosts().Callback pin check.
+// The SSH byte stream never crosses the QuicBaaS server.
+type sessionClient struct {
+	keys  *keysClient
+	hosts *knownHostsClient
+}
+
+// Dial opens an SSH session to req.Host as req.User, authenticating with the
+// server-held key (KeyScope, KeyOwner, KeyName) and verifying the host key
+// against the pins of (HostKeyScope, HostKeyOwner), which default to the
+// key's scope and owner. Host-key verification fails closed: an unpinned
+// host is NotFound and a changed key is a *HostKeyMismatchError. The
+// returned Session owns no local key material, so Close only ends the
+// connection.
+//
+// Cancelling ctx stops the dial at any stage, including a peer that accepts
+// TCP and withholds its SSH banner. After Dial returns, ctx no longer
+// governs the session: the host-key checks a key re-exchange runs use the
+// session's own context, each bounded by the dial timeout, and that context
+// ends when the Session is closed.
+func (s sessionClient) Dial(ctx context.Context, req SessionDialRequest) (Session, error) {
+	const op = "ssh.Session.Dial"
+	if err := requireContext(ctx, op); err != nil {
+		return nil, err
+	}
+	if req.Host == "" {
+		return nil, errors.NewInvalidInput(op, "host is required")
+	}
+	if req.User == "" {
+		return nil, errors.NewInvalidInput(op, "user is required")
+	}
+	if req.KeyName == "" {
+		return nil, errors.NewInvalidInput(op, "key name is required")
+	}
+	if req.Port < 0 || req.Port > 65535 {
+		return nil, errors.NewInvalidInput(op, "port is out of range")
+	}
+	if req.TimeoutSeconds < 0 {
+		return nil, errors.NewInvalidInput(op, "timeout must not be negative")
+	}
+	timeout := defaultDialTimeout
+	if req.TimeoutSeconds > 0 {
+		timeout = time.Duration(req.TimeoutSeconds) * time.Second
+	}
+	// The dial context bounds the whole handshake, including the signing
+	// and host-key pin RPCs its callbacks make, so a stalled RPC cannot
+	// hold Dial past its timeout.
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	// The session context outlives Dial for the host-key checks of later
+	// key re-exchanges. It keeps ctx's values (credentials) but not its
+	// cancellation or deadline, and Session.Close ends it.
+	sessCtx, sessCancel := context.WithCancel(context.WithoutCancel(ctx))
+	signer, err := s.keys.newRemoteSigner(dialCtx, GetKeyRequest{Scope: req.KeyScope, Owner: req.KeyOwner, Name: req.KeyName})
+	if err != nil {
+		sessCancel()
+		return nil, err
+	}
+	// Public-key authentication happens once, during the handshake.
+	signer.ctx = dialCtx
+	pinScope, pinOwner := req.HostKeyScope, req.HostKeyOwner
+	if pinScope == "" {
+		pinScope = req.KeyScope
+	}
+	if pinOwner == "" {
+		pinOwner = req.KeyOwner
+	}
+	port := req.Port
+	if port == 0 {
+		port = 22
+	}
+	var established atomic.Bool
+	hostKeyCallback := func(hostname string, _ net.Addr, key gossh.PublicKey) error {
+		if !established.Load() {
+			return s.hosts.Verify(dialCtx, pinScope, pinOwner, stripPort(hostname), key)
+		}
+		callCtx, callCancel := context.WithTimeout(sessCtx, timeout)
+		defer callCancel()
+		return s.hosts.Verify(callCtx, pinScope, pinOwner, stripPort(hostname), key)
+	}
+	cfg := &gossh.ClientConfig{
+		User:            req.User,
+		Auth:            []gossh.AuthMethod{gossh.PublicKeys(signer)},
+		HostKeyCallback: hostKeyCallback,
+		Timeout:         timeout,
+	}
+	addr := net.JoinHostPort(req.Host, strconv.Itoa(port))
+	client, err := dialSSHClient(dialCtx, req.Host, addr, cfg, timeout)
+	if err != nil {
+		sessCancel()
+		return nil, err
+	}
+	established.Store(true)
+	return xkmssession.NewSession(req.Host, req.User, client, sessCancel), nil
 }
 
 // =============================================================================

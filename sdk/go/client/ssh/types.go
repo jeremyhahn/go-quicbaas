@@ -196,6 +196,10 @@ type SignRequest struct {
 	Owner  string `json:"owner"`
 	Name   string `json:"name"`
 	Digest []byte `json:"digest"`
+	// Algorithm is the SSH signature algorithm to sign with, e.g.
+	// rsa-sha2-256 or rsa-sha2-512 for an RSA key. Empty signs with the
+	// key's default algorithm.
+	Algorithm string `json:"algorithm,omitempty"`
 }
 
 // SignResponse mirrors *golang.org/x/crypto/ssh.Signature.
