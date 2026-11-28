@@ -2607,6 +2607,7 @@ func (m *mockSDKClientForClusterCovPlusTest) BarrierCeremonyMgmt() quicbaas.Barr
 	return nil
 }
 func (m *mockSDKClientForClusterCovPlusTest) TenantMgmtService() quicbaas.TenantService { return nil }
+func (m *mockSDKClientForClusterCovPlusTest) Compute() quicbaas.ComputeService          { return nil }
 func (m *mockSDKClientForClusterCovPlusTest) Barrier() (quicbaas.QRDBBarrierClient, error) {
 	return nil, nil
 }

@@ -74,6 +74,7 @@ DELETE /api/v1/xkms/v1/ssh/known-hosts/{host}
 DELETE /oauth2/register/{client_id}
 DELETE /ui/*
 DELETE /v1/barrier/recovery
+DELETE /v2/*
 GET /
 GET /.well-known/jwks.json
 GET /.well-known/oauth-authorization-server
@@ -309,18 +310,23 @@ GET /v1/barrier/recovery/status
 GET /v1/barrier/status
 GET /v1/ceremony/officers
 GET /v1/ceremony/status
+GET /v2
+GET /v2/*
 HEAD /acme/directory
 HEAD /acme/new-nonce
 HEAD /api/v1/metrics/
 HEAD /api/v1/objects/*
 HEAD /api/v1/xkms/certs/{id}
 HEAD /ui/*
+HEAD /v2
+HEAD /v2/*
 OPTIONS /api/v1/metrics/
 OPTIONS /ui/*
 PATCH /api/v1/metrics/
 PATCH /api/v1/tenants/{tenant_id}/entitlements
 PATCH /api/v1/tenants/{tenant_id}/quotas
 PATCH /ui/*
+PATCH /v2/*
 POST /acme/account/{id}
 POST /acme/authz/{id}
 POST /acme/cert/{id}
@@ -626,6 +632,7 @@ POST /v1/ceremony/officer-share/begin
 POST /v1/ceremony/officer-share/complete
 POST /v1/ceremony/sign-csr
 POST /v1/init/enroll-external-officer
+POST /v2/*
 PUT /api/v1/admin/assignments/{assignment_id}
 PUT /api/v1/admin/object-backends/{name}
 PUT /api/v1/admin/object-backends/{name}/status
@@ -677,6 +684,7 @@ PUT /api/v1/vector/namespaces/{namespace}/vectors/{id}/metadata
 PUT /api/v1/xkms/piv/slots/{slot}/cert
 PUT /oauth2/register/{client_id}
 PUT /ui/*
+PUT /v2/*
 TRACE /api/v1/metrics/
 TRACE /ui/*
 POST /api/v1/scheduler/nodes

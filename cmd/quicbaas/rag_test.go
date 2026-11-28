@@ -98,6 +98,7 @@ func (m *mockRAGSDKClient) DataStore() (quicbaas.QRDBKVStore, error)            
 
 func (m *mockRAGSDKClient) BarrierCeremonyMgmt() quicbaas.BarrierCeremonyService  { return nil }
 func (m *mockRAGSDKClient) TenantMgmtService() quicbaas.TenantService             { return nil }
+func (m *mockRAGSDKClient) Compute() quicbaas.ComputeService                      { return nil }
 func (m *mockRAGSDKClient) Barrier() (quicbaas.QRDBBarrierClient, error)          { return nil, nil }
 func (m *mockRAGSDKClient) BarrierCeremony() (quicbaas.QRDBCeremonyClient, error) { return nil, nil }
 func (m *mockRAGSDKClient) SealStore() (quicbaas.QRDBSealStoreClient, error)      { return nil, nil }

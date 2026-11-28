@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,6 +54,12 @@ type objectStorageService struct {
 	closed         atomic.Bool
 	mu             sync.RWMutex
 	objectIDGen    atomic.Uint64
+	// keyLocks guard each key (striped by key hash). Writers of a key hold
+	// it exclusively from reading the entry they replace through removing
+	// its backend copies; readers hold it shared from their catalog read
+	// through their backend read, so an overwrite never removes an object
+	// a reader has resolved, and another writer of the key waits for it.
+	keyLocks [64]sync.RWMutex
 }
 
 // objectStorageMetrics holds Prometheus metrics for object storage operations.
@@ -187,6 +194,33 @@ func (s *objectStorageService) checkClosed() error {
 	return nil
 }
 
+// keyLock returns the stripe lock of key: writers take it exclusively,
+// readers of the key's backend object take it shared.
+func (s *objectStorageService) keyLock(key string) *sync.RWMutex {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	return &s.keyLocks[h.Sum32()%uint32(len(s.keyLocks))]
+}
+
+// deleteSuperseded removes the backend copies of previous, the entry a
+// put of key has just replaced, except keep (the new object). A failure
+// is logged: the new object is already stored and catalogued.
+func (s *objectStorageService) deleteSuperseded(ctx context.Context, key string, previous *catalog.CatalogEntry, keep string) {
+	for _, loc := range previous.GetAllLocations() {
+		if loc.ObjectRef == "" || loc.ObjectRef == keep {
+			continue
+		}
+		backend, err := s.backendMgr.GetBackend(loc.Store)
+		if err != nil {
+			s.logger.WithFields(map[string]interface{}{"key": key, "store": loc.Store, "error": err.Error()}).Warn("failed to get backend for superseded object")
+			continue
+		}
+		if err := backend.DeleteWithContext(ctx, loc.ObjectRef); err != nil {
+			s.logger.WithFields(map[string]interface{}{"key": key, "store": loc.Store, "error": err.Error()}).Warn("failed to delete superseded object from backend")
+		}
+	}
+}
+
 // =============================================================================
 // Object CRUD Operations
 // =============================================================================
@@ -217,6 +251,10 @@ func (s *objectStorageService) PutObject(ctx context.Context, req *PutObjectRequ
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
+
+	keyLock := s.keyLock(req.Key)
+	keyLock.Lock()
+	defer keyLock.Unlock()
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -286,6 +324,12 @@ func (s *objectStorageService) PutObject(ctx context.Context, req *PutObjectRequ
 	}
 
 	// Generate object reference for backend storage
+	// The entry this put replaces, if any; its backend copies are removed
+	// once the new entry is catalogued. A failed lookup removes nothing.
+	previous, prevErr := s.catalogMgr.Get(ctx, req.Key)
+	if prevErr != nil {
+		previous = nil
+	}
 	objectRef := s.generateObjectRef(req.Key)
 
 	// Write to backend
@@ -346,6 +390,9 @@ func (s *objectStorageService) PutObject(ctx context.Context, req *PutObjectRequ
 			s.metrics.operationErrors.WithLabelValues("put_object", "catalog_error").Inc()
 		}
 		return nil, api.NewStorageOperationError("objectstorage.PutObject", "store catalog entry", err)
+	}
+	if previous != nil {
+		s.deleteSuperseded(ctx, req.Key, previous, objectRef)
 	}
 
 	// Enqueue async replication if configured
@@ -411,6 +458,12 @@ func (s *objectStorageService) GetObject(ctx context.Context, req *GetObjectRequ
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
+
+	// Hold the key shared from the catalog read through the backend
+	// read: an overwrite waits rather than removing the object read here.
+	keyLock := s.keyLock(req.Key)
+	keyLock.RLock()
+	defer keyLock.RUnlock()
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1053,6 +1106,12 @@ func (s *objectStorageService) ReplicateObject(ctx context.Context, req *Replica
 		return nil, err
 	}
 
+	// Hold the key shared from the catalog read through the source
+	// read: an overwrite waits rather than removing the object read here.
+	keyLock := s.keyLock(req.Key)
+	keyLock.RLock()
+	defer keyLock.RUnlock()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1557,6 +1616,12 @@ func (s *objectStorageService) VerifyObject(ctx context.Context, req *VerifyObje
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
+
+	// Hold the key shared from the catalog read through the backend
+	// read: an overwrite waits rather than removing the object read here.
+	keyLock := s.keyLock(req.Key)
+	keyLock.RLock()
+	defer keyLock.RUnlock()
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
