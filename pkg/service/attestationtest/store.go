@@ -14,6 +14,7 @@
 package attestationtest
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"sync"
@@ -81,4 +82,34 @@ func (m *MemoryStore) Delete(_ context.Context, key string) error {
 	defer m.mu.Unlock()
 	delete(m.records, key)
 	return nil
+}
+
+// PutIfAbsent stores value only when key is absent.
+func (m *MemoryStore) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
+	if m.Fail != nil {
+		return false, m.Fail
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.records[key]; ok {
+		return false, nil
+	}
+	m.records[key] = append([]byte(nil), value...)
+	return true, nil
+}
+
+// CompareAndSwap replaces key's value with next only when it still equals
+// expected. An absent key stays absent.
+func (m *MemoryStore) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	if m.Fail != nil {
+		return false, m.Fail
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.records[key]
+	if !ok || !bytes.Equal(current, expected) {
+		return false, nil
+	}
+	m.records[key] = append([]byte(nil), next...)
+	return true, nil
 }

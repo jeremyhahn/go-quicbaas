@@ -71,7 +71,8 @@ func readSimulatorPCRs(t *testing.T, sim *tpmsim.Simulator) map[uint32][]byte {
 
 func newSimulatorRuntime(t *testing.T, sim *tpmsim.Simulator, akRoot *attestationtest.Authority, reference map[uint32][]byte) *TPMAttestingRuntime {
 	t.Helper()
-	rt, err := NewTPMAttestingRuntime(&recordingRuntime{}, sim.TPM, NewTestHostAppraiser(t, akRoot, attestationtest.SHA256Digests(reference)), newContainerTestLogger(t))
+	rt, err := NewTPMAttestingRuntime(&recordingRuntime{}, sim.TPM, NewTestHostAppraiser(t, akRoot, attestationtest.SHA256Digests(reference)), newContainerTestLogger(t),
+		WithImageVerifier(acceptingImageVerifier{}), WithProvenanceVerifier(acceptingProvenanceVerifier{}), WithClusterManifest(listingManifest{}))
 	if err != nil {
 		t.Fatalf("NewTPMAttestingRuntime: %v", err)
 	}
@@ -82,6 +83,7 @@ func simulatorSpec(level TrustLevel) *ContainerSpec {
 	return &ContainerSpec{
 		Image:           "alpine@" + testDigest,
 		TrustLevel:      level,
+		ImageSignature:  testImageSignature(),
 		TrustLabel:      "prod-agent",
 		ReferenceValues: "golden",
 	}

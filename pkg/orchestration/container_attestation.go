@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
@@ -100,8 +101,11 @@ var _ HostTPM = (*xkmstpm2.TPM2)(nil)
 // where.
 //
 // The interface is deliberately an EMBEDDING of ContainerRuntime rather than
-// three extra methods bolted onto it. A runtime either can attest or cannot,
-// and callers should be able to tell which by a type assertion:
+// three extra methods bolted onto it. Run and RunInteractive of an attesting
+// runtime refuse to start a container on a host the Verifier does not
+// verify; Attest produces the evidence for a remote verifier. A runtime
+// either can attest or cannot, and callers should be able to tell which by a
+// type assertion:
 //
 //	if attester, ok := runtime.(AttestingContainerRuntime); ok {
 //	        evidence, err := attester.Attest(ctx, spec, containerID)
@@ -194,28 +198,54 @@ type ContainerAttestation struct {
 	// value to confirm the measurement corresponds to this configuration.
 	LaunchMeasurement []byte `json:"launch_measurement,omitempty"`
 
+	// MeasurementLog is the node measurement log the Verifier replayed
+	// against the quoted MeasurementPCR. Empty below the measured tier.
+	MeasurementLog []MeasurementLogEntry `json:"measurement_log,omitempty"`
+
 	// AttestedAt is when the quote was taken.
 	AttestedAt time.Time `json:"attested_at"`
 }
 
 // LaunchMeasurement returns the byte string extended into the measurement PCR
 // for a spec. It binds the pinned image digest, the deterministic
-// configuration digest and the operator trust label into one newline-free,
+// configuration digest, the launch policy digest (LaunchPolicyDigest) and the
+// operator trust label into one newline-free,
 // field-separated record so a verifier can reconstruct it from the spec alone.
 func LaunchMeasurement(spec *ContainerSpec) ([]byte, error) {
+	policy, err := LaunchPolicyOf(spec)
+	if err != nil {
+		return nil, err
+	}
+	return LaunchMeasurementUnder(spec, policy)
+}
+
+// LaunchMeasurementUnder returns the launch measurement of spec run under
+// policy. LaunchMeasurement uses the spec's own policy; a launch an
+// allow-unsigned grant admitted runs under that policy plus the grant.
+func LaunchMeasurementUnder(spec *ContainerSpec, policy LaunchPolicy) ([]byte, error) {
 	configDigest, err := ContainerConfigDigest(spec)
 	if err != nil {
 		return nil, err
 	}
+	return launchMeasurementRecord(spec.ResolvedImageDigest(), configDigest, policy.Digest(), spec.TrustLabel), nil
+}
+
+// launchMeasurementRecord is the byte layout of a launch measurement: a
+// version tag and the image, configuration and policy digests and the
+// trust label, NUL-separated. LaunchMeasurementUnder builds it from a spec,
+// and ReplayMeasurementLog rebuilds it from a log entry's fields.
+func launchMeasurementRecord(imageDigest, configDigest, policyDigest, trustLabel string) []byte {
 	var buf bytes.Buffer
-	buf.WriteString("quicbaas-container-launch/v1")
+	buf.WriteString("quicbaas-container-launch/v2")
 	buf.WriteByte(0)
-	buf.WriteString(spec.ResolvedImageDigest())
+	buf.WriteString(imageDigest)
 	buf.WriteByte(0)
 	buf.WriteString(configDigest)
 	buf.WriteByte(0)
-	buf.WriteString(spec.TrustLabel)
-	return buf.Bytes(), nil
+	buf.WriteString(policyDigest)
+	buf.WriteByte(0)
+	buf.WriteString(trustLabel)
+	return buf.Bytes()
 }
 
 // TPMAttestingRuntime is the standalone Tier 1 / Tier 2 container runtime. It
@@ -233,6 +263,32 @@ type TPMAttestingRuntime struct {
 	tpm       HostTPM
 	appraiser HostAppraiser
 	logger    interfaces.Logger
+
+	// log is the node measurement log: one entry per measured launch,
+	// recorded in the same step as the PCR extend.
+	log *MeasurementLog
+
+	// images verifies a measured launch's image signature; unsigned may
+	// grant an unsigned image a measured launch. Either may be nil, which
+	// refuses the launches it would have admitted (default deny).
+	images   ImageVerifier
+	unsigned UnsignedImagePolicy
+	// provenance checks a signed image's software-factory provenance.
+	provenance ProvenanceVerifier
+	manifest   ClusterManifest
+
+	// logStore persists the node measurement log (WithMeasurementLogStore);
+	// nil keeps it in memory only. logRestore guards the one restore of the
+	// stored log; logSave orders the saves.
+	logStore   MeasurementLogStore
+	logRestore sync.Mutex
+	logLoaded  bool
+	logSave    sync.Mutex
+}
+
+// MeasurementLog returns the node measurement log of this runtime.
+func (r *TPMAttestingRuntime) MeasurementLog() *MeasurementLog {
+	return r.log
 }
 
 // Compile-time interface check.
@@ -246,7 +302,7 @@ var _ AttestingContainerRuntime = (*TPMAttestingRuntime)(nil)
 // with no TPM or no appraiser would silently degrade to Tier 0 while
 // advertising more, which is exactly the failure mode deny-by-default exists
 // to prevent.
-func NewTPMAttestingRuntime(base ContainerRuntime, tpm HostTPM, appraiser HostAppraiser, logger interfaces.Logger) (*TPMAttestingRuntime, error) {
+func NewTPMAttestingRuntime(base ContainerRuntime, tpm HostTPM, appraiser HostAppraiser, logger interfaces.Logger, opts ...TPMAttestingOption) (*TPMAttestingRuntime, error) {
 	if base == nil {
 		return nil, &InputValidationError{Field: "base", Message: "cannot be nil"}
 	}
@@ -259,7 +315,11 @@ func NewTPMAttestingRuntime(base ContainerRuntime, tpm HostTPM, appraiser HostAp
 	if logger == nil {
 		return nil, &InputValidationError{Field: "logger", Message: "cannot be nil"}
 	}
-	return &TPMAttestingRuntime{ContainerRuntime: base, tpm: tpm, appraiser: appraiser, logger: logger}, nil
+	r := &TPMAttestingRuntime{ContainerRuntime: base, tpm: tpm, appraiser: appraiser, logger: logger, log: NewMeasurementLog()}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r, nil
 }
 
 // TrustCapabilities reports the tiers this runtime can satisfy. Digest
@@ -273,30 +333,53 @@ func (r *TPMAttestingRuntime) TrustCapabilities() TrustCapabilities {
 	}
 }
 
-// Run performs a measured launch when the spec asks for one, then delegates
-// to the base runtime. The measurement is extended BEFORE the container
-// starts: a measurement taken afterwards would not be a measured launch, it
-// would be an assertion that something already running was approved.
+// Run performs a measured launch when the spec asks for one, appraises the
+// host when the spec requires a host TPM, then delegates to the base
+// runtime. The measurement is extended BEFORE the container starts: a
+// measurement taken afterwards would not be a measured launch, it would be
+// an assertion that something already running was approved.
+//
+// The order is admission, then the extend and its log entry, then the host
+// appraisal, then the start. The appraisal comes after the extend so the
+// quote covers this launch and the log replays to it. A container starts
+// only on a host the Verifier verifies; a launch refused at the appraisal
+// stays in the log and the PCR, because it was measured and refused, and
+// the log must keep matching the PCR.
 func (r *TPMAttestingRuntime) Run(ctx context.Context, spec *ContainerSpec) (string, error) {
-	if err := r.measureLaunch(spec); err != nil {
+	if err := r.prepareLaunch(ctx, spec); err != nil {
 		return "", err
 	}
 	return r.ContainerRuntime.Run(ctx, spec)
 }
 
-// RunInteractive performs a measured launch when the spec asks for one, then
-// delegates to the base runtime.
+// RunInteractive performs a measured launch when the spec asks for one,
+// appraises the host when the spec requires a host TPM, then delegates to
+// the base runtime, in the same order as Run.
 func (r *TPMAttestingRuntime) RunInteractive(ctx context.Context, spec *ContainerSpec) (*InteractiveProcess, error) {
-	if err := r.measureLaunch(spec); err != nil {
+	if err := r.prepareLaunch(ctx, spec); err != nil {
 		return nil, err
 	}
 	return r.ContainerRuntime.RunInteractive(ctx, spec)
 }
 
+// prepareLaunch measures the launch and, for a spec that requires a host
+// TPM, refuses it unless the Verifier verifies the host.
+func (r *TPMAttestingRuntime) prepareLaunch(ctx context.Context, spec *ContainerSpec) error {
+	if err := r.measureLaunch(ctx, spec); err != nil {
+		return err
+	}
+	if !spec.TrustLevel.RequiresHostTPM() {
+		return nil
+	}
+	_, err := r.appraiseHostFor(ctx, spec)
+	return err
+}
+
 // measureLaunch extends the launch measurement into the spec's measurement
-// PCR. It is a no-op below TrustLevelMeasured, so Tier 0 and Tier 1 launches
+// PCR and records it in the node measurement log; a failed extend records
+// nothing and the launch is refused. It is a no-op below TrustLevelMeasured, so Tier 0 and Tier 1 launches
 // leave the TPM untouched.
-func (r *TPMAttestingRuntime) measureLaunch(spec *ContainerSpec) error {
+func (r *TPMAttestingRuntime) measureLaunch(ctx context.Context, spec *ContainerSpec) error {
 	if spec == nil {
 		return &InputValidationError{Field: "spec", Message: "cannot be nil"}
 	}
@@ -307,20 +390,54 @@ func (r *TPMAttestingRuntime) measureLaunch(spec *ContainerSpec) error {
 		return nil
 	}
 
-	measurement, err := LaunchMeasurement(spec)
+	policy, err := r.admitImage(ctx, spec)
+	if err != nil {
+		return err
+	}
+	measurement, err := LaunchMeasurementUnder(spec, policy)
 	if err != nil {
 		return err
 	}
 
+	configDigest, err := ContainerConfigDigest(spec)
+	if err != nil {
+		return err
+	}
+	policyDigest := policy.Digest()
+
 	pcr := spec.EffectiveMeasurementPCR()
 	bank := spec.EffectiveMeasurementBank()
-	if err := r.tpm.ExtendPCR(pcr, bank, measurement); err != nil {
+	entry := MeasurementLogEntry{
+		Image:         spec.Image,
+		ImageDigest:   spec.ResolvedImageDigest(),
+		ConfigDigest:  configDigest,
+		PolicyDigest:  policyDigest,
+		TrustLabel:    spec.TrustLabel,
+		AllowUnsigned: policy.AllowUnsigned,
+		PCR:           pcr,
+		Bank:          bank,
+		Measurement:   measurement,
+	}
+	readBase := func() ([]byte, error) { return r.readRegister(pcr, bank) }
+	if err := r.restoreMeasurementLog(ctx); err != nil {
+		return &ContainerMeasurementError{Image: spec.Image, PCR: pcr, Bank: bank, Cause: err}
+	}
+	if _, err := r.log.record(entry, readBase, func() error {
+		return r.tpm.ExtendPCR(pcr, bank, measurement)
+	}); err != nil {
 		return &ContainerMeasurementError{
 			Image: spec.Image,
 			PCR:   pcr,
 			Bank:  bank,
 			Cause: err,
 		}
+	}
+	if err := r.saveMeasurementLog(ctx); err != nil {
+		// The PCR is extended and the in-memory log holds the entry, so
+		// the evidence still replays; the stored log is behind the PCR
+		// until the next save and is dropped by a restore that finds it
+		// no longer replays. The container is not started.
+		return &ContainerMeasurementError{Image: spec.Image, PCR: pcr, Bank: bank, Cause: err}
 	}
 
 	r.logger.Infof("measured launch: extended PCR %d (%s) for %s",
@@ -359,6 +476,11 @@ func (r *TPMAttestingRuntime) Attest(ctx context.Context, spec *ContainerSpec, c
 	if err := spec.Validate(); err != nil {
 		return nil, err
 	}
+	// A restarted node agent's evidence carries the log it measured before
+	// the restart.
+	if err := r.restoreMeasurementLog(ctx); err != nil {
+		return nil, err
+	}
 	if !spec.TrustLevel.RequiresHostTPM() {
 		return nil, &AttestationUnavailableError{
 			TrustLevel: spec.TrustLevel,
@@ -374,6 +496,83 @@ func (r *TPMAttestingRuntime) Attest(ctx context.Context, spec *ContainerSpec, c
 		return nil, err
 	}
 
+	host, err := r.appraiseHostFor(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	measured := host.measured
+	nonce, quote, bound, launchLog := host.nonce, host.quote, host.bound, host.launchLog
+
+	attestation := &ContainerAttestation{
+		ContainerID:     containerID,
+		Image:           spec.PinnedImageReference(),
+		ImageDigest:     spec.ResolvedImageDigest(),
+		ConfigDigest:    configDigest,
+		TrustLabel:      spec.TrustLabel,
+		TrustLevel:      spec.TrustLevel,
+		Nonce:           nonce,
+		Quoted:          quote.Quoted,
+		Signature:       quote.Signature,
+		PCRs:            bound.values,
+		PCRBank:         bound.bank,
+		EventLog:        quote.EventLog,
+		Measured:        measured,
+		MeasurementBank: spec.EffectiveMeasurementBank(),
+		AttestedAt:      time.Now().UTC(),
+	}
+
+	if measured {
+		// The reported measurement is the one this node recorded and
+		// extended, not one rebuilt from the spec: the spec does not carry
+		// the policy the launch was admitted under (an allow-unsigned
+		// grant), so a rebuilt measurement can differ from the log and PCR.
+		recorded := recordedLaunch(launchLog, spec, configDigest)
+		if recorded == nil {
+			return nil, &AttestationUnavailableError{
+				TrustLevel: spec.TrustLevel,
+				Reason:     "no measured launch of this image and configuration is in the node measurement log",
+			}
+		}
+		attestation.MeasurementPCR = spec.EffectiveMeasurementPCR()
+		attestation.LaunchMeasurement = bytes.Clone(recorded.Measurement)
+		attestation.MeasurementLog = launchLog
+	}
+
+	return attestation, nil
+}
+
+// recordedLaunch returns the newest launch entry in entries for spec's
+// measurement register whose image digest, configuration digest and trust
+// label are spec's, or nil when spec was not launched measured on this node.
+func recordedLaunch(entries []MeasurementLogEntry, spec *ContainerSpec, configDigest string) *MeasurementLogEntry {
+	pcr := spec.EffectiveMeasurementPCR()
+	bank := spec.EffectiveMeasurementBank()
+	imageDigest := spec.ResolvedImageDigest()
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := &entries[i]
+		if e.Kind == MeasurementLogLaunch && e.PCR == pcr && e.Bank == bank &&
+			e.ImageDigest == imageDigest && e.ConfigDigest == configDigest && e.TrustLabel == spec.TrustLabel {
+			return e
+		}
+	}
+	return nil
+}
+
+// hostEvidence is a quote of the host's PCRs, bound to its PCR read and
+// verified by the Verifier.
+type hostEvidence struct {
+	measured  bool
+	nonce     []byte
+	quote     xkmstpm2.Quote
+	bound     *boundPCRs
+	launchLog []MeasurementLogEntry
+}
+
+// appraiseHostFor quotes the PCRs spec's reference values cover (and the
+// measurement PCR for a measured launch), binds the PCR read to the signed
+// quote, and has the Verifier appraise the bound evidence with the node
+// measurement log. Anything short of a verified appraisal is an error.
+func (r *TPMAttestingRuntime) appraiseHostFor(ctx context.Context, spec *ContainerSpec) (*hostEvidence, error) {
 	bank, err := r.quoteBank(spec.Image)
 	if err != nil {
 		return nil, err
@@ -408,38 +607,19 @@ func (r *TPMAttestingRuntime) Attest(ctx context.Context, spec *ContainerSpec, c
 		return nil, err
 	}
 
-	if err := r.appraise(ctx, spec, nonce, quote, bound); err != nil {
+	// A measured launch's evidence carries the node measurement log, read
+	// after the quote: the log only grows, so every extend the quote covers
+	// is in it, and a launch between the quote and this read appears as an
+	// extra entry the Verifier's replay refuses rather than hides.
+	var launchLog []MeasurementLogEntry
+	if measured {
+		launchLog = r.log.Entries()
+	}
+
+	if err := r.appraise(ctx, spec, nonce, quote, bound, launchLog); err != nil {
 		return nil, err
 	}
-
-	attestation := &ContainerAttestation{
-		ContainerID:     containerID,
-		Image:           spec.PinnedImageReference(),
-		ImageDigest:     spec.ResolvedImageDigest(),
-		ConfigDigest:    configDigest,
-		TrustLabel:      spec.TrustLabel,
-		TrustLevel:      spec.TrustLevel,
-		Nonce:           nonce,
-		Quoted:          quote.Quoted,
-		Signature:       quote.Signature,
-		PCRs:            bound.values,
-		PCRBank:         bound.bank,
-		EventLog:        quote.EventLog,
-		Measured:        measured,
-		MeasurementBank: spec.EffectiveMeasurementBank(),
-		AttestedAt:      time.Now().UTC(),
-	}
-
-	if measured {
-		measurement, err := LaunchMeasurement(spec)
-		if err != nil {
-			return nil, err
-		}
-		attestation.MeasurementPCR = spec.EffectiveMeasurementPCR()
-		attestation.LaunchMeasurement = measurement
-	}
-
-	return attestation, nil
+	return &hostEvidence{measured: measured, nonce: nonce, quote: quote, bound: bound, launchLog: launchLog}, nil
 }
 
 // quotePCRIndices returns the sorted, de-duplicated set of PCR indices to
@@ -466,12 +646,14 @@ func quotePCRIndices(reference []uint32, spec *ContainerSpec, measured bool) []u
 
 // appraise hands the bound evidence to the Verifier and turns anything short
 // of a verified appraisal into a HostAppraisalError.
-func (r *TPMAttestingRuntime) appraise(ctx context.Context, spec *ContainerSpec, nonce []byte, quote xkmstpm2.Quote, bound *boundPCRs) error {
+func (r *TPMAttestingRuntime) appraise(ctx context.Context, spec *ContainerSpec, nonce []byte, quote xkmstpm2.Quote, bound *boundPCRs, launchLog []MeasurementLogEntry) error {
 	akCert, err := r.tpm.IAKCertificate()
 	if err != nil {
 		return &ContainerQuoteError{Image: spec.Image, Cause: err}
 	}
 	appraisal, err := r.appraiser.AppraiseHost(ctx, &HostEvidence{
+		PCRBank:         bound.bank,
+		LaunchLog:       launchLog,
 		ReferenceValues: spec.ReferenceValues,
 		AKCertificate:   akCert,
 		Nonce:           nonce,

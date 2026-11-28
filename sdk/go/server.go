@@ -17,6 +17,7 @@ import (
 	dane "github.com/jeremyhahn/go-xkms/sdk/go/dane"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/workerimage"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -239,6 +240,24 @@ var WithDANEPublisher = server.WithDANEPublisher
 // Until an attestor is registered, AttestContainer returns a typed
 // not-configured error across every transport.
 var WithContainerAttestor = server.WithContainerAttestor
+
+// WithMeasuredLaunch returns a ServerOption that fills the container
+// attestor seam with QuicBaaS's measured-launch runtime, extending through
+// the host's HostTPM under default deny (signature, provenance and the
+// signed cluster manifest, or an audited allow-unsigned grant). It and
+// WithContainerAttestor are exclusive.
+var WithMeasuredLaunch = server.WithMeasuredLaunch
+
+// FactoryProvenance configures the software factory's provenance
+// publishing: the publisher, the factory's image-signing key and chain, and
+// its SLSA builder ID.
+type FactoryProvenance = workerimage.Provenance
+
+// WithFactoryProvenance returns a ServerOption that makes the worker-image
+// refresher sign and publish the factory's provenance of every image it
+// pushes, as a DSSE referrer of the pushed digest: the provenance a
+// measured launch requires. It needs a worker-image registry.
+var WithFactoryProvenance = server.WithFactoryProvenance
 
 // WithAttestationTrustAnchors returns a ServerOption that sets the root
 // certificates every Security().Attestation() verification is anchored

@@ -33,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -60,12 +61,22 @@ const (
 	// EndorsementAKRoot anchors attestation-key certificates: a CA
 	// certificate the AK certificate must chain to.
 	EndorsementAKRoot EndorsementKind = "ak-root"
+
+	// EndorsementImageSigner anchors container image signatures: a CA
+	// certificate the signer chain of an ImageSignature must terminate at.
+	EndorsementImageSigner EndorsementKind = "image-signer"
+
+	// EndorsementManifestSigner anchors the signed cluster manifest: a CA
+	// certificate the manifest signer's chain must terminate at.
+	EndorsementManifestSigner EndorsementKind = "manifest-signer"
 )
 
 // endorsementKinds is the closed set of kinds.
 var endorsementKinds = map[EndorsementKind]bool{
 	EndorsementReferenceSigner: true,
 	EndorsementAKRoot:          true,
+	EndorsementImageSigner:     true,
+	EndorsementManifestSigner:  true,
 }
 
 // Appraisal check names.
@@ -74,6 +85,10 @@ const (
 	AppraisalCheckQuote         = "quote"
 	AppraisalCheckEventLog      = "event-log"
 	AppraisalCheckBaseline      = "baseline"
+
+	// AppraisalCheckLaunchLog replays a measured launch's node measurement
+	// log against the quoted launch registers.
+	AppraisalCheckLaunchLog = "launch-log"
 )
 
 // AppraisalOutcome is one check's result.
@@ -310,6 +325,17 @@ type AttestationStore interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// AtomicAttestationStore is an AttestationStore whose writes can be
+// conditional. A record that must never move backwards (the signed
+// cluster manifest) is replaced only through it.
+type AtomicAttestationStore interface {
+	AttestationStore
+	// PutIfAbsent stores value only when key is absent.
+	PutIfAbsent(ctx context.Context, key string, value []byte) (stored bool, err error)
+	// CompareAndSwap replaces key's value only when it is still expected.
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (swapped bool, err error)
+}
+
 // qrdbAttestationStore stores Verifier records in qrdb KV.
 //
 // Raw KV is the sanctioned form here (handbook conventions/data-access.md §3
@@ -363,6 +389,38 @@ func (s *qrdbAttestationStore) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	return c.KV().Delete(ctx, key)
+}
+
+var _ AtomicAttestationStore = (*qrdbAttestationStore)(nil)
+
+// guarded returns the client's conditional-write KV verbs, or an error when
+// the transport does not carry them.
+func (s *qrdbAttestationStore) guarded() (qrdbtransport.GuardedKVClient, error) {
+	c, err := s.client()
+	if err != nil {
+		return nil, err
+	}
+	kv, ok := c.KV().(qrdbtransport.GuardedKVClient)
+	if !ok {
+		return nil, stderrors.New("attestation store: the qrdb transport has no conditional writes")
+	}
+	return kv, nil
+}
+
+func (s *qrdbAttestationStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	kv, err := s.guarded()
+	if err != nil {
+		return false, err
+	}
+	return kv.PutIfAbsent(ctx, key, value)
+}
+
+func (s *qrdbAttestationStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	kv, err := s.guarded()
+	if err != nil {
+		return false, err
+	}
+	return kv.CompareAndSwap(ctx, key, expected, next)
 }
 
 // attestationShardID is the qrdb shard the Verifier's records live on: the
@@ -465,14 +523,14 @@ func (s *attestationService) PutEndorsement(ctx context.Context, req *PutEndorse
 // validateEndorsement checks the kind and that the anchor material parses.
 func validateEndorsement(req *PutEndorsementRequest) error {
 	if !endorsementKinds[req.Kind] {
-		return &EndorsementInvalidError{Reason: "kind must be reference-signer or ak-root"}
+		return &EndorsementInvalidError{Reason: "kind must be reference-signer, ak-root, image-signer or manifest-signer"}
 	}
 	hasCert, hasKey := len(req.CertificatePEM) > 0, len(req.PublicKeyPEM) > 0
 	if hasCert == hasKey {
 		return &EndorsementInvalidError{Reason: "exactly one of certificate_pem and public_key_pem is required"}
 	}
-	if req.Kind == EndorsementAKRoot && !hasCert {
-		return &EndorsementInvalidError{Reason: "an ak-root endorsement is a CA certificate"}
+	if (req.Kind == EndorsementAKRoot || req.Kind == EndorsementImageSigner || req.Kind == EndorsementManifestSigner) && !hasCert {
+		return &EndorsementInvalidError{Reason: "an " + string(req.Kind) + " endorsement is a CA certificate"}
 	}
 	if hasCert {
 		cert, err := parseCertificatePEM(req.CertificatePEM)
@@ -790,29 +848,38 @@ func (s *attestationService) DeleteReferenceValues(ctx context.Context, req *Del
 // only when the request is unusable or the store is unreachable; evidence that
 // fails appraisal is a successful call whose result says Verified=false.
 func (s *attestationService) AppraiseQuote(ctx context.Context, req *AppraiseQuoteRequest) (*AttestationResult, error) {
-	result, _, err := s.appraiseQuote(ctx, req, nil)
+	result, _, _, err := s.appraiseQuote(ctx, req, nil)
 	return result, err
 }
 
 // appraiseQuote is AppraiseQuote, also returning the PCRs the baseline found
-// divergent, which a host appraiser reports in detail. launchPCRs are quoted
-// registers extended at container launch: the event-log replay leaves them
-// to the baseline.
-func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuoteRequest, launchPCRs []uint32) (*AttestationResult, []pcrDivergence, error) {
+// divergent, which a host appraiser reports in detail.
+//
+// host is the node's host evidence when the quote comes from AppraiseHost,
+// and nil for AppraiseQuote. Its launch PCRs are quoted registers extended at
+// container launch: the event-log replay leaves them to the baseline and the
+// node measurement log, which is replayed here, so the recorded result
+// carries the launch-log verdict with every other check. The launch-log
+// divergences are returned next to the baseline ones.
+func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuoteRequest, host *orchestration.HostEvidence) (*AttestationResult, []pcrDivergence, []orchestration.PCRDivergence, error) {
 	const op = "AttestationService.AppraiseQuote"
 	if req == nil {
-		return nil, nil, ErrAttestationNilRequest
+		return nil, nil, nil, ErrAttestationNilRequest
 	}
 	store, err := s.verifierStore(op)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	var launchPCRs []uint32
+	if host != nil {
+		launchPCRs = host.LaunchPCRs
 	}
 	now := s.now()
 	result := &AttestationResult{AppraisedAt: now.UTC(), ReferenceValues: req.ReferenceValues}
 
 	akKey, akCheck, err := s.appraiseAKCertificate(ctx, store, req.AKCertificatePEM, now)
 	if err != nil {
-		return nil, nil, verifierError(op, errors.ErrUnavailable, err)
+		return nil, nil, nil, verifierError(op, errors.ErrUnavailable, err)
 	}
 	result.Checks = append(result.Checks, akCheck)
 
@@ -842,9 +909,22 @@ func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuo
 
 	baseline, divergences, err := s.appraiseBaseline(ctx, store, req.ReferenceValues, quote, proven, result)
 	if err != nil {
-		return nil, nil, verifierError(op, errors.ErrUnavailable, err)
+		return nil, nil, nil, verifierError(op, errors.ErrUnavailable, err)
 	}
 	result.Checks = append(result.Checks, baseline)
+
+	// The launch-log verdict is part of the result before it is recorded:
+	// a forged log must never leave a verified result behind it.
+	var launchDivergences []orchestration.PCRDivergence
+	if host != nil && host.LaunchLog != nil {
+		launchCheck := AppraisalCheck{Name: AppraisalCheckLaunchLog, Outcome: AppraisalPass}
+		if failure := appraiseLaunchLog(host); failure != nil {
+			launchCheck.Outcome = AppraisalForged
+			launchCheck.Reason = failure.Reason
+			launchDivergences = failure.PCRs
+		}
+		result.Checks = append(result.Checks, launchCheck)
+	}
 
 	result.Verified = true
 	for _, check := range result.Checks {
@@ -856,7 +936,12 @@ func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuo
 			result.Verified = false
 		}
 	}
-	return result, divergences, nil
+	// The result is the go-xkms attestation result: it is recorded before
+	// it is returned, so a reported appraisal is never missing from it.
+	if err := recordAttestationResult(ctx, store, req.AKCertificatePEM, result); err != nil {
+		return nil, nil, nil, verifierError(op, errors.ErrUnavailable, err)
+	}
+	return result, divergences, launchDivergences, nil
 }
 
 // appraiseAKCertificate chains the AK certificate to the tenant's ak-root

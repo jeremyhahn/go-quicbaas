@@ -1149,6 +1149,18 @@ func (s *Server) startOrchestrationSweeps(sweeper jobSweeper, interval time.Dura
 	s.logger.Infof("Job reaper and stall detector started (sweep=%s)", interval)
 }
 
+// sandboxContainerRuntime returns the runtime the orchestration sandbox (the
+// agent service and the ACP backends) launches through: the node's
+// measured-launch runtime when the service built one, else base. The
+// pointer is checked explicitly so a nil *TPMAttestingRuntime never becomes
+// a non-nil ContainerRuntime.
+func sandboxContainerRuntime(base *orchestration.ExecContainerRuntime, measured *orchestration.TPMAttestingRuntime) orchestration.ContainerRuntime {
+	if measured != nil {
+		return measured
+	}
+	return base
+}
+
 // stopOrchestrationSweeps stops the sweep and waits for it.
 func (s *Server) stopOrchestrationSweeps() {
 	if s.orchSweeps == nil {

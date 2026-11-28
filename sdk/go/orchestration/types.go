@@ -239,6 +239,54 @@ type ContainerAttestation = pkgorch.ContainerAttestation
 // for a spec, binding image digest, configuration digest and trust label.
 var LaunchMeasurement = pkgorch.LaunchMeasurement
 
+// LaunchPolicy is the policy a measured launch ran under; its digest is the
+// policy hash bound into LaunchMeasurement.
+type LaunchPolicy = pkgorch.LaunchPolicy
+
+// LaunchPolicyOf returns the launch policy a spec runs under.
+var LaunchPolicyOf = pkgorch.LaunchPolicyOf
+
+// LaunchPolicyDigest returns the policy hash of a spec's launch.
+var LaunchPolicyDigest = pkgorch.LaunchPolicyDigest
+
+// MeasurementLog is the node's append-only, hash-chained log of measured
+// launches; TPMAttestingRuntime.MeasurementLog returns the runtime's log.
+type MeasurementLog = pkgorch.MeasurementLog
+
+// MeasurementLogEntry is one entry of a MeasurementLog. A measured
+// ContainerAttestation carries the node's entries in MeasurementLog.
+type MeasurementLogEntry = pkgorch.MeasurementLogEntry
+
+// MeasurementLogError reports a log that fails verification or replay.
+type MeasurementLogError = pkgorch.MeasurementLogError
+
+// Measurement log entry kinds.
+const (
+	MeasurementLogLaunch = pkgorch.MeasurementLogLaunch
+	MeasurementLogAnchor = pkgorch.MeasurementLogAnchor
+)
+
+// NewMeasurementLog returns an empty node measurement log.
+var NewMeasurementLog = pkgorch.NewMeasurementLog
+
+// ChainMeasurementLog numbers and chains entries as a node's log does.
+var ChainMeasurementLog = pkgorch.ChainMeasurementLog
+
+// VerifyMeasurementLog checks a log's numbering and hash chain.
+var VerifyMeasurementLog = pkgorch.VerifyMeasurementLog
+
+// ReplayMeasurementLog verifies a log and returns the value it replays to
+// for one PCR register; the Verifier compares it with the quoted value.
+var ReplayMeasurementLog = pkgorch.ReplayMeasurementLog
+
+// MeasurementLogStore persists a node's measurement log across agent
+// restarts; WithMeasurementLogStore attaches one to the attesting runtime.
+type MeasurementLogStore = pkgorch.MeasurementLogStore
+
+// WithMeasurementLogStore persists the node measurement log: written before
+// each measured launch returns, restored only while it replays to the TPM.
+var WithMeasurementLogStore = pkgorch.WithMeasurementLogStore
+
 // AttestingContainerRuntime is the trusted-computing seam: a ContainerRuntime
 // that can additionally prove what it launched and where. Callers detect it
 // with a type assertion rather than requiring every runtime to carry a TPM.
@@ -254,6 +302,71 @@ type TPMAttestingRuntime = pkgorch.TPMAttestingRuntime
 // quote is appraised by (service.NewHostAppraiser); all four arguments are
 // required.
 var NewTPMAttestingRuntime = pkgorch.NewTPMAttestingRuntime
+
+// LaunchMeasurementUnder is LaunchMeasurement under an explicit launch
+// policy, such as one carrying an allow-unsigned grant.
+var LaunchMeasurementUnder = pkgorch.LaunchMeasurementUnder
+
+// TPMAttestingOption configures a TPMAttestingRuntime.
+type TPMAttestingOption = pkgorch.TPMAttestingOption
+
+// ImageVerifier verifies a measured launch's image signature (default deny).
+type ImageVerifier = pkgorch.ImageVerifier
+
+// UnsignedImagePolicy may grant an unsigned image a measured launch; the
+// grant is folded into the launch policy and recorded in the log.
+type UnsignedImagePolicy = pkgorch.UnsignedImagePolicy
+
+// UnsignedImageGrants is an UnsignedImagePolicy keyed by trust label.
+type UnsignedImageGrants = pkgorch.UnsignedImageGrants
+
+// ImageUnsignedError reports an unsigned image refused at launch.
+type ImageUnsignedError = pkgorch.ImageUnsignedError
+
+// ImageSignatureRejectedError reports an image signature that did not verify.
+type ImageSignatureRejectedError = pkgorch.ImageSignatureRejectedError
+
+// WithImageVerifier sets the runtime's ImageVerifier.
+var WithImageVerifier = pkgorch.WithImageVerifier
+
+// WithUnsignedImagePolicy sets the runtime's allow-unsigned policy.
+var WithUnsignedImagePolicy = pkgorch.WithUnsignedImagePolicy
+
+// ProvenanceVerifier checks a signed image's software-factory provenance
+// (a signed DSSE referrer) at a measured launch.
+type ProvenanceVerifier = pkgorch.ProvenanceVerifier
+
+// ImageProvenanceError reports a signed image refused for its provenance.
+type ImageProvenanceError = pkgorch.ImageProvenanceError
+
+// WithProvenanceVerifier sets the runtime's ProvenanceVerifier.
+var WithProvenanceVerifier = pkgorch.WithProvenanceVerifier
+
+// ErrImageProvenance is the refusal of a signed image without provenance
+// that verifies.
+var ErrImageProvenance = pkgorch.ErrImageProvenance
+
+// ClusterManifest is the signed cluster manifest a measured launch's image
+// must be listed in.
+type ClusterManifest = pkgorch.ClusterManifest
+
+// ReleaseNotListedError reports a signed image the cluster manifest does
+// not list.
+type ReleaseNotListedError = pkgorch.ReleaseNotListedError
+
+// WithClusterManifest sets the runtime's ClusterManifest.
+var WithClusterManifest = pkgorch.WithClusterManifest
+
+// ErrReleaseNotListed is the refusal of a signed image the signed cluster
+// manifest does not list.
+var ErrReleaseNotListed = pkgorch.ErrReleaseNotListed
+
+// ErrImageUnsigned and ErrImageSignatureRejected are the default-deny
+// refusals of a measured launch.
+var (
+	ErrImageUnsigned          = pkgorch.ErrImageUnsigned
+	ErrImageSignatureRejected = pkgorch.ErrImageSignatureRejected
+)
 
 // HostAppraiser is the seam through which a TPMAttestingRuntime hands bound
 // host evidence to the Verifier, which appraises it against reference values
@@ -536,17 +649,26 @@ var (
 // Function signatures. A var alias silently absorbs an upstream signature
 // change; these assertions do not.
 var (
-	_ func(string) (TrustLevel, error)                                                     = ParseTrustLevel
-	_ func(string) (TrustPolicy, error)                                                    = ParseTrustPolicy
-	_ func(TrustLevel, TrustPolicy, *TrustPolicy, TrustCapabilities) (TrustLevel, error)   = ResolveTrustLevel
-	_ func(string) error                                                                   = ValidateImageDigest
-	_ func(string) (string, string, bool)                                                  = SplitImageReference
-	_ func(string) string                                                                  = ImageRepository
-	_ func(*ContainerSpec) (string, error)                                                 = ContainerConfigDigest
-	_ func(*ContainerSpec) ([]byte, error)                                                 = LaunchMeasurement
-	_ func(ContainerRuntime, HostTPM, HostAppraiser, Logger) (*TPMAttestingRuntime, error) = NewTPMAttestingRuntime
-	_ func(Logger) (*ExecContainerRuntime, error)                                          = NewExecContainerRuntime
-	_ func(string, Logger) (*ExecContainerRuntime, error)                                  = NewExecContainerRuntimeWithCommand
+	_ func(string) (TrustLevel, error)                                                                            = ParseTrustLevel
+	_ func(string) (TrustPolicy, error)                                                                           = ParseTrustPolicy
+	_ func(TrustLevel, TrustPolicy, *TrustPolicy, TrustCapabilities) (TrustLevel, error)                          = ResolveTrustLevel
+	_ func(string) error                                                                                          = ValidateImageDigest
+	_ func(string) (string, string, bool)                                                                         = SplitImageReference
+	_ func(string) string                                                                                         = ImageRepository
+	_ func(*ContainerSpec) (string, error)                                                                        = ContainerConfigDigest
+	_ func(*ContainerSpec) ([]byte, error)                                                                        = LaunchMeasurement
+	_ func(*ContainerSpec) (string, error)                                                                        = LaunchPolicyDigest
+	_ func([]MeasurementLogEntry) error                                                                           = VerifyMeasurementLog
+	_ func([]MeasurementLogEntry, int, string) ([]byte, error)                                                    = ReplayMeasurementLog
+	_ func(ContainerRuntime, HostTPM, HostAppraiser, Logger, ...TPMAttestingOption) (*TPMAttestingRuntime, error) = NewTPMAttestingRuntime
+	_ func(*ContainerSpec, LaunchPolicy) ([]byte, error)                                                          = LaunchMeasurementUnder
+	_ func(ImageVerifier) TPMAttestingOption                                                                      = WithImageVerifier
+	_ func(ProvenanceVerifier) TPMAttestingOption                                                                 = WithProvenanceVerifier
+	_ func(ClusterManifest) TPMAttestingOption                                                                    = WithClusterManifest
+	_ func(UnsignedImagePolicy) TPMAttestingOption                                                                = WithUnsignedImagePolicy
+	_ UnsignedImagePolicy                                                                                         = UnsignedImageGrants(nil)
+	_ func(Logger) (*ExecContainerRuntime, error)                                                                 = NewExecContainerRuntime
+	_ func(string, Logger) (*ExecContainerRuntime, error)                                                         = NewExecContainerRuntimeWithCommand
 )
 
 // Errors alias in both directions, so errors.As with either spelling matches

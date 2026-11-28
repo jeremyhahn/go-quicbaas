@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -143,7 +144,12 @@ type AttestContainerRESTResponse struct {
 	MeasurementPCR    int               `json:"measurement_pcr,omitempty"`
 	MeasurementBank   string            `json:"measurement_bank,omitempty"`
 	LaunchMeasurement []byte            `json:"launch_measurement,omitempty"`
-	AttestedAt        string            `json:"attested_at,omitempty"`
+	// PCRBank names the bank the quoted PCRs were read from.
+	PCRBank string `json:"pcr_bank,omitempty"`
+	// MeasurementLog is the node measurement log the Verifier replayed
+	// against the quoted MeasurementPCR. Empty below the measured tier.
+	MeasurementLog []orchestration.MeasurementLogEntry `json:"measurement_log,omitempty"`
+	AttestedAt     string                              `json:"attested_at,omitempty"`
 }
 
 // =============================================================================
@@ -288,6 +294,8 @@ func (s *Server) HandleAttestationAttestContainer(w http.ResponseWriter, r *http
 		MeasurementPCR:    svcResp.MeasurementPCR,
 		MeasurementBank:   svcResp.MeasurementBank,
 		LaunchMeasurement: svcResp.LaunchMeasurement,
+		PCRBank:           svcResp.PCRBank,
+		MeasurementLog:    svcResp.MeasurementLog,
 	}
 	if !svcResp.AttestedAt.IsZero() {
 		resp.AttestedAt = svcResp.AttestedAt.UTC().Format(time.RFC3339Nano)

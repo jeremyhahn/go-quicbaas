@@ -60,6 +60,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 	quicbaaspermission "github.com/jeremyhahn/go-quicbaas/pkg/permission"
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/workerimage"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server/devcluster"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -104,6 +105,11 @@ type serverOptions struct {
 	// attestation with continuous re-attestation and quarantine. When nil,
 	// AttestContainer returns a typed not-configured error.
 	containerAttestor service.ContainerAttestor
+	measuredLaunch    *service.MeasuredLaunchConfig
+
+	// factoryProvenance, when set, makes the worker-image refresher publish
+	// the factory's signed provenance of every image it pushes.
+	factoryProvenance *workerimage.Provenance
 
 	// attestationTrustAnchors are the root certificates every attestation
 	// verification is anchored against. When empty, only the per-request
@@ -195,6 +201,33 @@ func WithDANEPublisher(publisher dane.DANEPublisher) ServerOption {
 // WithDANEPublisher uses.
 func WithContainerAttestor(attestor service.ContainerAttestor) ServerOption {
 	return func(o *serverOptions) { o.containerAttestor = attestor }
+}
+
+// WithMeasuredLaunch returns a ServerOption that fills the container
+// attestor seam with QuicBaaS's measured-launch runtime
+// (service.NewMeasuredLaunchRuntime): each launch is measured into the node
+// measurement log and extended through cfg.TPM, the HostTPM the host
+// supplies (go-trusted-platform implements it), and is admitted only under
+// default deny — a verified image signature, verified provenance and a
+// listing in the signed cluster manifest, or an audited allow-unsigned
+// grant. The Verifier's appraisal, endorsements and cluster manifest are
+// read from the server's own attestation store. It and
+// WithContainerAttestor are exclusive: the server refuses to start with
+// both.
+func WithMeasuredLaunch(cfg service.MeasuredLaunchConfig) ServerOption {
+	return func(o *serverOptions) { o.measuredLaunch = &cfg }
+}
+
+// WithFactoryProvenance returns a ServerOption that makes the software
+// factory's worker-image refresher sign the SLSA provenance of every image
+// it pushes with p.Signer (the factory's go-xkms image-signing key) and
+// publish it through p.Publisher as a DSSE referrer of the pushed digest,
+// the provenance a measured launch (WithMeasuredLaunch) requires. It needs
+// sdlc.worker_image.registry: a refresher without a registry pushes
+// nothing, and the server refuses to start the refresh with this option
+// and no registry.
+func WithFactoryProvenance(p workerimage.Provenance) ServerOption {
+	return func(o *serverOptions) { o.factoryProvenance = &p }
 }
 
 // WithAttestationTrustAnchors returns a ServerOption that sets the root

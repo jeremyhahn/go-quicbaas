@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -162,12 +163,45 @@ func (s *Server) AttestContainer(ctx context.Context, req *pb.AttestContainerReq
 		MeasurementPcr:    int32(resp.MeasurementPCR),
 		MeasurementBank:   resp.MeasurementBank,
 		LaunchMeasurement: resp.LaunchMeasurement,
+		PcrBank:           resp.PCRBank,
+		MeasurementLog:    measurementLogToProto(resp.MeasurementLog),
 		Timestamp:         timestamppb.New(time.Now()),
 	}
 	if !resp.AttestedAt.IsZero() {
 		out.AttestedAt = timestamppb.New(resp.AttestedAt)
 	}
 	return out, nil
+}
+
+// measurementLogToProto renders the node measurement log for the wire.
+func measurementLogToProto(log []orchestration.MeasurementLogEntry) []*pb.MeasurementLogEntry {
+	if len(log) == 0 {
+		return nil
+	}
+	out := make([]*pb.MeasurementLogEntry, 0, len(log))
+	for i := range log {
+		e := &log[i]
+		entry := &pb.MeasurementLogEntry{
+			Sequence:      e.Sequence,
+			Kind:          e.Kind,
+			Base:          e.Base,
+			Image:         e.Image,
+			ImageDigest:   e.ImageDigest,
+			ConfigDigest:  e.ConfigDigest,
+			PolicyDigest:  e.PolicyDigest,
+			TrustLabel:    e.TrustLabel,
+			AllowUnsigned: e.AllowUnsigned,
+			Pcr:           int32(e.PCR),
+			Bank:          e.Bank,
+			Measurement:   e.Measurement,
+			Chain:         e.Chain,
+		}
+		if !e.RecordedAt.IsZero() {
+			entry.RecordedAt = timestamppb.New(e.RecordedAt)
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // attestationOptionsFromProto converts proto verify options into the

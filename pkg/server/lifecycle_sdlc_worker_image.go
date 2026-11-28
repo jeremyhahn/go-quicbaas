@@ -99,7 +99,7 @@ func (s *Server) startSDLCWorkerImage(bindings *service.SDLCService, sessions or
 		Fleet:    hosts,
 		Observer: workerimage.NewPrometheusObserver(),
 		Logger:   slog.Default(),
-	}, sessions, projects, s.workerImageSecrets())
+	}, sessions, projects, s.workerImageSecrets(), s.opts.factoryProvenance)
 	if err != nil {
 		return &SDLCInitError{Component: "worker image refresh", Cause: err}
 	}
@@ -140,7 +140,7 @@ func (s *Server) workerImageSecrets() orchestration.AccountSecretResolver {
 // is what a configured push credential is read through.
 func newSDLCWorkerImageRefresher(cfg config.SDLCWorkerImage, pins softwarefactoryworker.Pins, deps workerimage.Deps,
 	sessions orchestration.AgentService, projects sdlc.ProjectReader,
-	secrets orchestration.AccountSecretResolver) (*workerimage.Refresher, error) {
+	secrets orchestration.AccountSecretResolver, provenance *workerimage.Provenance) (*workerimage.Refresher, error) {
 	registry, err := workerimage.NewNPMRegistry(cfg.NPMRegistryURL, nil)
 	if err != nil {
 		return nil, err
@@ -167,6 +167,7 @@ func newSDLCWorkerImageRefresher(cfg config.SDLCWorkerImage, pins softwarefactor
 		Repository: cfg.Repository,
 		Registry:   cfg.Registry,
 		Credential: credential,
+		Provenance: provenance,
 		SmokeModel: cfg.SmokeModel,
 		SmokeHost:  cfg.SmokeHost,
 		Base:       version.Version,
