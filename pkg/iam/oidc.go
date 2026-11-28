@@ -155,7 +155,7 @@ func (p *OIDCProvider) GetConfiguration() map[string]interface{} {
 		"claims_supported": []string{
 			"sub", "iss", "aud", "exp", "iat", "email", "name",
 			"tenant_id", "roles", "groups", "mfa_verified",
-			"cnf", "amr", "attest_method", "uid", "ptyp", "sid",
+			"cnf", "amr", "acr", "attest_method", "uid", "ptyp", "sid",
 		},
 		"code_challenge_methods_supported": []string{CodeChallengeMethodS256}, // OAuth 2.1 mandates S256 only
 		// Authorization responses carry iss (RFC 9207 §3).
@@ -336,6 +336,14 @@ func (p *OIDCProvider) Authorize(ctx context.Context, req *AuthorizeRequest) (*A
 	}
 	if req.CodeChallengeMethod != CodeChallengeMethodS256 {
 		return nil, NewOAuthError(ErrOAuthInvalidRequest, "code_challenge_method must be S256 (OAuth 2.1)")
+	}
+
+	// A code is only for an end user in the client's own tenant (#1922). The
+	// client and redirect URI are validated above, so the refusal is
+	// redirected to the client (RFC 6749 §4.1.2.1). An end user with no
+	// tenant is refused too: the check fails closed.
+	if req.UserID != 0 && req.TenantID != app.TenantID {
+		return nil, newAuthorizeTenantMismatchError()
 	}
 
 	// Generate authorization code
@@ -808,7 +816,7 @@ func (p *OIDCProvider) AuthenticateClient(ctx context.Context, clientID, clientS
 	}
 	valid, err := p.appStorage.ValidateClientSecret(ctx, clientID, clientSecret)
 	if err != nil || !valid {
-		return NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
+		return clientAuthOAuthError(err)
 	}
 	return nil
 }
@@ -1117,7 +1125,7 @@ func (p *OIDCProvider) handleAuthorizationCodeGrant(ctx context.Context, req *To
 	// Validate client
 	valid, err := p.appStorage.ValidateClientSecret(ctx, req.ClientID, req.ClientSecret)
 	if err != nil || !valid {
-		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
+		return nil, clientAuthOAuthError(err)
 	}
 	if err := p.requireGrantType(ctx, req.ClientID, GrantTypeAuthorizationCode); err != nil {
 		return nil, err
@@ -1181,7 +1189,7 @@ func (p *OIDCProvider) handleClientCredentialsGrant(ctx context.Context, req *To
 	// unknown client from a wrong secret could enumerate the client ids.
 	valid, err := p.appStorage.ValidateClientSecret(ctx, req.ClientID, req.ClientSecret)
 	if err != nil {
-		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
+		return nil, clientAuthOAuthError(err)
 	}
 	if !valid {
 		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
@@ -1190,7 +1198,7 @@ func (p *OIDCProvider) handleClientCredentialsGrant(ctx context.Context, req *To
 	// Get application
 	app, err := p.appStorage.GetApp(ctx, req.ClientID)
 	if err != nil {
-		return nil, NewOAuthError(ErrOAuthInvalidClient, "invalid client")
+		return nil, clientLoadOAuthError(err)
 	}
 
 	// Check if grant type is allowed
@@ -1270,7 +1278,7 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 	// Validate client
 	valid, err := p.appStorage.ValidateClientSecret(ctx, req.ClientID, req.ClientSecret)
 	if err != nil || !valid {
-		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
+		return nil, clientAuthOAuthError(err)
 	}
 	if err := p.requireGrantType(ctx, req.ClientID, GrantTypeRefreshToken); err != nil {
 		return nil, err

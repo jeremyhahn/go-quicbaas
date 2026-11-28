@@ -455,14 +455,6 @@ type Claims struct {
 	// AuthMethod is the authentication method used
 	AuthMethod string `json:"auth_method,omitempty"`
 
-	// AMR is the Authentication Methods References (RFC 8176).
-	// Examples: ["webauthn","hwk"], ["smartcard","mfa"]
-	AMR []string `json:"amr,omitempty"`
-
-	// ACR is the Authentication Context Class Reference.
-	// For hardware-attested logins: "urn:quicbaas:auth:hardware-attested"
-	ACR string `json:"acr,omitempty"`
-
 	// AttestAAGUID is the hex-encoded FIDO2 authenticator model identifier of
 	// the credential that authenticated this session. It is empty for PIV
 	// smartcards, which have no AAGUID.
@@ -539,10 +531,22 @@ type IDTokenClaims struct {
 
 	// AMR is the Authentication Methods References (RFC 8176).
 	// Examples: ["webauthn","hwk"], ["smartcard","mfa"]
+	// It is set on the ID token of every login TokenService.IssueHardwareTokens
+	// issues (the PIV/mTLS and passkey logins), attested or not, and names
+	// what was proven: an unattested PIV login the operator admitted through
+	// iam.piv_login.allow_unattested reports ["mtls"], an attested one
+	// ["smartcard","mfa"]. Every other ID token omits it (omitempty). The
+	// access token of an mTLS service-account login
+	// (TokenService.IssueServiceAccountTokens) carries the ServiceAccountAMR
+	// value, since that grant issues no ID token; every other access token,
+	// renewed ones included, omits it.
 	AMR []string `json:"amr,omitempty"`
 
 	// ACR is the Authentication Context Class Reference.
-	// For hardware-attested logins: "urn:quicbaas:auth:hardware-attested"
+	// It is set only on the ID token of a hardware-attested login
+	// (TokenService.IssueHardwareTokens), where it is ACRHardwareAttested
+	// ("urn:quicbaas:auth:hardware-attested"). Every other ID token omits it
+	// (omitempty), and no access token carries it, renewed ones included.
 	ACR string `json:"acr,omitempty"`
 
 	// AttestAAGUID is the FIDO2 authenticator AAGUID in hex string form (WebAuthn logins only).

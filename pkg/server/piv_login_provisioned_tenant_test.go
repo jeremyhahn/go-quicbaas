@@ -3,11 +3,23 @@
 package server
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestPIVLogin_CertProvisionedTenantAdminLogsIn drives what the integration
@@ -20,8 +32,106 @@ func TestPIVLogin_CertProvisionedTenantAdminLogsIn(t *testing.T) {
 	srv, components, root := newOperatorTLSIntegrationNode(t)
 	adminCert := provisionCertModeTenant(t, components, "acme")
 
-	status, body := postPIVLoginOverTLS(t, srv, xkmsPIVLoginRouter(t, srv), root, adminCert)
+	hosted := hostedXKMSPIVLoginModule(t, srv)
+
+	status, body := postPIVLoginOverTLS(t, srv, moduleRouter(hosted), root, adminCert)
 
 	require.Equal(t, http.StatusOK, status, body)
 	assert.Contains(t, body, "access_token")
+
+	// The bearer is what every later call presents: the tenant-scoped REST
+	// routes resolve their tenant with tenantctx.Target from the Subject the
+	// bearer validates to, so the login has to bind it to the admin's tenant.
+	ctx := tenantBoundBearerContext(t, hosted, body)
+	tenant, err := tenantctx.Target(ctx, "rest.IAM", "acme")
+	require.NoError(t, err, "the tenant admin's bearer must be bound to its tenant")
+	assert.Equal(t, "acme", tenant)
+
+	// The access token is a platform token the node's own OIDC provider
+	// signed: an at+jwt under a kid its JWKS publishes.
+	header := accessTokenHeader(t, body)
+	assert.Equal(t, "at+jwt", header.Typ)
+	var kids []string
+	for _, key := range components.GetOIDCProvider().GetJWKS().Keys {
+		kids = append(kids, key.KeyID)
+	}
+	assert.Contains(t, kids, header.Kid, "the access token's kid must be in the node's JWKS")
+}
+
+// accessTokenHeader decodes, without verifying, the JOSE header of the login
+// response's access_token.
+func accessTokenHeader(t *testing.T, loginBody string) struct{ Typ, Kid string } {
+	t.Helper()
+	var tokens struct {
+		AccessToken string `json:"access_token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(loginBody), &tokens))
+	segments := strings.Split(tokens.AccessToken, ".")
+	require.Len(t, segments, 3, "the access token is a compact JWS")
+	raw, err := base64.RawURLEncoding.DecodeString(segments[0])
+	require.NoError(t, err)
+	var header struct {
+		Typ string `json:"typ"`
+		Kid string `json:"kid"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &header))
+	return struct{ Typ, Kid string }{Typ: header.Typ, Kid: header.Kid}
+}
+
+// TestPIVLogin_CertProvisionedTenantAdminBearerRefusedForOtherTenant is the
+// isolation beside it: the bearer bound to "acme" names "other" in the URL
+// and is still refused 403, with no fallback to the system tenant.
+func TestPIVLogin_CertProvisionedTenantAdminBearerRefusedForOtherTenant(t *testing.T) {
+	srv, components, root := newOperatorTLSIntegrationNode(t)
+	adminCert := provisionCertModeTenant(t, components, "acme")
+	hosted := hostedXKMSPIVLoginModule(t, srv)
+
+	status, body := postPIVLoginOverTLS(t, srv, moduleRouter(hosted), root, adminCert)
+	require.Equal(t, http.StatusOK, status, body)
+
+	ctx := tenantBoundBearerContext(t, hosted, body)
+	_, err := tenantctx.Target(ctx, "rest.IAM", "other")
+	require.Error(t, err)
+	var crossTenant *tenantctx.CrossTenantError
+	assert.True(t, errors.As(err, &crossTenant), "want a cross-tenant refusal, got %v", err)
+	var coded *qberrors.QBError
+	if assert.True(t, errors.As(err, &coded), "the refusal is a coded error") {
+		assert.Equal(t, qberrors.ErrForbidden, coded.Code, "the REST layer answers it 403")
+	}
+}
+
+// hostedXKMSPIVLoginModule hosts the xkms PIV login module the way the node
+// does, so its login route and its bearer validator are the production ones.
+func hostedXKMSPIVLoginModule(t *testing.T, srv *Server) qrdbsdk.ServiceModule {
+	t.Helper()
+	hosted, err := srv.hostXKMSModule(newXKMSPIVLoginModule(t, srv))
+	require.NoError(t, err)
+	return hosted
+}
+
+// tenantBoundBearerContext validates the login response's access_token
+// through the module's own bearer fallback, the validator qrdb's middleware
+// consults, and binds the resulting Subject's tenant into a context exactly
+// as the REST layer's injectPrincipal does.
+func tenantBoundBearerContext(t *testing.T, hosted qrdbsdk.ServiceModule, loginBody string) context.Context {
+	t.Helper()
+	var tokens struct {
+		AccessToken string `json:"access_token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(loginBody), &tokens))
+	require.NotEmpty(t, tokens.AccessToken)
+
+	fallback, ok := hosted.(qrdbsdk.ModuleAuthFallback)
+	require.True(t, ok, "the hosted xkms module validates its own bearers")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/users", nil)
+	req.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
+	identity, err := fallback.AuthenticateHTTP(req)
+	require.NoError(t, err)
+
+	subject := auth.SubjectFromIdentity(identity)
+	ctx := context.Background()
+	if subject.TenantID != "" {
+		ctx = tenantctx.WithTenant(ctx, subject.TenantID)
+	}
+	return ctx
 }

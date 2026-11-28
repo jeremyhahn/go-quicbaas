@@ -716,7 +716,10 @@ itself is go-xkms's: [TPM 2.0 — Architecture](../../../go-xkms/docs/tpm2/archi
 
 ### id_token Claims
 
-When a user authenticates, QuicBaaS issues an `id_token` (JWT) with the following claims:
+When a user authenticates, QuicBaaS issues an `id_token` (JWT). The example
+below is the ID token of a hardware-attested login. An unattested PIV login
+(`iam.piv_login.allow_unattested`) reports `amr: ["mtls"]` and no `acr`; other
+ID tokens omit `acr`, `amr` and the attestation claims.
 
 ```json
 {
@@ -725,7 +728,7 @@ When a user authenticates, QuicBaaS issues an `id_token` (JWT) with the followin
   "aud": "client_id_xyz",
   "iat": 1234567890,
   "exp": 1234571490,
-  "acr": "urn:mace:incommon:iap:silver",
+  "acr": "urn:quicbaas:auth:hardware-attested",
   "amr": ["webauthn", "hwk"],
   "attest_method": "webauthn",
   "attest_aaguid": "00000000-0000-0000-0000-000000000000"
@@ -734,7 +737,7 @@ When a user authenticates, QuicBaaS issues an `id_token` (JWT) with the followin
 
 | Claim | Meaning |
 |---|---|
-| `acr` | Authentication Context Class Reference (NIST AAL level) |
+| `acr` | Authentication Context Class Reference; `urn:quicbaas:auth:hardware-attested` on a hardware-attested login, otherwise absent |
 | `amr` | Authentication Methods References: `webauthn`, `smartcard`, `mtls`, `hwk` (hardware key), `mfa` (multi-factor) |
 | `attest_method` | `webauthn`, `tpm`, `xkey`, or `manual` |
 | `attest_aaguid` | FIDO2 authenticator GUID (for WebAuthn only) |

@@ -711,8 +711,6 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 		Name:      opts.User.Name,
 		Scope:     scope,
 		ClientID:  opts.ClientID,
-		AMR:       opts.AMR,
-		ACR:       opts.ACR,
 		// Carried on the bearer and not only on the ID token: renewal replays
 		// it from the frozen session, so a bearer that omitted it would gain
 		// the claim at the first refresh and read as an UPGRADE in assurance
@@ -904,7 +902,9 @@ func (s *TokenService) IssueServiceAccountTokens(ctx context.Context, opts Servi
 		"auth_method":   "mtls",
 		"ptyp":          PrincipalTypeService,
 		"attest_method": opts.AttestMethod,
-		"amr":           opts.AMR,
+		// The acr/amr contract's one access-token exception: this grant
+		// issues no ID token (see IDTokenClaims.AMR).
+		"amr": opts.AMR,
 		"cnf": map[string]interface{}{
 			"x5t#S256": opts.CertThumbprintS256,
 		},

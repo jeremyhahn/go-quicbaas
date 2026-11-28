@@ -97,11 +97,12 @@ const (
 	//
 	// The qualifier "that reaches verification" is load-bearing and was added
 	// after this comment was found asserting more than the code delivers.
-	// AuthenticateServiceAccount does equalize every outcome. The OAuth2
-	// application path does NOT yet: AppManager.ValidateClient looks the app up
-	// first and returns on a miss without deriving, so an unknown client ID
-	// answers in microseconds while a known one with a wrong secret pays the
-	// full cost. That gap is #150 and is NOT claimed fixed here.
+	// AuthenticateServiceAccount does equalize every outcome, and so does the
+	// OAuth2 application path: AppManager.ValidateClient authenticates the
+	// secret before it reads the app, so an unknown client ID, a record that
+	// does not decode and a known client each pay one derivation (#150). The
+	// store's read fan-out (up to three key reads for an unknown ID) is
+	// microseconds against the derivation and is not equalized.
 	//
 	// The cost of this is that raising the work factor does not migrate
 	// existing secrets: digests at the old count stop parsing, so they are

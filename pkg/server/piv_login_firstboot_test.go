@@ -61,6 +61,8 @@ func newIntegrationLikeNode(t *testing.T, configure ...func(*Server)) (*Server, 
 
 	components, err := srv.initializeIAMComponents()
 	require.NoError(t, err, "first boot")
+	// Production attaches IAM in startService before the REST listener serves logins.
+	srv.iamComponents = components
 
 	certPEM, err := os.ReadFile(certPath)
 	require.NoError(t, err)

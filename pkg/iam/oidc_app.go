@@ -520,17 +520,25 @@ func (m *AppManager) RotateSecretInTenant(ctx context.Context, tenantID, clientI
 }
 
 // ValidateClient validates a client ID and secret.
+//
+// The secret is checked before the app is read, so an unknown client, a record
+// that does not decode and a known client each pay exactly one derivation, and
+// client ids cannot be told apart by latency. A store outage is reported as an
+// error wrapping ClientStoreUnavailableError; every other failure is the one
+// opaque "invalid client credentials".
 func (m *AppManager) ValidateClient(ctx context.Context, clientID, clientSecret string) (*Application, error) {
-	// Get application
-	app, err := m.storage.GetApp(ctx, clientID)
-	if err != nil {
+	valid, err := m.storage.ValidateClientSecret(ctx, clientID, clientSecret)
+	if err != nil || !valid {
+		if errors.As(err, new(*ClientStoreUnavailableError)) {
+			return nil, &IAMContextError{Message: "client authentication unavailable", Cause: err}
+		}
 		return nil, &IAMMessageError{Message: "invalid client credentials"}
 	}
 
-	// Validate secret
-	valid, err := m.storage.ValidateClientSecret(ctx, clientID, clientSecret)
-	if err != nil || !valid {
-		return nil, &IAMMessageError{Message: "invalid client credentials"}
+	// The secret was valid, so this read is not a probe.
+	app, err := m.storage.GetApp(ctx, clientID)
+	if err != nil {
+		return nil, &IAMContextError{Message: "failed to load application", Cause: err}
 	}
 
 	return redactAppSecrets(app), nil

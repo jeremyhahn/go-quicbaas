@@ -1536,7 +1536,14 @@ A refresh **renews** a session. It does not re-authenticate and it does not
 re-authorize. The authentication context established at login is frozen into
 the stored record (`Token.Session`, a `TokenSessionContext`) and replayed onto
 every renewed access token: roles, groups, audience, profile claims,
-`auth_method`, `mfa_verified`, `amr`, `acr`, and the DPoP `cnf.jkt` binding.
+`auth_method`, `mfa_verified`, and the DPoP `cnf.jkt` binding. Renewed access
+tokens never carry `acr` or `amr`: they are ID-token claims. `acr` is set only
+by the hardware-attested login; `amr` is set by every PIV/mTLS or passkey login,
+attested or not (an unattested PIV login reports `["mtls"]`). The one access
+token that carries `amr` is the mTLS service-account token from
+`/oauth2/token-mtls` (`["mtls"]`, or `["mtls","hwk"]` for a TPM-chained
+certificate, and no `acr`), since that grant issues no ID token; every other
+access token omits both.
 
 Authority changes take effect through the two mechanisms that already bound the
 session:
