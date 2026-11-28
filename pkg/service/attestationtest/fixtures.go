@@ -41,7 +41,7 @@ import (
 	cose "github.com/veraison/go-cose"
 	"github.com/veraison/swid"
 
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
+	"github.com/jeremyhahn/go-xkms/sdk/go/evidence"
 )
 
 // FixtureError reports a fixture that could not be built.
