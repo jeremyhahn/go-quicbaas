@@ -3,6 +3,7 @@
 -->
 <script lang="ts">
   import type { Component } from 'svelte';
+  import type { Icon as LucideIcon } from 'lucide-svelte';
 
   let {
     title,
@@ -12,7 +13,7 @@
   }: {
     title: string;
     subtitle?: string;
-    icon?: Component<{ class?: string }>;
+    icon?: Component<{ class?: string }> | typeof LucideIcon;
     children?: import('svelte').Snippet;
   } = $props();
 </script>

@@ -123,7 +123,17 @@ func initMiddlewareMetrics() {
 // SecurityHeadersMiddleware adds security headers to all HTTP responses.
 // This middleware sets standard security headers to protect against common
 // web vulnerabilities including clickjacking, XSS, MIME sniffing, and more.
-func SecurityHeadersMiddleware() func(http.Handler) http.Handler {
+//
+// The Content-Security-Policy is default-src 'self'. When connectOrigins is
+// non-empty the policy also carries connect-src 'self' followed by those
+// origins, so the web UI may reach the listed daemons. The origins come from
+// the validated server.rest.ui_connect_origins config. Under CSP Level 3 an
+// https origin also covers wss to the same host.
+func SecurityHeadersMiddleware(connectOrigins ...string) func(http.Handler) http.Handler {
+	csp := "default-src 'self'"
+	if len(connectOrigins) > 0 {
+		csp += "; connect-src 'self' " + strings.Join(connectOrigins, " ")
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// HSTS - Force HTTPS for 1 year, including subdomains.
@@ -147,8 +157,9 @@ func SecurityHeadersMiddleware() func(http.Handler) http.Handler {
 			// Control referrer information sent with requests
 			w.Header().Set(HeaderReferrerPolicy, "strict-origin-when-cross-origin")
 
-			// Restrict content sources to same origin
-			w.Header().Set(HeaderContentSecurityPolicy, "default-src 'self'")
+			// Restrict content sources to same origin, plus any
+			// allow-listed daemons the web UI may connect to.
+			w.Header().Set(HeaderContentSecurityPolicy, csp)
 
 			// Disable sensitive browser features
 			w.Header().Set(HeaderPermissionsPolicy, "geolocation=(), microphone=(), camera=()")

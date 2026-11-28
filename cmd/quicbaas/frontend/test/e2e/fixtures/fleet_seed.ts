@@ -23,7 +23,8 @@
  * Uses the shared auth + fetch helpers from fixtures/_http.ts.
  */
 
-import { serverBase, authHeader, apiFetch } from './_http.ts';
+import { serverBase, factoryApiFetch, factoryAuthFetch } from './_http.ts';
+import { factoryTenantID } from './auth.ts';
 export { SYSTEM_TENANT_ID } from './_http.ts';
 
 // ---------------------------------------------------------------------------
@@ -76,11 +77,11 @@ interface RegisterAgentResponseJSON {
  */
 export async function seedAgent(
   label = 'e2e-agent',
-  tenantID = 'system',
+  tenantID = factoryTenantID(),
 ): Promise<SeededAgent> {
   const name = `${label}-${Date.now()}`;
   const url = `${serverBase()}/api/v1/fleet`;
-  const resp = await apiFetch<RegisterAgentResponseJSON>(url, {
+  const resp = await factoryApiFetch<RegisterAgentResponseJSON>(url, {
     method: 'POST',
     body: JSON.stringify({
       tenant_id: tenantID,
@@ -107,13 +108,10 @@ export async function seedAgent(
  * Verified endpoint: DELETE /api/v1/fleet/{id}
  *   → HandleRemoveFleetNode (handlers_orchestrator.go lines 1252–1279)
  */
-export async function removeSeededAgent(agentID: string, tenantID = 'system'): Promise<void> {
+export async function removeSeededAgent(agentID: string, tenantID = factoryTenantID()): Promise<void> {
   try {
     const url = `${serverBase()}/api/v1/fleet/${encodeURIComponent(agentID)}?tenant_id=${encodeURIComponent(tenantID)}`;
-    const resp = await fetch(url, {
-      method: 'DELETE',
-      headers: { ...authHeader(), Accept: 'application/json' },
-    });
+    const resp = await factoryAuthFetch(url, { method: 'DELETE' });
     if (!resp.ok && resp.status !== 404) {
       console.warn(`removeSeededAgent: DELETE ${url} returned ${resp.status}`);
     }

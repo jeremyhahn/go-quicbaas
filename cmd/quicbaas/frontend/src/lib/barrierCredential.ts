@@ -19,38 +19,45 @@
  * them `[]byte` so it can be wiped, and `encoding/json` renders a `[]byte` as
  * base64 — so `secret` / `passphrase` / `key` are base64 on the wire (see
  * docs/barrier/api.md). The server rejects MALFORMED base64 and nothing else,
- * which is precisely why this belongs in one function: a caller that forgets
- * to encode does not reliably get an error. `password` is valid base64, so it
- * is accepted and the barrier is keyed on six bytes nobody typed.
+ * which is precisely why the encoding belongs in exactly one place: a caller
+ * that forgets to encode, or encodes twice, does not reliably get an error.
+ *
+ * That one place is the SDK. RestTenantBarrierClient takes the passphrase and
+ * the unseal key as `Uint8Array` and base64-encodes them itself, so this
+ * module hands it the typed text's UTF-8 BYTES and nothing more. It used to
+ * hand it a base64 string instead; the SDK's encoder read each character as a
+ * NaN byte, and the server received as many zero bytes as the string had
+ * characters — every passphrase of one length keyed the same barrier
+ * (go-quicbaas#2372).
  *
  * Init and unseal each used to have their own answer here — unseal encoded,
  * init forwarded the picker's plaintext — so a tenant barrier initialized
- * through the UI could not be unsealed through it (go-quicbaas#988). Both now
- * route through this module, and the tests hold them to the same encoding.
+ * through the UI could not be unsealed through it (go-quicbaas#988). Both
+ * still route through the one encoder in this module, now as bytes, and the
+ * tests hold them to the same bytes and the same wire.
  */
 
+import type { TenantBarrierInitRequest } from '@quicbaas/sdk';
 import type { TenantBarrierInitParams } from '@quicbaas/svelte-security';
 
-/** encodeBarrierCredential renders a typed passphrase as the base64 bytes the
- * barrier wire carries. */
-export function encodeBarrierCredential(passphrase: string): string {
-  const bytes = new TextEncoder().encode(passphrase);
-  let binary = '';
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary);
+/** encodeBarrierCredential renders a typed passphrase as its UTF-8 bytes, the
+ * credential the SDK base64-encodes onto the barrier wire. */
+export function encodeBarrierCredential(passphrase: string): Uint8Array {
+  return new TextEncoder().encode(passphrase);
 }
 
 /**
- * encodeInitParams returns the init payload with its credential encoded,
- * leaving the credential-free strategies untouched.
+ * encodeInitParams returns the SDK init request for the picker's params, with
+ * the passphrase as its UTF-8 bytes (the SDK does the one base64 encoding),
+ * leaving the credential-free strategies untouched and the input unmutated.
  *
  * It exists as a function rather than three lines inside the view's submit
- * handler so the property that matters — init and unseal encode the same typed
- * text identically — is reachable by a test.
+ * handler so the property that matters — init and unseal send the same typed
+ * text as the same bytes — is reachable by a test.
  */
 export function encodeInitParams(
   params: TenantBarrierInitParams,
-): TenantBarrierInitParams {
+): TenantBarrierInitRequest {
   if (params.strategy !== 'passphrase') return params;
   return { ...params, passphrase: encodeBarrierCredential(params.passphrase) };
 }

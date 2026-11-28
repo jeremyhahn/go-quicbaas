@@ -645,7 +645,7 @@ export class McpBarrierClient {
             threshold: req.threshold,
             total: req.total,
         });
-        return { shares: reply.shares ?? [], threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
+        return { share_count: reply.share_count ?? 0, threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
     }
     // The recovery tool reports the quorum but never the recovery keys.
     async generateRecoveryKeys(req) {
@@ -653,7 +653,7 @@ export class McpBarrierClient {
             threshold: req.threshold,
             total: req.total,
         });
-        return { keys: reply.keys ?? [], threshold: reply.threshold ?? 0, total: reply.total ?? 0 };
+        return { share_count: reply.share_count ?? 0, threshold: reply.threshold ?? 0, total: reply.total ?? 0 };
     }
     async recoverWithKeys(req) {
         await this.session.callTool('qrdb_barrier_recovery_recover', { keys: req.keys });
@@ -1035,6 +1035,34 @@ export class McpClient {
     crypto = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dek = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    entities = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    attestation = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    xkmsKeys = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    piv = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    xkms = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    backups = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    clusterNodes = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    kmsAdmin = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    objectStorageAdmin = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    parameters = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vectorAdmin = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    xkmsFido2 = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    registry = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    cache = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dynamicSecrets = null;
     barrier;

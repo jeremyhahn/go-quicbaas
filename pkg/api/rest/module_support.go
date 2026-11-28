@@ -37,7 +37,8 @@ import (
 // decision is not repeated for a caller acting in its own tenant. The route's
 // permission is carried in the request context instead, so urlTenant can
 // render it in the URL's tenant for a system caller that names another
-// tenant (go-quicbaas#2212).
+// tenant (go-quicbaas#2212). Module routes also carry the configured CORS
+// headers, as setupRouter's chain does.
 func (s *Server) BindRoute(spec RouteSpec) http.Handler {
 	var h http.Handler = spec.Handler(s)
 	if spec.Resource != "" && spec.Action != "" {
@@ -63,6 +64,13 @@ func (s *Server) BindRoute(spec RouteSpec) http.Handler {
 	// way the core routes do (#156); the limiter keys its buckets on it.
 	if s.rateLimit != nil {
 		h = s.rateLimit(h)
+	}
+	// The configured CORS origins (server.rest.cors_origins). The unified
+	// server does not run setupRouter's chain, so module routes apply the
+	// same CORSMiddleware here. It sits outside the rate limiter so a 429
+	// still carries the headers the browser needs to read it.
+	if len(s.config.CORSOrigins) > 0 {
+		h = CORSMiddleware(s.config.CORSOrigins)(h)
 	}
 	return ClientIPMiddleware(s.clientIP)(h)
 }

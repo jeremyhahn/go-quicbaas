@@ -150,6 +150,8 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 		// which may not be properly parsed from some config paths.
 		RequestTimeout:    25 * time.Second,
 		RateLimit:         s.config.Server.REST.RateLimit,
+		CORSOrigins:       s.config.Server.REST.CORSOrigins,
+		UIConnectOrigins:  s.config.Server.REST.UIConnectOrigins,
 		ExposeShardHeader: s.config.Server.ExposeShardHeader,
 		TrustedProxies:    s.config.Server.TrustedProxies,
 		NodeID:            s.config.Raft.NodeID,

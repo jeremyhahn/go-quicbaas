@@ -42,6 +42,7 @@
  *   #/objects        → Object storage
  *   #/iam            → IAM
  *   #/kms            → KMS
+ *   #/xkms-keys      → Key Store (xkms keys)
  *   #/secrets        → Secrets
  *   #/certificates   → Certificates / Certificate Authority
  *   #/trust          → Trust composition (cross-sign / AIA / DANE)
@@ -53,7 +54,16 @@
  *   #/bootstrap      → First-contact trust bootstrap wizard
  *   #/ssh-keys       → SSH Keys
  *   #/sshkeys        → bookmark-friendly alias for /ssh-keys
+ *   #/my-sessions    → My Sessions (the caller's IAM sessions)
+ *   #/attestation    → Attestation (verifier endorsements and reference values)
+ *   #/oauth-apps     → OAuth Apps (a tenant's registered OAuth applications)
+ *   #/identity-providers → Identity Providers (a tenant's federation providers)
+ *   #/policy-tester  → Policy Tester (check, simulate and explain tenant policies)
+ *   #/impersonation  → Impersonation (delegated-admin impersonation sessions)
+ *   #/iam-audit      → IAM Audit (the selected tenant's IAM audit events)
  *   #/accounts       → Pooled provider accounts
+ *   #/agents         → The Agent catalog: Agents and agent pools
+ *   #/prompts        → Prompt sets per scope (?set=&scope=&project=&name=&version= opens one version)
  *   #/invite/:token → Invite activation (passwordless)
  */
 
@@ -90,6 +100,7 @@ export type RouteName =
   // SECURITY
   | 'iam'
   | 'kms'
+  | 'xkms-keys'
   | 'secrets'
   | 'certificates'
   | 'trust'
@@ -101,17 +112,30 @@ export type RouteName =
   | 'ceremony'
   | 'bootstrap'
   | 'ssh-keys'
+  | 'my-sessions'
+  | 'attestation'
+  | 'oauth-apps'
+  | 'identity-providers'
+  | 'policy-tester'
+  | 'impersonation'
+  | 'iam-audit'
   // ORCHESTRATION — inference
   | 'inference'
   // ORCHESTRATION — projects
   | 'projects'
   // ORCHESTRATION — pooled provider accounts
   | 'accounts'
+  // ORCHESTRATION — the Agent catalog: Agents and agent pools
+  | 'agents'
+  // ORCHESTRATION — the prompts jobs render from
+  | 'prompts'
   // OVERVIEW — the attention inbox
   | 'attention'
   // CLUSTER
   | 'cluster'
   | 'nodes'
+  | 'backup'
+  | 'connection'
   | 'invite-activate'
   | 'not-found';
 
@@ -254,6 +278,9 @@ function matchPath(path: string, hash: string): Route {
   if (path === '/kms') {
     return { name: 'kms', params: {}, hash };
   }
+  if (path === '/xkms-keys') {
+    return { name: 'xkms-keys', params: {}, hash };
+  }
   if (path === '/secrets') {
     return { name: 'secrets', params: {}, hash };
   }
@@ -291,6 +318,27 @@ function matchPath(path: string, hash: string): Route {
   if (path === '/ssh-keys' || path === '/sshkeys') {
     return { name: 'ssh-keys', params: {}, hash };
   }
+  if (path === '/my-sessions') {
+    return { name: 'my-sessions', params: {}, hash };
+  }
+  if (path === '/attestation') {
+    return { name: 'attestation', params: {}, hash };
+  }
+  if (path === '/oauth-apps') {
+    return { name: 'oauth-apps', params: {}, hash };
+  }
+  if (path === '/identity-providers') {
+    return { name: 'identity-providers', params: {}, hash };
+  }
+  if (path === '/policy-tester') {
+    return { name: 'policy-tester', params: {}, hash };
+  }
+  if (path === '/impersonation') {
+    return { name: 'impersonation', params: {}, hash };
+  }
+  if (path === '/iam-audit') {
+    return { name: 'iam-audit', params: {}, hash };
+  }
   // AI/ML
   if (path === '/rag') {
     return { name: 'rag', params: {}, hash };
@@ -314,11 +362,25 @@ function matchPath(path: string, hash: string): Route {
   if (path === '/accounts') {
     return { name: 'accounts', params: {}, hash };
   }
+  if (path === '/agents') {
+    return { name: 'agents', params: {}, hash };
+  }
+  // The query (set, scope, project, name, version) reaches the page through
+  // parseHash, which merges it into params.
+  if (path === '/prompts') {
+    return { name: 'prompts', params: {}, hash };
+  }
   if (path === '/cluster') {
     return { name: 'cluster', params: {}, hash };
   }
   if (path === '/nodes') {
     return { name: 'nodes', params: {}, hash };
+  }
+  if (path === '/backup') {
+    return { name: 'backup', params: {}, hash };
+  }
+  if (path === '/connection') {
+    return { name: 'connection', params: {}, hash };
   }
 
   // Parameterised: /sessions/:id
@@ -489,6 +551,7 @@ export function routeIAMTab(tab: 'users' | 'tenants' | 'roles' | 'policies'): vo
   navigateTo(`/iam/${tab}`);
 }
 export function routeKMS(): void { navigateTo('/kms'); }
+export function routeXKMSKeys(): void { navigateTo('/xkms-keys'); }
 export function routeSecrets(): void { navigateTo('/secrets'); }
 export function routeCertificates(): void { navigateTo('/certificates'); }
 export function routeTrust(): void { navigateTo('/trust'); }
@@ -502,6 +565,13 @@ export function routeBootstrap(): void { navigateTo('/bootstrap'); }
 /** @deprecated Use routeBarrier — /seal is the legacy hash. */
 export function routeSeal(): void { routeBarrier(); }
 export function routeSSHKeys(): void { navigateTo('/ssh-keys'); }
+export function routeMySessions(): void { navigateTo('/my-sessions'); }
+export function routeAttestation(): void { navigateTo('/attestation'); }
+export function routeOAuthApps(): void { navigateTo('/oauth-apps'); }
+export function routeIdentityProviders(): void { navigateTo('/identity-providers'); }
+export function routePolicyTester(): void { navigateTo('/policy-tester'); }
+export function routeImpersonation(): void { navigateTo('/impersonation'); }
+export function routeIAMAudit(): void { navigateTo('/iam-audit'); }
 // AI/ML
 export function routeRAG(): void { navigateTo('/rag'); }
 export function routeEmbeddings(): void { navigateTo('/embeddings'); }
@@ -511,6 +581,8 @@ export function routeScheduler(): void { navigateTo('/scheduler'); }
 export function routeInference(): void { navigateTo('/inference'); }
 export function routeProjects(): void { navigateTo('/projects'); }
 export function routeAccounts(): void { navigateTo('/accounts'); }
+export function routeAgents(): void { navigateTo('/agents'); }
+export function routePrompts(): void { navigateTo('/prompts'); }
 export function routeAttention(): void { navigateTo('/attention'); }
 export function routeSessionDetail(id: string): void {
   navigateTo(`/sessions/${encodeURIComponent(id)}`);

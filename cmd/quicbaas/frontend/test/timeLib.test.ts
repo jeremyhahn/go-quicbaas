@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { hasInstant } from '../src/lib/time.ts';
+import { formatDateTime, formatRelative, formatTimeOnly, hasInstant, toMillis } from '../src/lib/time.ts';
 
 describe('hasInstant', () => {
   it('rejects Go’s zero time, which reaches the browser as a real date', () => {
@@ -41,5 +41,28 @@ describe('hasInstant', () => {
   it('accepts a positive numeric timestamp in any unit', () => {
     expect(hasInstant(1_778_017_609)).toBe(true);
     expect(hasInstant(1_778_017_609_149_476_600)).toBe(true);
+  });
+});
+
+describe('toMillis on Go’s zero time', () => {
+  it('returns null for Go’s zero time', () => {
+    expect(toMillis('0001-01-01T00:00:00Z')).toBeNull();
+    expect(toMillis('0001-01-01T00:00:00.000Z')).toBeNull();
+  });
+
+  it('renders the zero time as the em-dash the formatters render for a missing field', () => {
+    for (const format of [formatDateTime, formatTimeOnly, formatRelative]) {
+      expect(format('0001-01-01T00:00:00Z')).toBe(format(null));
+      expect(format('0001-01-01T00:00:00Z')).toBe('—');
+    }
+  });
+
+  it('leaves a real timestamp near the epoch unaffected', () => {
+    expect(toMillis('1970-01-01T00:00:01Z')).toBe(1000);
+    expect(formatDateTime('1970-01-01T00:00:01Z')).not.toBe('—');
+  });
+
+  it('still parses a real ISO timestamp', () => {
+    expect(toMillis('2026-09-05T01:55:26Z')).toBe(Date.parse('2026-09-05T01:55:26Z'));
   });
 });

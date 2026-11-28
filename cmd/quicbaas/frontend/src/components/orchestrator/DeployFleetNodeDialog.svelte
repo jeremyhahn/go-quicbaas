@@ -33,7 +33,7 @@
   // ---------------------------------------------------------------------------
 
   type AuthMethod = 'private-key' | 'stored-key' | 'password';
-  let authMethod: AuthMethod = $state('private-key');
+  let authMethod = $state<AuthMethod>('private-key');
 
   // private-key fields
   let sshKeyPath = $state('');
@@ -70,7 +70,7 @@
   // ---------------------------------------------------------------------------
 
   type Step = 'idle' | 'ssh' | 'upload' | 'start' | 'wait' | 'done' | 'error';
-  let step: Step = $state('idle');
+  let step = $state<Step>('idle');
   let errorMessage = $state('');
   let result: DeployFleetNodeResult | null = $state(null);
 

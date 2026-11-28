@@ -56,6 +56,55 @@ describe.each(transports)('$name transport — projects, sdlc and accounts (and 
   });
 });
 
+// The families the desktop app has no Wails binding for. Each pair names a
+// real verb of the family's interface; the type keeps the pair honest.
+type Verb<F extends keyof Client> = Extract<keyof Client[F], string>;
+const wailsUnbound = <F extends keyof Client>(family: F, method: Verb<F>): [string, string] => [family, method];
+
+const wailsUnboundFamilies: Array<[string, string]> = [
+  wailsUnbound('data', 'kvList'),
+  wailsUnbound('vectors', 'listNamespaces'),
+  wailsUnbound('timeseries', 'listMetrics'),
+  wailsUnbound('objects', 'list'),
+  wailsUnbound('rag', 'query'),
+  wailsUnbound('embeddings', 'listProviders'),
+  wailsUnbound('messaging', 'listChannels'),
+  wailsUnbound('scheduler', 'listJobs'),
+  wailsUnbound('agents', 'listAgents'),
+  wailsUnbound('iam', 'listTenants'),
+  wailsUnbound('kms', 'listKeys'),
+  wailsUnbound('secrets', 'listSecrets'),
+  wailsUnbound('ca', 'caInfo'),
+  wailsUnbound('trust', 'crossSignedRootPool'),
+  wailsUnbound('crypto', 'hash'),
+  wailsUnbound('dek', 'list'),
+  wailsUnbound('dynamicSecrets', 'listRoles'),
+  wailsUnbound('barrier', 'status'),
+  wailsUnbound('tenantBarrier', 'tenantBarrierStatus'),
+  wailsUnbound('ceremony', 'claimCertComplete'),
+  wailsUnbound('cluster', 'status'),
+  wailsUnbound('seal', 'status'),
+];
+
+describe('wails transport — families without a binding', () => {
+  it.each(wailsUnboundFamilies)('%s.%s rejects with TransportNotSupportedError', async (family, method) => {
+    const c = new WailsClient() as unknown as Record<string, Record<string, () => Promise<unknown>>>;
+    const err = await c[family][method]().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransportNotSupportedError);
+    const refusal = err as TransportNotSupportedError;
+    expect(refusal.transport).toBe('wails');
+    expect(refusal.family).toBe(family);
+    expect(refusal.method).toBe(method);
+    expect(refusal.reason).toContain('no Wails binding');
+  });
+
+  it('is not mistaken for a promise when awaited', async () => {
+    const c = new WailsClient();
+    const kms = await Promise.resolve(c.kms);
+    expect(kms).toBe(c.kms);
+  });
+});
+
 describe('unsupportedClient', () => {
   it('names the verb that was called', async () => {
     const projects = unsupportedClient<ProjectsClient>('test', 'projects', 'because');

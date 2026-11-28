@@ -246,6 +246,34 @@ export class GrpcWebClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dek = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    entities = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    attestation = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    xkmsKeys = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    piv = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    xkms = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    backups = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    clusterNodes = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    kmsAdmin = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    objectStorageAdmin = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    parameters = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vectorAdmin = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    xkmsFido2 = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    registry = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    cache = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dynamicSecrets = null;
     barrier;
     // Per-tenant barrier is a REST-only surface; non-REST transports stub it.

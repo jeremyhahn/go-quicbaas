@@ -34,12 +34,21 @@
 -->
 <script lang="ts">
   import { showToast } from '../../stores/toast.svelte.ts';
+  import { getValidAccessToken } from '../../stores/auth.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import { ShieldOff } from 'lucide-svelte';
-  import { APIError, createBarrierClient, isWailsRuntime } from '@quicbaas/sdk';
+  import {
+    APIError,
+    createBarrierClient,
+    createCeremonyClient,
+    isWailsRuntime,
+  } from '@quicbaas/sdk';
   import type {
     BarrierClient as SDKBarrierClient,
     BarrierStatusResponse,
+    CeremonyClient,
+    CeremonyInitializeResponse,
+    CeremonyOfficer,
   } from '@quicbaas/sdk';
   import {
     BarrierStatusBadge,
@@ -56,10 +65,12 @@
   // SDK -> structural BarrierClient adapter
   //
   // The svelte-security components consume a structurally-typed BarrierClient
-  // (init({threshold, total_shares}), unseal({share}), status() →
-  // BarrierStatus). The SDK BarrierClient surface is richer (initializeShamir,
-  // unsealWithShare, etc.) so we adapt the SDK calls into the shape the
-  // components expect. Crucially, all URL routing flows through the SDK so
+  // (unseal({share}), status() → BarrierStatus). The SDK BarrierClient surface
+  // is richer (unsealWithShare, etc.) so we adapt the SDK calls into the shape
+  // the components expect. Shamir init does not go through the BarrierClient:
+  // the system barrier refuses a bare Shamir init, so the form runs the SDK
+  // initialization ceremony (CeremonyClient.initialize). Crucially, all URL
+  // routing flows through the SDK so
   // future server-side path changes propagate automatically.
   // ---------------------------------------------------------------------------
 
@@ -102,9 +113,18 @@
   // makeClient builds the structural BarrierClient that the svelte-security
   // components consume by adapting the typed SDK BarrierClient. Every HTTP
   // path is owned by the SDK — see RestBarrierClient in @quicbaas/sdk.
-  async function makeClient(): Promise<{ structural: BarrierClient; sdk: SDKBarrierClient }> {
+  async function makeClient(): Promise<{
+    structural: BarrierClient;
+    sdk: SDKBarrierClient;
+    ceremony: CeremonyClient;
+  }> {
     const baseURL = typeof window !== 'undefined' ? window.location.origin : '';
-    const sdk = await createBarrierClient(resolveTransport(), { baseURL });
+    // The barrier operations are permission-gated routes, so the client
+    // attaches the logged-in user's bearer on every request, re-read (and
+    // refreshed when near expiry) from the auth store each time.
+    const token = async (): Promise<string> => getValidAccessToken();
+    const sdk = await createBarrierClient(resolveTransport(), { baseURL, token });
+    const ceremony = await createCeremonyClient(resolveTransport(), { baseURL, token });
 
     // adaptStatus folds the SDK BarrierStatusResponse into the
     // strategy-aware BarrierStatus shape the
@@ -136,17 +156,11 @@
         const raw = await sdk.status();
         return adaptStatus(raw);
       },
-      async init(req) {
-        const resp = await sdk.initializeShamir({
-          // The SDK initializeShamir requires a master-key secret; for the
-          // strategy-aware UI the daemon's barrier strategy already carries
-          // the protector, so we send an empty string and rely on the daemon
-          // to derive the master key from the active strategy.
-          secret: '',
-          threshold: req.threshold,
-          total_shares: req.total_shares,
-        });
-        return { shares: resp.shares };
+      async init() {
+        // No component of this view initializes through the BarrierClient:
+        // the system barrier refuses a bare Shamir init. The Shamir form
+        // runs the initialization ceremony instead (submitShamirInit).
+        throw new Error('Shamir init runs through the initialization ceremony');
       },
       async unseal(req) {
         const resp = await sdk.unsealWithShare({ share: req.share });
@@ -158,7 +172,7 @@
       },
     };
 
-    return { structural, sdk };
+    return { structural, sdk, ceremony };
   }
 
   // ---------------------------------------------------------------------------
@@ -171,12 +185,53 @@
   let statusError: string | null = $state(null);
   let subsystemDisabled = $state(false);
 
-  // Shamir init form state.
+  // Shamir init form state: the initialization ceremony's inputs. The share
+  // count is the officer count; there is no separate total.
   let initThreshold = $state(2);
-  let initTotal = $state(3);
+  let initSOPin = $state('');
+  let initUserPin = $state('');
+  let initOfficers: CeremonyOfficer[] = $state([{ username: '', csr_pem: '' }]);
   let initing = $state(false);
-  let initShares: string[] | null = $state(null);
+  let initResult: CeremonyInitializeResponse | null = $state(null);
   let initError: string | null = $state(null);
+
+  const initValid = $derived(
+    Number.isInteger(Number(initThreshold)) &&
+      Number(initThreshold) >= 1 &&
+      Number(initThreshold) <= initOfficers.length &&
+      initSOPin !== '' &&
+      initUserPin !== '' &&
+      initOfficers.every((o) => o.username.trim() !== '' && o.csr_pem.trim() !== ''),
+  );
+
+  function addOfficer(): void {
+    initOfficers = [...initOfficers, { username: '', csr_pem: '' }];
+  }
+
+  function removeOfficer(index: number): void {
+    initOfficers = initOfficers.filter((_, i) => i !== index);
+  }
+
+  // Operations card state (seal, rekey, recovery keys). The typed SDK
+  // client is kept next to the structural adapter so these calls go
+  // through the SDK's own routes.
+  let sdkClient: SDKBarrierClient | null = $state(null);
+  let ceremonyClient: CeremonyClient | null = $state(null);
+  type PendingOp = 'seal' | 'rekey' | 'delete-recovery' | null;
+  let pendingOp: PendingOp = $state(null);
+  let opBusy = $state(false);
+  let sealSOPIN = $state('');
+  let rekeyThreshold: number | null = $state(null);
+  let rekeyTotal: number | null = $state(null);
+  // The rekey and recovery routes answer with distribution metadata only:
+  // the server hands the new shares to the enrolled officers, who claim
+  // them through the share-claim flow. No share material reaches the UI.
+  type Distribution = { threshold: number; total: number; share_count: number };
+  let rekeyResult: Distribution | null = $state(null);
+  let recoveryHasKeys: boolean | null = $state(null);
+  let recoveryThreshold: number | null = $state(null);
+  let recoveryTotal: number | null = $state(null);
+  let recoveryResult: Distribution | null = $state(null);
 
   async function loadStatus(): Promise<void> {
     loading = true;
@@ -184,8 +239,10 @@
     subsystemDisabled = false;
     try {
       if (client === null) {
-        const { structural } = await makeClient();
+        const { structural, sdk, ceremony } = await makeClient();
         client = structural;
+        sdkClient = sdk;
+        ceremonyClient = ceremony;
       }
       status = await client.status();
     } catch (e) {
@@ -209,27 +266,162 @@
     void loadStatus();
   });
 
+  // submitShamirInit runs the initialization ceremony: the system barrier
+  // refuses a bare Shamir init. The ceremony seals each share to an officer,
+  // who claims it on the Ceremony page, so no share reaches the browser.
   async function submitShamirInit(): Promise<void> {
-    if (client === null) return;
+    if (ceremonyClient === null || !initValid) return;
     initError = null;
     initing = true;
     try {
-      const resp = await client.init({
-        threshold: initThreshold,
-        total_shares: initTotal,
+      const resp = await ceremonyClient.initialize({
+        threshold: Number(initThreshold),
+        so_pin: initSOPin,
+        user_pin: initUserPin,
+        officers: initOfficers.map((o) => ({
+          username: o.username.trim(),
+          csr_pem: o.csr_pem.trim(),
+        })),
       });
-      initShares = resp.shares;
+      initResult = resp;
       showToast({
-        message: 'Barrier initialized — store your Shamir shares securely!',
-        type: 'warning',
+        message: `Barrier initialized: ${resp.share_count} shares sealed to officers`,
+        type: 'success',
       });
       void loadStatus();
     } catch (e) {
-      initError = e instanceof Error ? e.message : 'Initialize failed';
+      if (e instanceof APIError) {
+        initError = `[${e.status}] ${e.message}`;
+      } else {
+        initError = e instanceof Error ? e.message : 'Initialize failed';
+      }
     } finally {
+      // The PINs never outlive the call, success or failure.
+      initSOPin = '';
+      initUserPin = '';
       initing = false;
     }
   }
+
+  function errorMessage(e: unknown, fallback: string): string {
+    return e instanceof Error && e.message !== '' ? e.message : fallback;
+  }
+
+  // canOperate is true when the barrier is initialized and unsealed: the
+  // states in which it can be sealed, rekeyed or given recovery keys.
+  let canOperate = $derived.by((): boolean => {
+    const s: BarrierStatus | null = status;
+    if (s === null || sdkClient === null) return false;
+    return s.strategy !== 'disabled' && s.initialized && !s.sealed;
+  });
+
+  async function loadRecoveryStatus(): Promise<void> {
+    if (sdkClient === null) return;
+    try {
+      const resp = await sdkClient.recoveryStatus();
+      recoveryHasKeys = Boolean(resp.has_keys);
+    } catch (e) {
+      recoveryHasKeys = null;
+      showToast({ message: errorMessage(e, 'Failed to load recovery key status'), type: 'error' });
+    }
+  }
+
+  $effect(() => {
+    if (canOperate) {
+      void loadRecoveryStatus();
+    }
+  });
+
+  async function confirmSeal(): Promise<void> {
+    if (sdkClient === null) return;
+    pendingOp = null;
+    opBusy = true;
+    const pin = sealSOPIN;
+    try {
+      await sdkClient.seal(pin !== '' ? { so_pin: pin } : undefined);
+      showToast({ message: 'Barrier sealed', type: 'success' });
+      void loadStatus();
+    } catch (e) {
+      showToast({ message: errorMessage(e, 'Seal failed'), type: 'error' });
+    } finally {
+      sealSOPIN = '';
+      opBusy = false;
+    }
+  }
+
+  function requestRekey(): void {
+    if (rekeyThreshold === null || rekeyTotal === null) {
+      showToast({ message: 'Enter the new threshold and total shares', type: 'error' });
+      return;
+    }
+    pendingOp = 'rekey';
+  }
+
+  async function confirmRekey(): Promise<void> {
+    if (sdkClient === null || rekeyThreshold === null || rekeyTotal === null) return;
+    pendingOp = null;
+    opBusy = true;
+    const req = { threshold: Number(rekeyThreshold), total: Number(rekeyTotal) };
+    try {
+      const resp = await sdkClient.rekey(req);
+      rekeyResult = {
+        threshold: Number(resp.threshold ?? req.threshold),
+        total: Number(resp.total_shares ?? req.total),
+        share_count: Number(resp.share_count ?? 0),
+      };
+      showToast({ message: 'Barrier rekeyed — officers must claim their new shares', type: 'warning' });
+      void loadStatus();
+    } catch (e) {
+      showToast({ message: errorMessage(e, 'Rekey failed'), type: 'error' });
+    } finally {
+      rekeyThreshold = null;
+      rekeyTotal = null;
+      opBusy = false;
+    }
+  }
+
+  async function submitGenerateRecovery(): Promise<void> {
+    if (sdkClient === null) return;
+    if (recoveryThreshold === null || recoveryTotal === null) {
+      showToast({ message: 'Enter the recovery threshold and total keys', type: 'error' });
+      return;
+    }
+    opBusy = true;
+    const req = { threshold: Number(recoveryThreshold), total: Number(recoveryTotal) };
+    try {
+      const resp = await sdkClient.generateRecoveryKeys(req);
+      recoveryResult = {
+        threshold: Number(resp.threshold ?? req.threshold),
+        total: Number(resp.total ?? req.total),
+        share_count: Number(resp.share_count ?? 0),
+      };
+      showToast({ message: 'Recovery keys generated — officers must claim their recovery shares', type: 'warning' });
+      void loadRecoveryStatus();
+    } catch (e) {
+      showToast({ message: errorMessage(e, 'Generating recovery keys failed'), type: 'error' });
+    } finally {
+      recoveryThreshold = null;
+      recoveryTotal = null;
+      opBusy = false;
+    }
+  }
+
+  async function confirmDeleteRecovery(): Promise<void> {
+    if (sdkClient === null) return;
+    pendingOp = null;
+    opBusy = true;
+    try {
+      await sdkClient.deleteRecoveryKeys();
+      recoveryResult = null;
+      showToast({ message: 'Recovery keys deleted', type: 'success' });
+    } catch (e) {
+      showToast({ message: errorMessage(e, 'Deleting recovery keys failed'), type: 'error' });
+    } finally {
+      opBusy = false;
+      void loadRecoveryStatus();
+    }
+  }
+
 </script>
 
 <div class="p-6 space-y-6">
@@ -326,27 +518,25 @@
           {#if !status.initialized}
             <div class="space-y-3" data-testid="barrier-strategy-shamir-init">
               <p class="text-sm text-base-content/70">
-                Initialize the Shamir barrier. Choose how many shares to mint and
-                the threshold required to unseal. Shares are returned exactly once.
+                Initialize the Shamir barrier through the initialization ceremony.
+                Choose the threshold required to unseal, set the SO and user PINs,
+                and enroll the officers with their CSRs. Each share is sealed to an
+                officer, who claims it on the Ceremony page.
               </p>
               {#if initError !== null}
-                <div class="alert alert-error text-sm" role="alert">{initError}</div>
+                <div class="alert alert-error text-sm" role="alert" data-testid="barrier-ceremony-error">
+                  {initError}
+                </div>
               {/if}
-              {#if initShares !== null}
-                <div class="alert alert-warning text-sm" role="alert">
-                  <div>
-                    <div class="font-semibold mb-2">New shares — store securely!</div>
-                    <div class="space-y-1">
-                      {#each initShares as share, i}
-                        <div class="font-mono text-xs break-all" data-testid="shamir-share-result">
-                          <span class="text-base-content/50">#{i + 1}</span> {share}
-                        </div>
-                      {/each}
-                    </div>
-                  </div>
+              {#if initResult !== null}
+                <div class="alert alert-success text-sm" role="status" data-testid="barrier-ceremony-result">
+                  <span>
+                    Ceremony {initResult.state}: {initResult.share_count} shares sealed to
+                    officers. Each officer claims their share on the Ceremony page.
+                  </span>
                 </div>
               {:else}
-                <div class="grid grid-cols-2 gap-3">
+                <div class="grid grid-cols-3 gap-3">
                   <div class="form-control">
                     <label class="label label-text" for="shamir-init-threshold">Threshold</label>
                     <input
@@ -354,23 +544,77 @@
                       class="input input-bordered input-sm"
                       type="number"
                       min="1"
+                      max={initOfficers.length}
                       bind:value={initThreshold}
                     />
                   </div>
                   <div class="form-control">
-                    <label class="label label-text" for="shamir-init-total">Total shares</label>
+                    <label class="label label-text" for="shamir-init-so-pin">SO PIN</label>
                     <input
-                      id="shamir-init-total"
+                      id="shamir-init-so-pin"
                       class="input input-bordered input-sm"
-                      type="number"
-                      min="1"
-                      bind:value={initTotal}
+                      type="password"
+                      autocomplete="off"
+                      bind:value={initSOPin}
+                    />
+                  </div>
+                  <div class="form-control">
+                    <label class="label label-text" for="shamir-init-user-pin">User PIN</label>
+                    <input
+                      id="shamir-init-user-pin"
+                      class="input input-bordered input-sm"
+                      type="password"
+                      autocomplete="off"
+                      bind:value={initUserPin}
                     />
                   </div>
                 </div>
+                <div class="space-y-2" data-testid="barrier-ceremony-officers">
+                  {#each initOfficers as officer, i (i)}
+                    <div
+                      class="grid grid-cols-[1fr_2fr_auto] gap-2 items-end"
+                      data-testid="barrier-ceremony-officer"
+                    >
+                      <div class="form-control">
+                        <label class="label label-text" for="shamir-init-officer-{i}-username">
+                          Username
+                        </label>
+                        <input
+                          id="shamir-init-officer-{i}-username"
+                          class="input input-bordered input-sm"
+                          type="text"
+                          bind:value={officer.username}
+                        />
+                      </div>
+                      <div class="form-control">
+                        <label class="label label-text" for="shamir-init-officer-{i}-csr">
+                          CSR (PEM)
+                        </label>
+                        <textarea
+                          id="shamir-init-officer-{i}-csr"
+                          class="textarea textarea-bordered textarea-sm font-mono"
+                          rows="3"
+                          bind:value={officer.csr_pem}
+                        ></textarea>
+                      </div>
+                      <button
+                        class="btn btn-ghost btn-sm"
+                        type="button"
+                        aria-label="Remove officer {i + 1}"
+                        disabled={initOfficers.length <= 1}
+                        onclick={() => removeOfficer(i)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  {/each}
+                  <button class="btn btn-ghost btn-sm" type="button" onclick={addOfficer}>
+                    Add officer
+                  </button>
+                </div>
                 <button
                   class="btn btn-accent btn-sm"
-                  disabled={initing}
+                  disabled={initing || !initValid}
                   onclick={() => { void submitShamirInit(); }}
                 >
                   {initing ? 'Initializing...' : 'Initialize Shamir barrier'}
@@ -457,4 +701,139 @@
       </div>
     </div>
   </div>
+
+  {#snippet distributed(title: string, result: Distribution, testid: string, ondismiss: () => void)}
+    <div class="alert alert-info text-sm" role="status" data-testid={testid}>
+      <div class="w-full space-y-2">
+        <div class="font-semibold">{title}</div>
+        <div class="text-xs" data-testid="{testid}-summary">
+          {result.share_count} share{result.share_count === 1 ? '' : 's'} distributed; any {result.threshold} of {result.total} reconstruct the key.
+        </div>
+        <div class="text-xs">
+          The shares are not shown here. Each enrolled officer claims their own share through the share-claim flow.
+        </div>
+        <div class="flex gap-2">
+          <button class="btn btn-xs btn-ghost" onclick={ondismiss}>Dismiss</button>
+        </div>
+      </div>
+    </div>
+  {/snippet}
+
+  {#if canOperate}
+    <div class="card bg-base-200 rounded-box" data-testid="barrier-operations">
+      <div class="card-body p-6 gap-6">
+        <h2 class="text-lg font-semibold">Operations</h2>
+
+        {#if pendingOp !== null}
+          <div class="alert alert-error text-sm" role="alertdialog" aria-label="Confirm barrier operation" data-testid="barrier-op-confirm">
+            <div class="w-full space-y-2">
+              {#if pendingOp === 'seal'}
+                <p>Seal the barrier? Every service that uses the barrier stops until it is unsealed again.</p>
+              {:else if pendingOp === 'rekey'}
+                <p>Rekey the barrier to {rekeyThreshold} of {rekeyTotal} shares? The current shares stop working.</p>
+              {:else}
+                <p>Delete the recovery keys? They can no longer be used to recover the barrier.</p>
+              {/if}
+              <div class="flex gap-2">
+                <button
+                  class="btn btn-sm btn-error"
+                  disabled={opBusy}
+                  onclick={() => {
+                    if (pendingOp === 'seal') void confirmSeal();
+                    else if (pendingOp === 'rekey') void confirmRekey();
+                    else void confirmDeleteRecovery();
+                  }}
+                >Confirm</button>
+                <button class="btn btn-sm btn-ghost" onclick={() => { pendingOp = null; }}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Seal -->
+        <section class="space-y-2" data-testid="barrier-op-seal">
+          <h3 class="font-semibold">Seal</h3>
+          <div class="form-control max-w-sm">
+            <label class="label label-text" for="barrier-seal-so-pin">Security Officer PIN (if required)</label>
+            <input
+              id="barrier-seal-so-pin"
+              class="input input-bordered input-sm"
+              type="password"
+              autocomplete="off"
+              bind:value={sealSOPIN}
+            />
+          </div>
+          <button class="btn btn-warning btn-sm" disabled={opBusy} onclick={() => { pendingOp = 'seal'; }}>
+            Seal barrier
+          </button>
+        </section>
+
+        <!-- Rekey -->
+        <section class="space-y-2" data-testid="barrier-op-rekey">
+          <h3 class="font-semibold">Rekey</h3>
+          {#if rekeyResult !== null}
+            {@render distributed('Barrier rekeyed', rekeyResult, 'barrier-rekey-result', () => { rekeyResult = null; })}
+          {/if}
+          <form
+            class="space-y-2"
+            data-testid="barrier-rekey-form"
+            onsubmit={(e) => { e.preventDefault(); requestRekey(); }}
+          >
+            <div class="grid grid-cols-2 gap-3 max-w-md">
+              <div class="form-control">
+                <label class="label label-text" for="barrier-rekey-threshold">New threshold</label>
+                <input id="barrier-rekey-threshold" class="input input-bordered input-sm" type="number" min="1" bind:value={rekeyThreshold} />
+              </div>
+              <div class="form-control">
+                <label class="label label-text" for="barrier-rekey-total">New total shares</label>
+                <input id="barrier-rekey-total" class="input input-bordered input-sm" type="number" min="1" bind:value={rekeyTotal} />
+              </div>
+            </div>
+            <button class="btn btn-sm" type="submit" disabled={opBusy}>Rekey barrier</button>
+          </form>
+        </section>
+
+        <!-- Recovery keys -->
+        <section class="space-y-2" data-testid="barrier-op-recovery">
+          <h3 class="font-semibold">Recovery keys</h3>
+          <p class="text-sm" data-testid="barrier-recovery-status">
+            {#if recoveryHasKeys === null}
+              Recovery key status unknown.
+            {:else if recoveryHasKeys}
+              Recovery keys exist.
+            {:else}
+              No recovery keys have been generated.
+            {/if}
+          </p>
+          {#if recoveryResult !== null}
+            {@render distributed('Recovery keys generated', recoveryResult, 'barrier-recovery-result', () => { recoveryResult = null; })}
+          {/if}
+          <form
+            class="space-y-2"
+            data-testid="barrier-recovery-form"
+            onsubmit={(e) => { e.preventDefault(); void submitGenerateRecovery(); }}
+          >
+            <div class="grid grid-cols-2 gap-3 max-w-md">
+              <div class="form-control">
+                <label class="label label-text" for="barrier-recovery-threshold">Recovery threshold</label>
+                <input id="barrier-recovery-threshold" class="input input-bordered input-sm" type="number" min="1" bind:value={recoveryThreshold} />
+              </div>
+              <div class="form-control">
+                <label class="label label-text" for="barrier-recovery-total">Recovery keys to generate</label>
+                <input id="barrier-recovery-total" class="input input-bordered input-sm" type="number" min="1" bind:value={recoveryTotal} />
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <button class="btn btn-sm" type="submit" disabled={opBusy}>Generate recovery keys</button>
+              {#if recoveryHasKeys}
+                <button class="btn btn-sm btn-error btn-outline" type="button" disabled={opBusy} onclick={() => { pendingOp = 'delete-recovery'; }}>
+                  Delete recovery keys
+                </button>
+              {/if}
+            </div>
+          </form>
+        </section>
+      </div>
+    </div>
+  {/if}
 </div>

@@ -27,8 +27,15 @@
     - Service Keys is enabled for system admin role only.
   Disabled tabs are visible but greyed and non-clickable.
 
-  The view renders correctly in both Wails desktop (window.go.main binding)
-  and browser-mode (RestClient dispatching to /api/v1/ssh/*).
+  Row actions: View (key details through keys.getScoped and the exported
+  public key through keys.exportPublic), Copy, Sign (keys.sign on a hex
+  digest) and Delete. Below the table, KnownHostsPanel lists, adds, removes
+  and verifies host-key pins, and AuthorizedKeysPanel lists, adds, views and
+  removes authorized_keys entries, formats a line and checks a fingerprint.
+
+  The page is REST-only in practice: the Wails client throws for the scoped
+  key, known-host and authorized methods, and the QUIC, Unix and MCP clients
+  have no SSH client. Each action shows the thrown error inline.
 -->
 <script lang="ts">
   import { getSDKClient } from '../../stores/sdkClient.ts';
@@ -42,6 +49,8 @@
   import ImportKeyModal from './ssh/ImportKeyModal.svelte';
   import PublicKeyModal from './ssh/PublicKeyModal.svelte';
   import KnownHostsPanel from './ssh/KnownHostsPanel.svelte';
+  import AuthorizedKeysPanel from './ssh/AuthorizedKeysPanel.svelte';
+  import SignDigestModal from './ssh/SignDigestModal.svelte';
   import type { SSHKey, SSHScope } from '@quicbaas/sdk';
   import { SSHUnavailableError } from '@quicbaas/sdk';
   import { Key, KeyRound } from 'lucide-svelte';
@@ -94,6 +103,7 @@
   let showGenerate = $state(false);
   let showImport = $state(false);
   let publicKeyTarget: SSHKey | null = $state(null);
+  let signTarget: SSHKey | null = $state(null);
   let keyToDelete: SSHKey | null = $state(null);
   let deleting = $state(false);
 
@@ -341,6 +351,13 @@
                 Copy
               </button>
               <button
+                class="btn btn-ghost btn-xs"
+                onclick={() => { signTarget = key; }}
+                aria-label={`Sign a digest with ${key.name}`}
+              >
+                Sign
+              </button>
+              <button
                 class="btn btn-ghost btn-xs text-error"
                 onclick={() => { keyToDelete = key; }}
                 aria-label={`Delete key ${key.name}`}
@@ -356,6 +373,9 @@
 
   <!-- Known Hosts panel -->
   <KnownHostsPanel scope={activeScope} owner={activeOwner()} />
+
+  <!-- Authorized keys panel -->
+  <AuthorizedKeysPanel scope={activeScope} owner={activeOwner()} />
 </div>
 
 <!-- Generate Key modal -->
@@ -390,7 +410,19 @@
 {#if publicKeyTarget !== null}
   <PublicKeyModal
     key={publicKeyTarget}
+    scope={publicKeyTarget.scope ?? activeScope}
+    owner={publicKeyTarget.owner ?? activeOwner()}
     onClose={() => { publicKeyTarget = null; }}
+  />
+{/if}
+
+<!-- Sign digest modal -->
+{#if signTarget !== null}
+  <SignDigestModal
+    key={signTarget}
+    scope={signTarget.scope ?? activeScope}
+    owner={signTarget.owner ?? activeOwner()}
+    onClose={() => { signTarget = null; }}
   />
 {/if}
 

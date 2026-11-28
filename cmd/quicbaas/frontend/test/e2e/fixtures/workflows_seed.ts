@@ -22,7 +22,8 @@
  * Uses the shared auth + fetch helpers from fixtures/_http.ts.
  */
 
-import { serverBase, authHeader, apiFetch } from './_http.ts';
+import { serverBase, factoryApiFetch, factoryAuthFetch } from './_http.ts';
+import { factoryTenantID } from './auth.ts';
 export { SYSTEM_TENANT_ID } from './_http.ts';
 
 // ---------------------------------------------------------------------------
@@ -60,11 +61,11 @@ export interface SeededWorkflow {
  */
 export async function seedWorkflow(
   label = 'e2e-wf',
-  tenantID = 'system',
+  tenantID = factoryTenantID(),
 ): Promise<SeededWorkflow> {
   const name = `${label}-${Date.now()}`;
   const url = `${serverBase()}/api/v1/orchestrator/workflows`;
-  await apiFetch<unknown>(url, {
+  await factoryApiFetch<unknown>(url, {
     method: 'POST',
     body: JSON.stringify({
       tenant_id: tenantID,
@@ -146,13 +147,10 @@ export async function seedWorkflow(
  * Verified endpoint: DELETE /api/v1/orchestrator/workflows/{name}
  *   → HandleOrchestratorDeleteWorkflow (handlers_orchestrator.go lines 1585–1613)
  */
-export async function deleteSeededWorkflow(name: string, tenantID = 'system'): Promise<void> {
+export async function deleteSeededWorkflow(name: string, tenantID = factoryTenantID()): Promise<void> {
   try {
     const url = `${serverBase()}/api/v1/orchestrator/workflows/${encodeURIComponent(name)}?tenant_id=${encodeURIComponent(tenantID)}`;
-    const resp = await fetch(url, {
-      method: 'DELETE',
-      headers: { ...authHeader(), Accept: 'application/json' },
-    });
+    const resp = await factoryAuthFetch(url, { method: 'DELETE' });
     if (!resp.ok && resp.status !== 404) {
       console.warn(`deleteSeededWorkflow: DELETE ${url} returned ${resp.status}`);
     }

@@ -28,6 +28,19 @@ const { mockListJobs, mockCreateJob, mockDeleteJob, mockTriggerJob, mockPauseJob
   mockUpdateJob: vi.fn(),
 }));
 
+const P = vi.hoisted(() => ({
+  getStatus: vi.fn(),
+  listNodes: vi.fn(),
+  getNode: vi.fn(),
+  cordonNode: vi.fn(),
+  uncordonNode: vi.fn(),
+  drainNode: vi.fn(),
+  deregisterNode: vi.fn(),
+  listPlacements: vi.fn(),
+  getPlacement: vi.fn(),
+  release: vi.fn(),
+}));
+
 vi.mock('../src/stores/sdkClient.ts', () => ({
   getSDKClient: vi.fn().mockResolvedValue({
     scheduler: {
@@ -38,6 +51,7 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
       pauseJob: mockPauseJob,
       resumeJob: mockResumeJob,
       updateJob: mockUpdateJob,
+      ...P,
     },
   }),
 }));
@@ -56,6 +70,7 @@ vi.stubGlobal('confirm', vi.fn().mockReturnValue(true));
 
 import SchedulerView from '../src/views/async/SchedulerView.svelte';
 import { getSDKClient } from '../src/stores/sdkClient.ts';
+import { showToast } from '../src/stores/toast.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -88,6 +103,43 @@ const JOBS = [
   },
 ];
 
+const STATUS = {
+  running: true,
+  stats: { job_count: 2, running_jobs: 1, success_count: 5, failure_count: 0, started_at: '2025-04-17T00:00:00Z' },
+  timestamp: '2025-04-17T12:00:00Z',
+};
+
+const NODES = [
+  {
+    facts: { node_id: 'node-a', capacity: { cpu: 4 } },
+    status: { unschedulable: false, draining: false },
+    lease_id: 1,
+    ttl_seconds: 30,
+    allocated: { cpu: 1 },
+    placements: 1,
+    registered_at: '2025-04-17T00:00:00Z',
+  },
+  {
+    facts: { node_id: 'node-b', capacity: { cpu: 8 } },
+    status: { unschedulable: true, draining: false },
+    lease_id: 2,
+    ttl_seconds: 30,
+    placements: 0,
+    registered_at: '2025-04-17T00:00:00Z',
+  },
+];
+
+const PLACEMENTS = [
+  {
+    workload_id: 'wl-1',
+    group: 'web',
+    node_id: 'node-a',
+    resources: { cpu: 1 },
+    score: 0.5,
+    created_at: '2025-04-17T01:00:00Z',
+  },
+];
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -102,6 +154,16 @@ describe('SchedulerView', () => {
     mockPauseJob.mockResolvedValue({});
     mockResumeJob.mockResolvedValue({});
     mockUpdateJob.mockResolvedValue({ job: JOBS[0] });
+    P.getStatus.mockResolvedValue(STATUS);
+    P.listNodes.mockResolvedValue(NODES);
+    P.getNode.mockResolvedValue(NODES[0]);
+    P.cordonNode.mockResolvedValue(NODES[0]);
+    P.uncordonNode.mockResolvedValue(NODES[1]);
+    P.drainNode.mockResolvedValue([PLACEMENTS[0]]);
+    P.deregisterNode.mockResolvedValue(undefined);
+    P.listPlacements.mockResolvedValue(PLACEMENTS);
+    P.getPlacement.mockResolvedValue(PLACEMENTS[0]);
+    P.release.mockResolvedValue(undefined);
     vi.mocked(getSDKClient).mockResolvedValue({
       scheduler: {
         listJobs: mockListJobs,
@@ -111,6 +173,7 @@ describe('SchedulerView', () => {
         pauseJob: mockPauseJob,
         resumeJob: mockResumeJob,
         updateJob: mockUpdateJob,
+      ...P,
       },
     } as never);
   });
@@ -258,5 +321,98 @@ describe('SchedulerView', () => {
       expect(screen.getByText(/Cron schedule is required/i)).toBeInTheDocument();
     });
     expect(mockCreateJob).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Placement section
+  // -------------------------------------------------------------------------
+
+  it('renders placement status, nodes and placements', async () => {
+    render(SchedulerView);
+    await waitFor(() => {
+      expect(screen.getByRole('table', { name: 'Placement nodes' })).toBeInTheDocument();
+      expect(screen.getByRole('table', { name: 'Workload placements' })).toBeInTheDocument();
+    });
+    expect(P.getStatus).toHaveBeenCalled();
+    expect(P.listNodes).toHaveBeenCalled();
+    expect(P.listPlacements).toHaveBeenCalled();
+    expect(screen.getByText('wl-1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cordon node node-a' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Uncordon node node-b' })).toBeInTheDocument();
+    expect(screen.getByText('cordoned')).toBeInTheDocument();
+  });
+
+  it('shows empty-state lines when there are no nodes or placements', async () => {
+    P.listNodes.mockResolvedValue([]);
+    P.listPlacements.mockResolvedValue([]);
+    render(SchedulerView);
+    await waitFor(() => {
+      expect(screen.getByText('No placement nodes registered.')).toBeInTheDocument();
+      expect(screen.getByText('No workload placements.')).toBeInTheDocument();
+    });
+  });
+
+  it('cordon calls cordonNode with the node id and reloads', async () => {
+    render(SchedulerView);
+    await waitFor(() => screen.getByRole('button', { name: 'Cordon node node-a' }));
+    const before = P.listNodes.mock.calls.length;
+    await fireEvent.click(screen.getByRole('button', { name: 'Cordon node node-a' }));
+    await waitFor(() => {
+      expect(P.cordonNode).toHaveBeenCalledWith('node-a');
+      expect(P.listNodes.mock.calls.length).toBeGreaterThan(before);
+    });
+    expect(P.uncordonNode).not.toHaveBeenCalled();
+  });
+
+  it('drain is called only after the confirm and toasts the moved count', async () => {
+    render(SchedulerView);
+    await waitFor(() => screen.getByRole('button', { name: 'Drain node node-a' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Drain node node-a' }));
+    const dialog = screen.getByRole('dialog', { name: 'Confirm drain' });
+    expect(dialog).toHaveTextContent('node-a');
+    expect(P.drainNode).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: /^Drain$/ }));
+    await waitFor(() => {
+      expect(P.drainNode).toHaveBeenCalledWith('node-a');
+      expect(vi.mocked(showToast)).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'success', message: expect.stringContaining('1 placement') }),
+      );
+    });
+  });
+
+  it('release is called only after the confirm', async () => {
+    render(SchedulerView);
+    await waitFor(() => screen.getByRole('button', { name: 'Release placement wl-1' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Release placement wl-1' }));
+    expect(screen.getByRole('dialog', { name: 'Confirm release' })).toBeInTheDocument();
+    expect(P.release).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: /^Release$/ }));
+    await waitFor(() => {
+      expect(P.release).toHaveBeenCalledWith('wl-1');
+    });
+  });
+
+  it('a deregisterNode rejection toasts its message', async () => {
+    P.deregisterNode.mockRejectedValueOnce(new Error('lease revoke failed'));
+    render(SchedulerView);
+    await waitFor(() => screen.getByRole('button', { name: 'Deregister node node-b' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Deregister node node-b' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^Deregister$/ }));
+    await waitFor(() => {
+      expect(P.deregisterNode).toHaveBeenCalledWith('node-b');
+      expect(vi.mocked(showToast)).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', message: expect.stringContaining('lease revoke failed') }),
+      );
+    });
+  });
+
+  it('details opens a dialog from getNode', async () => {
+    render(SchedulerView);
+    await waitFor(() => screen.getByRole('button', { name: 'Details for node node-a' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for node node-a' }));
+    await waitFor(() => {
+      expect(P.getNode).toHaveBeenCalledWith('node-a');
+      expect(screen.getByRole('dialog', { name: 'Node details' })).toBeInTheDocument();
+    });
   });
 });

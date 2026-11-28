@@ -411,6 +411,7 @@
     role="dialog"
     aria-modal="true"
     aria-label="Workflow wizard"
+    tabindex="-1"
     onkeydown={(e: KeyboardEvent) => { if (e.key === 'Escape') closeWizard(); }}
   >
     <div class="modal-box w-full max-w-4xl max-h-[90vh] overflow-y-auto p-0">

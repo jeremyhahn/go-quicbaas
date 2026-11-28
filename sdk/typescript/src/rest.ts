@@ -38,9 +38,23 @@ import type {
   TSQueryResponse,
   TimeSeriesClient,
   VectorNamespace,
+  NamespaceInfo,
+  NamespaceStats,
+  RebuildIndexRequest,
+  RebuildIndexResponse,
+  IndexProgress,
   VectorSearchResult,
   VectorsClient,
   OrchestratorClient,
+  ConsentPurpose,
+  GrantConsentRequest,
+  UserConsent,
+  WithdrawConsentRequest,
+  DataExportRequest,
+  DeletionRequest,
+  RequestDataExportRequest,
+  RequestDeletionRequest,
+  UserDataExport,
 } from './interfaces.js';
 import type {
   RAGClient,
@@ -133,6 +147,14 @@ import type {
   ListCertificatesResponse,
   GenerateCRLResponse,
   IsRevokedResponse,
+  XKMSCABundleOptions,
+  XKMSCABundle,
+  XKMSCACertificate,
+  XKMSCASignCSRRequest,
+  XKMSCASignCSRResponse,
+  XKMSCAIssueRequest,
+  XKMSCAIssueResponse,
+  XKMSCARevokeResponse,
 } from './ca.js';
 import type {
   TrustClient,
@@ -180,6 +202,194 @@ import type {
   StartReencryptionResponse,
   GetReencryptionProgressResponse,
 } from './dek.js';
+import type {
+  AttestationClient,
+  Endorsement,
+  EndorsementKind,
+  ListEndorsementsResponse,
+  ListReferenceValuesResponse,
+  PutEndorsementRequest,
+  PutReferenceValuesRequest,
+  ReferenceValues,
+} from './attestation.js';
+import type {
+  XKMSKeysClient,
+  XKMSKeyInfo,
+  XKMSListKeysResponse,
+  XKMSGenerateKeyRequest,
+  XKMSGenerateKeyResponse,
+  XKMSDeleteKeyResponse,
+  XKMSRotateKeyResponse,
+  XKMSEncryptRequest,
+  XKMSEncryptResponse,
+  XKMSDecryptRequest,
+  XKMSDecryptResponse,
+  XKMSSignRequest,
+  XKMSSignResponse,
+  XKMSVerifyRequest,
+  XKMSVerifyResponse,
+  XKMSListKeyVersionsResponse,
+  XKMSBulkKeyVersionsResponse,
+  XKMSKeyVersionStatusResponse,
+} from './xkms_keys.js';
+import type {
+  PIVClient,
+  ListPIVSlotsResponse,
+  GetPIVCertificateOptions,
+  GetPIVCertificateResponse,
+  StorePIVCertificateRequest,
+  GeneratePIVKeyRequest,
+  GeneratePIVKeyResponse,
+  GeneratePIVCSRRequest,
+  GeneratePIVCSRResponse,
+} from './piv.js';
+import type {
+  XKMSClient,
+  XKMSBackendInfo,
+  XKMSListBackendsResponse,
+  XKMSHealthResponse,
+  XKMSSealCapabilityResponse,
+  XKMSSealRequest,
+  XKMSSealResponse,
+  XKMSUnsealRequest,
+  XKMSUnsealResponse,
+  XKMSListCertificatesResponse,
+  XKMSCertificateResponse,
+} from './xkms.js';
+import type {
+  BackupsClient,
+  BackupListOptions,
+  BackupListResponse,
+  BackupRestoreRequest,
+  BackupRestoreResponse,
+  BackupDeleteResponse,
+  BackupVerifyResponse,
+  BackupStatusResponse,
+} from './backups.js';
+import type {
+  ClusterNodesClient,
+  ListClusterNodesResponse,
+  AddNodeRequest,
+  AddNodeResponse,
+  RemoveNodeResponse,
+  ReplaceNodeRequest,
+  ReplaceNodeResponse,
+} from './cluster_nodes.js';
+import type {
+  EntitiesClient,
+  EntityList,
+  EntityListOptions,
+  EntityGetOptions,
+  EntityWriteOptions,
+  EntityRecord,
+  PutEntityRequest,
+  PutEntityResponse,
+  DeleteEntityResponse,
+} from './entities.js';
+import type {
+  KMSAdminClient,
+  KMSKeyMetadataResponse,
+  UpdateKMSKeyMetadataRequest,
+  GetKMSKeyPolicyResponse,
+  KMSKeyPolicyInput,
+  SetKMSKeyPolicyResponse,
+  GetKMSRotationPolicyResponse,
+  KMSRotationPolicyInput,
+  SetKMSRotationPolicyResponse,
+  DeleteKMSRotationPolicyResponse,
+} from './kms_admin.js';
+import type {
+  ObjectStorageAdminClient,
+  ObjectStorageAdminCreateBackendRequest,
+  ObjectStorageAdminCreateBackendResponse,
+  ObjectStorageAdminUpdateBackendRequest,
+  ObjectStorageAdminUpdateBackendResponse,
+  ObjectStorageAdminDeleteBackendRequest,
+  ObjectStorageAdminDeleteBackendResponse,
+  ObjectStorageAdminBackendStatusResponse,
+  ObjectStorageAdminCompactBackendRequest,
+  ObjectStorageAdminCompactBackendResponse,
+  ObjectStorageAdminStatsOptions,
+  ObjectStorageAdminStatsResponse,
+  ObjectStorageAdminGCRequest,
+  ObjectStorageAdminGCResponse,
+  ObjectStorageAdminGCProgressResponse,
+  ObjectStorageAdminRepairRequest,
+  ObjectStorageAdminRepairResponse,
+} from './objectstorage_admin.js';
+import type {
+  ParametersClient,
+  ParameterGetOptions,
+  GetParameterResponse,
+  SetParameterRequest,
+  SetParameterResponse,
+  DeleteParameterResponse,
+  ParameterListOptions,
+  ListParametersResponse,
+  GetParametersRequest,
+  GetParametersResponse,
+  SetParametersRequest,
+  SetParametersResponse,
+  DeleteParametersResponse,
+  ParameterSearchByTagsRequest,
+  ParameterSearchByTagsResponse,
+} from './parameters.js';
+import type {
+  VectorAdminClient,
+  ClusterStatsResponse,
+  CompactNamespaceResponse,
+  CompactionProgress,
+  ExportVectorsRequest,
+  VectorExportEntry,
+  ImportVectorsResponse,
+} from './vector_admin.js';
+import type {
+  XKMSFIDO2Client,
+  XKMSFIDO2BeginRegistrationRequest,
+  XKMSFIDO2Challenge,
+  XKMSFIDO2FinishRegistrationRequest,
+  XKMSFIDO2FinishRegistrationResponse,
+  XKMSFIDO2BeginAuthenticationRequest,
+  XKMSFIDO2FinishAuthenticationRequest,
+  XKMSFIDO2FinishAuthenticationResponse,
+} from './xkms_fido2.js';
+import type {
+  RegistryClient,
+  RegistryServiceInstance,
+  RegistryRegisterRequest,
+  RegistryLeaseResponse,
+  RegistryResolveResponse,
+} from './registry.js';
+import type {
+  TSBatchPoint,
+  TSWriteBatchResponse,
+  TSRetentionPolicy,
+  TSRetentionPolicyResponse,
+  TSSetRetentionPolicyResponse,
+} from './timeseries_admin.js';
+import type {
+  CacheClient,
+  CacheStatsResponse,
+  CacheClearResponse,
+  CacheConfigResponse,
+  CacheConfigUpdateRequest,
+  CacheConfigUpdateResponse,
+} from './cache.js';
+import type {
+  VectorHealthResponse,
+  VectorClusterStatsResponse,
+  VectorHybridSearchRequest,
+  VectorHybridSearchResponse,
+  VectorMetadataSearchRequest,
+  VectorMetadataSearchResponse,
+} from './vector_search.js';
+import type {
+  ObjectsBatchPutOperation,
+  ObjectsBatchPutResponse,
+  ObjectsBatchGetOptions,
+  ObjectsBatchGetResponse,
+  ObjectsBatchDeleteResponse,
+} from './objects_batch.js';
 import type {
   DynamicSecretsClient,
   DynamicSecretRole,
@@ -366,7 +576,16 @@ import type {
   BootstrapBundleRequest,
   BootstrapBundleResponse,
   ClusterStatusResponse,
-  ListClusterNodesResponse,
+  ClusterLeaderResponse,
+  ShardLeaderResponse,
+  RebalanceRequest,
+  RebalanceResponse,
+  RebalanceStatusResponse,
+  RebalancePlanResponse,
+  MigrationRequest,
+  MigrationResponse,
+  MigrationStatusResponse,
+  CancelMigrationResponse,
   SecretEntry,
   SessionEventEnvelope,
   SessionInfo,
@@ -398,6 +617,8 @@ import type {
   EmitAuthorizedResponse,
   VerifyAuthorizedRequest,
   VerifyAuthorizedResponse,
+  AddAuthorizedKeyRequest,
+  ListAuthorizedKeysRequest,
   AttentionItem,
   AttentionResolveRequest,
 } from './types.js';
@@ -476,6 +697,21 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
+}
+
+// policyWireBody serializes a policy create, update or validate request. The
+// server decodes spec_yaml into a Go []byte, so the document text goes on the
+// wire as the base64 of its UTF-8 bytes; every other field is sent unchanged,
+// and an undefined spec_yaml is left out.
+function policyWireBody(
+  req: import('./interfaces.js').CreatePolicyRequest | import('./interfaces.js').UpdatePolicyRequest,
+): string {
+  const { spec_yaml, ...rest } = req;
+  const wire: Record<string, unknown> = { ...rest };
+  if (spec_yaml !== undefined) {
+    wire.spec_yaml = bytesToBase64(utf8Bytes(spec_yaml));
+  }
+  return JSON.stringify(wire);
 }
 
 // parseResponseBody reads the body of a 2xx fetch Response and returns the
@@ -1148,11 +1384,13 @@ class RestOrchestratorClient implements OrchestratorClient {
     );
   }
 
-  // decomposeTask maps to POST /api/v1/orchestrator/tasks/:taskID/decompose
+  // decomposeTask maps to POST /api/v1/orchestrator/tasks/decompose?tenant_id=<id>
+  // The tenant travels as the query; every other field is the JSON body.
   async decomposeTask(req: DecomposeTaskRequest): Promise<DecomposeTaskResponse> {
+    const { tenant_id, ...body } = req;
     return this.fetchJSON<DecomposeTaskResponse>(
-      `/tasks/${encodeURIComponent(req.task_id)}/decompose?tenant_id=${encodeURIComponent(req.tenant_id)}`,
-      { method: 'POST', body: JSON.stringify(req) },
+      `/tasks/decompose?tenant_id=${encodeURIComponent(tenant_id)}`,
+      { method: 'POST', body: JSON.stringify(body) },
     );
   }
 
@@ -1642,6 +1880,33 @@ class RestVectorsClient implements VectorsClient {
     });
   }
 
+  // getNamespace maps to GET /api/v1/vector/namespaces/{namespace}
+  async getNamespace(namespace: string): Promise<NamespaceInfo> {
+    return this.fetchJSON<NamespaceInfo>(`/api/v1/vector/namespaces/${encodeURIComponent(namespace)}`);
+  }
+
+  // getNamespaceStats maps to GET /api/v1/vector/namespaces/{namespace}/stats
+  async getNamespaceStats(namespace: string): Promise<NamespaceStats> {
+    return this.fetchJSON<NamespaceStats>(
+      `/api/v1/vector/namespaces/${encodeURIComponent(namespace)}/stats`,
+    );
+  }
+
+  // rebuildIndex maps to POST /api/v1/vector/namespaces/{namespace}/index/rebuild
+  async rebuildIndex(namespace: string, req: RebuildIndexRequest): Promise<RebuildIndexResponse> {
+    return this.fetchJSON<RebuildIndexResponse>(
+      `/api/v1/vector/namespaces/${encodeURIComponent(namespace)}/index/rebuild`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // getIndexProgress maps to GET /api/v1/vector/namespaces/{namespace}/index/progress?operation_id=
+  async getIndexProgress(namespace: string, operationID: string): Promise<IndexProgress> {
+    return this.fetchJSON<IndexProgress>(
+      `/api/v1/vector/namespaces/${encodeURIComponent(namespace)}/index/progress?operation_id=${encodeURIComponent(operationID)}`,
+    );
+  }
+
   // searchSimilar maps to POST /api/v1/vector/namespaces/{namespace}/search/similar
   async searchSimilar(
     namespace: string,
@@ -1652,6 +1917,32 @@ class RestVectorsClient implements VectorsClient {
       { method: 'POST', body: JSON.stringify(req) },
     );
     return raw.results ?? [];
+  }
+
+  // health maps to GET /api/v1/vector/health
+  async health(): Promise<VectorHealthResponse> {
+    return this.fetchJSON<VectorHealthResponse>('/api/v1/vector/health');
+  }
+
+  // clusterStats maps to GET /api/v1/vector/cluster/stats
+  async clusterStats(): Promise<VectorClusterStatsResponse> {
+    return this.fetchJSON<VectorClusterStatsResponse>('/api/v1/vector/cluster/stats');
+  }
+
+  // hybridSearch maps to POST /api/v1/vector/hybrid-search
+  async hybridSearch(req: VectorHybridSearchRequest): Promise<VectorHybridSearchResponse> {
+    return this.fetchJSON<VectorHybridSearchResponse>('/api/v1/vector/hybrid-search', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // searchByMetadata maps to POST /api/v1/vector/search-by-metadata
+  async searchByMetadata(req: VectorMetadataSearchRequest): Promise<VectorMetadataSearchResponse> {
+    return this.fetchJSON<VectorMetadataSearchResponse>('/api/v1/vector/search-by-metadata', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
   }
 }
 
@@ -1739,6 +2030,32 @@ class RestTimeSeriesClient implements TimeSeriesClient {
       method: 'DELETE',
     });
   }
+
+  // writeBatch maps to POST /api/v1/timeseries/write-batch
+  async writeBatch(points: TSBatchPoint[]): Promise<TSWriteBatchResponse> {
+    return this.fetchJSON<TSWriteBatchResponse>('/api/v1/timeseries/write-batch', {
+      method: 'POST',
+      body: JSON.stringify({ points }),
+    });
+  }
+
+  // getRetentionPolicy maps to GET /api/v1/timeseries/retention/{metric}
+  async getRetentionPolicy(metric: string): Promise<TSRetentionPolicyResponse> {
+    return this.fetchJSON<TSRetentionPolicyResponse>(
+      `/api/v1/timeseries/retention/${encodeURIComponent(metric)}`,
+    );
+  }
+
+  // setRetentionPolicy maps to PUT /api/v1/timeseries/retention/{metric}
+  async setRetentionPolicy(
+    metric: string,
+    policy: TSRetentionPolicy,
+  ): Promise<TSSetRetentionPolicyResponse> {
+    return this.fetchJSON<TSSetRetentionPolicyResponse>(
+      `/api/v1/timeseries/retention/${encodeURIComponent(metric)}`,
+      { method: 'PUT', body: JSON.stringify({ policy }) },
+    );
+  }
 }
 
 // RestObjectsClient implements ObjectsClient over the QuicBaaS REST API.
@@ -1746,10 +2063,12 @@ class RestTimeSeriesClient implements TimeSeriesClient {
 class RestObjectsClient implements ObjectsClient {
   private readonly baseUrl: string;
   private readonly config: ClientConfig;
+  private readonly http: FetchHelper;
 
   constructor(baseUrl: string, config: ClientConfig = {}) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.config = config;
+    this.http = newFetchHelper(baseUrl, config);
   }
 
   private async authHeaders(): Promise<Record<string, string>> {
@@ -1836,6 +2155,32 @@ class RestObjectsClient implements ObjectsClient {
     if (!resp.ok) {
       throw new APIError(resp.status, resp.statusText);
     }
+  }
+
+  // batchPut maps to POST /api/v1/objects/batch
+  async batchPut(objects: ObjectsBatchPutOperation[]): Promise<ObjectsBatchPutResponse> {
+    return this.http.fetchJSON<ObjectsBatchPutResponse>('/api/v1/objects/batch', {
+      method: 'POST',
+      body: JSON.stringify({ objects }),
+    });
+  }
+
+  // batchGet maps to POST /api/v1/objects/batch/get
+  async batchGet(keys: string[], opts?: ObjectsBatchGetOptions): Promise<ObjectsBatchGetResponse> {
+    const body: { keys: string[]; include_metadata?: boolean } = { keys };
+    if (opts?.includeMetadata !== undefined) body.include_metadata = opts.includeMetadata;
+    return this.http.fetchJSON<ObjectsBatchGetResponse>('/api/v1/objects/batch/get', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  // batchDelete maps to POST /api/v1/objects/batch/delete
+  async batchDelete(keys: string[]): Promise<ObjectsBatchDeleteResponse> {
+    return this.http.fetchJSON<ObjectsBatchDeleteResponse>('/api/v1/objects/batch/delete', {
+      method: 'POST',
+      body: JSON.stringify({ keys }),
+    });
   }
 }
 
@@ -3358,6 +3703,212 @@ class RestIAMClient implements IAMClient {
     );
   }
 
+async listSessions(
+    opts?: import('./interfaces.js').ListSessionsOptions,
+  ): Promise<import('./interfaces.js').ListIAMSessionsResponse> {
+    const params = new URLSearchParams();
+    if (opts?.user_id) params.set('user_id', opts.user_id);
+    if (opts?.tenant_id) params.set('tenant_id', opts.tenant_id);
+    const qs = params.toString();
+    return this.fetchJSON<import('./interfaces.js').ListIAMSessionsResponse>(
+      `/api/v1/iam/sessions${qs ? `?${qs}` : ''}`,
+    );
+  }
+
+  async getSession(sessionID: string): Promise<import('./interfaces.js').IAMSession> {
+    return this.fetchJSON<import('./interfaces.js').IAMSession>(
+      `/api/v1/iam/sessions/${encodeURIComponent(sessionID)}`,
+    );
+  }
+
+  async revokeSession(sessionID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/iam/sessions/${encodeURIComponent(sessionID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async revokeAllSessions(opts?: import('./interfaces.js').RevokeAllSessionsOptions): Promise<void> {
+    const params = new URLSearchParams();
+    if (opts?.except) params.set('except', opts.except);
+    if (opts?.user_id) params.set('user_id', opts.user_id);
+    if (opts?.tenant_id) params.set('tenant_id', opts.tenant_id);
+    const qs = params.toString();
+    await this.fetchJSON<void>(
+      `/api/v1/iam/sessions${qs ? `?${qs}` : ''}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async revokeOtherSessions(
+    keepSessionID: string,
+  ): Promise<import('./interfaces.js').RevokeOtherSessionsResponse> {
+    return this.fetchJSON<import('./interfaces.js').RevokeOtherSessionsResponse>(
+      '/api/v1/iam/sessions/revoke-others',
+      { method: 'POST', body: JSON.stringify({ keep_session_id: keepSessionID }) },
+    );
+  }
+
+  private userPath(tenantID: string, userID: string): string {
+    return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`;
+  }
+
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+  async listWebAuthnCredentials(
+    tenantID: string,
+    userID: string,
+  ): Promise<import('./interfaces.js').ListWebAuthnCredentialsResponse> {
+    return this.fetchJSON<import('./interfaces.js').ListWebAuthnCredentialsResponse>(
+      `${this.userPath(tenantID, userID)}/webauthn/credentials/`,
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+  async deleteAllWebAuthnCredentials(
+    tenantID: string,
+    userID: string,
+  ): Promise<import('./interfaces.js').DeleteWebAuthnCredentialsResponse> {
+    return this.fetchJSON<import('./interfaces.js').DeleteWebAuthnCredentialsResponse>(
+      `${this.userPath(tenantID, userID)}/webauthn/credentials/`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id}
+  async deleteWebAuthnCredential(tenantID: string, userID: string, credentialID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `${this.userPath(tenantID, userID)}/webauthn/credentials/${encodeURIComponent(credentialID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+  async createAccountLink(
+    tenantID: string,
+    userID: string,
+    req: import('./interfaces.js').CreateAccountLinkRequest,
+  ): Promise<import('./interfaces.js').AccountLink> {
+    return this.fetchJSON<import('./interfaces.js').AccountLink>(`${this.userPath(tenantID, userID)}/links/`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+  async listAccountLinks(
+    tenantID: string,
+    userID: string,
+    opts?: import('./interfaces.js').ListAccountLinksOptions,
+  ): Promise<import('./interfaces.js').ListAccountLinksResponse> {
+    const params = new URLSearchParams();
+    if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
+    const qs = params.toString();
+    return this.fetchJSON<import('./interfaces.js').ListAccountLinksResponse>(
+      `${this.userPath(tenantID, userID)}/links/${qs ? `?${qs}` : ''}`,
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id}
+  async deleteAccountLink(tenantID: string, userID: string, providerID: string): Promise<void> {
+    await this.fetchJSON<void>(`${this.userPath(tenantID, userID)}/links/${encodeURIComponent(providerID)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  private mfaPath(tenantID: string, userID: string): string {
+    return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/mfa`;
+  }
+
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+  async getMFAStatus(tenantID: string, userID: string): Promise<import('./interfaces.js').MFAStatusResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFAStatusResponse>(`${this.mfaPath(tenantID, userID)}/`);
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+  async disableMFA(tenantID: string, userID: string): Promise<void> {
+    await this.fetchJSON<void>(`${this.mfaPath(tenantID, userID)}/`, { method: 'DELETE' });
+  }
+
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll
+  async beginMFAEnrollment(
+    tenantID: string,
+    userID: string,
+    method?: string,
+  ): Promise<import('./interfaces.js').MFAEnrollResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFAEnrollResponse>(
+      `${this.mfaPath(tenantID, userID)}/enroll`,
+      { method: 'POST', body: JSON.stringify(method ? { method } : {}) },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify
+  async completeMFAEnrollment(
+    tenantID: string,
+    userID: string,
+    enrollmentID: string,
+    code: string,
+  ): Promise<import('./interfaces.js').MFACompleteResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFACompleteResponse>(
+      `${this.mfaPath(tenantID, userID)}/verify`,
+      { method: 'POST', body: JSON.stringify({ enrollment_id: enrollmentID, code }) },
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id}
+  async cancelMFAEnrollment(tenantID: string, userID: string, enrollmentID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `${this.mfaPath(tenantID, userID)}/enroll/${encodeURIComponent(enrollmentID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge
+  async beginMFAChallenge(
+    tenantID: string,
+    userID: string,
+    sessionToken: string,
+  ): Promise<import('./interfaces.js').MFAChallengeResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFAChallengeResponse>(
+      `${this.mfaPath(tenantID, userID)}/challenge`,
+      { method: 'POST', body: JSON.stringify({ session_token: sessionToken }) },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge
+  async verifyMFAChallenge(
+    tenantID: string,
+    userID: string,
+    challengeID: string,
+    code: string,
+  ): Promise<import('./interfaces.js').MFAVerifyResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFAVerifyResponse>(
+      `${this.mfaPath(tenantID, userID)}/verify-challenge`,
+      { method: 'POST', body: JSON.stringify({ challenge_id: challengeID, code }) },
+    );
+  }
+
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+  async getBackupCodeStatus(
+    tenantID: string,
+    userID: string,
+  ): Promise<import('./interfaces.js').MFABackupCodeStatusResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFABackupCodeStatusResponse>(
+      `${this.mfaPath(tenantID, userID)}/backup-codes`,
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+  async generateBackupCodes(
+    tenantID: string,
+    userID: string,
+  ): Promise<import('./interfaces.js').MFABackupCodesResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFABackupCodesResponse>(
+      `${this.mfaPath(tenantID, userID)}/backup-codes`,
+      { method: 'POST' },
+    );
+  }
+
   async updateTenant(tenantID: string, req: import('./interfaces.js').UpdateTenantRequest): Promise<IAMTenant> {
     return this.fetchJSON<IAMTenant>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}`,
@@ -3369,6 +3920,168 @@ class RestIAMClient implements IAMClient {
     await this.fetchJSON<void>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}`,
       { method: 'DELETE' },
+    );
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}
+  async getTenant(tenantID: string): Promise<IAMTenant> {
+    // Same wire shape as a listTenants element: created/updated → *_at.
+    const t = await this.fetchJSON<{
+      id?: string;
+      name?: string;
+      description?: string;
+      created?: string;
+      created_at?: string;
+      updated?: string;
+      updated_at?: string;
+    }>(`/api/v1/tenants/${encodeURIComponent(tenantID)}`);
+    return {
+      id: t.id ?? '',
+      name: t.name ?? '',
+      description: t.description ?? '',
+      created_at: t.created_at ?? t.created ?? '',
+      updated_at: t.updated_at ?? t.updated ?? '',
+    };
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}
+  async getUser(tenantID: string, userID: string): Promise<IAMUser> {
+    // Same wire shape as a listUsers element; normalised the same way.
+    const u = await this.fetchJSON<{
+      id?: string;
+      email?: string;
+      name?: string;
+      username?: string;
+      tenant_id?: string;
+      created?: string;
+      created_at?: string;
+      updated?: string;
+      updated_at?: string;
+      lifecycle?: import('./types.js').UserLifecycle;
+      role?: string;
+      roles?: string[];
+    }>(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`);
+    return {
+      id: u.id ?? '',
+      tenant_id: u.tenant_id ?? tenantID,
+      username: u.username ?? u.name ?? u.email ?? '',
+      email: u.email ?? '',
+      lifecycle: u.lifecycle,
+      roles: u.roles ?? (u.role ? [u.role] : []),
+      created_at: u.created_at ?? u.created ?? '',
+      updated_at: u.updated_at ?? u.updated ?? '',
+    };
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}/sessions[?limit=N]
+  async listUserSessions(
+    tenantID: string,
+    userID: string,
+    limit?: number,
+  ): Promise<import('./interfaces.js').ListIAMSessionsResponse> {
+    const qs = limit !== undefined && limit > 0 ? `?limit=${limit}` : '';
+    return this.fetchJSON<import('./interfaces.js').ListIAMSessionsResponse>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions${qs}`,
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenantID}/users/{userID}/sessions
+  async revokeAllUserSessions(tenantID: string, userID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/apps/?limit=&offset=
+  async listApps(
+    tenantID: string,
+    opts?: import('./interfaces.js').ListIAMAppsOptions,
+  ): Promise<import('./interfaces.js').ListIAMAppsResponse> {
+    const params = new URLSearchParams();
+    if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
+    const qs = params.toString();
+    return this.fetchJSON<import('./interfaces.js').ListIAMAppsResponse>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${qs ? `?${qs}` : ''}`,
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/apps/ (201)
+  async registerApp(
+    tenantID: string,
+    req: import('./interfaces.js').RegisterIAMAppRequest,
+  ): Promise<import('./interfaces.js').IAMApplication> {
+    return this.fetchJSON<import('./interfaces.js').IAMApplication>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/apps/{clientID}
+  async getApp(tenantID: string, clientID: string): Promise<import('./interfaces.js').IAMApplication> {
+    return this.fetchJSON<import('./interfaces.js').IAMApplication>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`,
+    );
+  }
+
+  // Maps to PUT /api/v1/tenants/{tenantID}/apps/{clientID}
+  async updateApp(
+    tenantID: string,
+    clientID: string,
+    req: import('./interfaces.js').UpdateIAMAppRequest,
+  ): Promise<import('./interfaces.js').IAMApplication> {
+    return this.fetchJSON<import('./interfaces.js').IAMApplication>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`,
+      { method: 'PUT', body: JSON.stringify({ ...req, client_id: clientID }) },
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenantID}/apps/{clientID} (204)
+  async deleteApp(tenantID: string, clientID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/apps/{clientID}/rotate-secret
+  async rotateAppSecret(tenantID: string, clientID: string): Promise<import('./interfaces.js').IAMApplication> {
+    return this.fetchJSON<import('./interfaces.js').IAMApplication>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}/rotate-secret`,
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to PATCH /api/v1/tenants/{tenantID}/quotas (204)
+  async updateTenantQuotas(
+    tenantID: string,
+    quotas: import('./interfaces.js').TenantQuotas,
+  ): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/quotas`,
+      { method: 'PATCH', body: JSON.stringify(quotas) },
+    );
+  }
+
+  // Maps to PATCH /api/v1/tenants/{tenantID}/entitlements (204)
+  async updateTenantEntitlements(
+    tenantID: string,
+    entitlements: import('./interfaces.js').TenantEntitlements,
+  ): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/entitlements`,
+      { method: 'PATCH', body: JSON.stringify(entitlements) },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/provision (201)
+  async provisionTenant(
+    req: import('./interfaces.js').ProvisionTenantRequest,
+  ): Promise<import('./interfaces.js').ProvisionTenantResponse> {
+    return this.fetchJSON<import('./interfaces.js').ProvisionTenantResponse>(
+      `/api/v1/tenants/${encodeURIComponent(req.tenant_id)}/provision`,
+      { method: 'POST', body: JSON.stringify(req) },
     );
   }
 
@@ -3406,6 +4119,158 @@ class RestIAMClient implements IAMClient {
     );
   }
 
+  // Maps to GET /api/v1/iam/audit?tenant_id=&event_type=&category=&outcome=&actor_id=&resource_id=&start_time=&end_time=&limit=&offset=
+  async listAuditEvents(
+    opts?: import('./interfaces.js').ListIAMAuditEventsOptions,
+  ): Promise<import('./interfaces.js').ListIAMAuditEventsResponse> {
+    const q: string[] = [];
+    const add = (name: string, v: string | number | undefined): void => {
+      if (v !== undefined) q.push(`${name}=${encodeURIComponent(String(v))}`);
+    };
+    add('tenant_id', opts?.tenantID);
+    add('event_type', opts?.eventType);
+    add('category', opts?.category);
+    add('outcome', opts?.outcome);
+    add('actor_id', opts?.actorID);
+    add('resource_id', opts?.resourceID);
+    add('start_time', opts?.startTime);
+    add('end_time', opts?.endTime);
+    add('limit', opts?.limit);
+    add('offset', opts?.offset);
+    const qs = q.length > 0 ? `?${q.join('&')}` : '';
+    return this.fetchJSON<import('./interfaces.js').ListIAMAuditEventsResponse>(`/api/v1/iam/audit${qs}`);
+  }
+
+  // Maps to GET /api/v1/iam/audit/{id}?tenant_id=
+  async getAuditEvent(eventID: string, tenantID?: string): Promise<import('./interfaces.js').IAMAuditEvent> {
+    const qs = tenantID !== undefined ? `?tenant_id=${encodeURIComponent(tenantID)}` : '';
+    return this.fetchJSON<import('./interfaces.js').IAMAuditEvent>(
+      `/api/v1/iam/audit/${encodeURIComponent(eventID)}${qs}`,
+    );
+  }
+
+  // Maps to POST /api/v1/iam/audit
+  async recordAuditEvent(
+    req: import('./interfaces.js').RecordIAMAuditEventRequest,
+  ): Promise<import('./interfaces.js').RecordIAMAuditEventResponse> {
+    return this.fetchJSON<import('./interfaces.js').RecordIAMAuditEventResponse>('/api/v1/iam/audit', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to DELETE /api/v1/iam/audit?before=&tenant_id=
+  async deleteAuditEventsBefore(
+    before: string,
+    tenantID?: string,
+  ): Promise<import('./interfaces.js').DeleteIAMAuditEventsResponse> {
+    let qs = `?before=${encodeURIComponent(before)}`;
+    if (tenantID !== undefined) qs += `&tenant_id=${encodeURIComponent(tenantID)}`;
+    return this.fetchJSON<import('./interfaces.js').DeleteIAMAuditEventsResponse>(`/api/v1/iam/audit${qs}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Maps to GET /api/v1/admin/impersonation/?active=true&admin_user_id=
+  async listImpersonations(
+    opts?: import('./interfaces.js').ListImpersonationsOptions,
+  ): Promise<import('./interfaces.js').ListImpersonationsResponse> {
+    const q: string[] = [];
+    if (opts?.activeOnly === true) q.push('active=true');
+    if (opts?.adminUserID !== undefined) q.push(`admin_user_id=${encodeURIComponent(opts.adminUserID)}`);
+    const qs = q.length > 0 ? `?${q.join('&')}` : '';
+    return this.fetchJSON<import('./interfaces.js').ListImpersonationsResponse>(
+      `/api/v1/admin/impersonation/${qs}`,
+    );
+  }
+
+  // Maps to POST /api/v1/admin/impersonation/start
+  async startImpersonation(
+    req: import('./interfaces.js').StartImpersonationRequest,
+  ): Promise<import('./interfaces.js').ImpersonationSession> {
+    return this.fetchJSON<import('./interfaces.js').ImpersonationSession>(
+      '/api/v1/admin/impersonation/start',
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/admin/impersonation/{sessionID}/end
+  async endImpersonation(sessionID: string): Promise<import('./interfaces.js').EndImpersonationResult> {
+    return this.fetchJSON<import('./interfaces.js').EndImpersonationResult>(
+      `/api/v1/admin/impersonation/${encodeURIComponent(sessionID)}/end`,
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to GET /api/v1/admin/users/{userID}/impersonations
+  async listUserImpersonations(
+    userID: string,
+  ): Promise<import('./interfaces.js').ListUserImpersonationsResponse> {
+    return this.fetchJSON<import('./interfaces.js').ListUserImpersonationsResponse>(
+      `/api/v1/admin/users/${encodeURIComponent(userID)}/impersonations`,
+    );
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}
+  async getRole(tenantID: string, roleID: string): Promise<IAMRole> {
+    return this.fetchJSON<IAMRole>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`,
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/providers/
+  async registerProvider(
+    tenantID: string,
+    req: import('./interfaces.js').RegisterIAMProviderRequest,
+  ): Promise<import('./interfaces.js').IAMExternalProvider> {
+    return this.fetchJSON<import('./interfaces.js').IAMExternalProvider>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/providers/?limit=&offset=&type=
+  async listProviders(
+    tenantID: string,
+    opts?: import('./interfaces.js').ListIAMProvidersOptions,
+  ): Promise<import('./interfaces.js').ListIAMProvidersResponse> {
+    const q: string[] = [];
+    if (opts?.limit !== undefined) q.push(`limit=${encodeURIComponent(String(opts.limit))}`);
+    if (opts?.offset !== undefined) q.push(`offset=${encodeURIComponent(String(opts.offset))}`);
+    if (opts?.type !== undefined) q.push(`type=${encodeURIComponent(opts.type)}`);
+    const qs = q.length > 0 ? `?${q.join('&')}` : '';
+    return this.fetchJSON<import('./interfaces.js').ListIAMProvidersResponse>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${qs}`,
+    );
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/providers/{providerID}
+  async getProvider(tenantID: string, providerID: string): Promise<import('./interfaces.js').IAMExternalProvider> {
+    return this.fetchJSON<import('./interfaces.js').IAMExternalProvider>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`,
+    );
+  }
+
+  // Maps to PUT /api/v1/tenants/{tenantID}/providers/{providerID}
+  async updateProvider(
+    tenantID: string,
+    providerID: string,
+    req: import('./interfaces.js').UpdateIAMProviderRequest,
+  ): Promise<import('./interfaces.js').IAMExternalProvider> {
+    return this.fetchJSON<import('./interfaces.js').IAMExternalProvider>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenantID}/providers/{providerID}
+  async deleteProvider(tenantID: string, providerID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
   async deleteRole(tenantID: string, roleID: string): Promise<void> {
     await this.fetchJSON<void>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`,
@@ -3425,14 +4290,14 @@ class RestIAMClient implements IAMClient {
   async createPolicy(tenantID: string, req: import('./interfaces.js').CreatePolicyRequest): Promise<IAMPolicy> {
     return this.fetchJSON<IAMPolicy>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies`,
-      { method: 'POST', body: JSON.stringify(req) },
+      { method: 'POST', body: policyWireBody(req) },
     );
   }
 
   async updatePolicy(tenantID: string, policyName: string, req: import('./interfaces.js').UpdatePolicyRequest): Promise<IAMPolicy> {
     return this.fetchJSON<IAMPolicy>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`,
-      { method: 'PUT', body: JSON.stringify(req) },
+      { method: 'PUT', body: policyWireBody(req) },
     );
   }
 
@@ -3440,6 +4305,59 @@ class RestIAMClient implements IAMClient {
     await this.fetchJSON<void>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`,
       { method: 'DELETE' },
+    );
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/policies/{policyName}
+  async getPolicy(tenantID: string, policyName: string): Promise<import('./interfaces.js').IAMPolicyDocument> {
+    return this.fetchJSON<import('./interfaces.js').IAMPolicyDocument>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`,
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/validate[?name=]
+  async validatePolicy(
+    tenantID: string,
+    req: import('./interfaces.js').CreatePolicyRequest,
+    name?: string,
+  ): Promise<import('./interfaces.js').IAMPolicyValidationResult> {
+    const query = name !== undefined ? `?name=${encodeURIComponent(name)}` : '';
+    return this.fetchJSON<import('./interfaces.js').IAMPolicyValidationResult>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/validate${query}`,
+      { method: 'POST', body: policyWireBody(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/test
+  async testPolicy(
+    tenantID: string,
+    req: import('./interfaces.js').IAMCheckRequest,
+  ): Promise<import('./interfaces.js').IAMCheckResponse> {
+    return this.fetchJSON<import('./interfaces.js').IAMCheckResponse>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/test`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/simulate
+  async simulatePolicy(
+    tenantID: string,
+    req: import('./interfaces.js').IAMPolicySimulationRequest,
+  ): Promise<import('./interfaces.js').IAMPolicySimulationResult> {
+    return this.fetchJSON<import('./interfaces.js').IAMPolicySimulationResult>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/simulate`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/effective-permissions
+  async getEffectivePermissions(
+    tenantID: string,
+    req: import('./interfaces.js').IAMEffectivePermissionsRequest,
+  ): Promise<import('./interfaces.js').IAMEffectivePermissionsResult> {
+    return this.fetchJSON<import('./interfaces.js').IAMEffectivePermissionsResult>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/effective-permissions`,
+      { method: 'POST', body: JSON.stringify(req) },
     );
   }
 
@@ -3475,6 +4393,98 @@ class RestIAMClient implements IAMClient {
     return this.fetchJSON<import('./types.js').ActivationResponse>(
       `/api/v1/iam/${encodeURIComponent(tenantID)}/invites/${encodeURIComponent(token)}/activate/piv`,
       { method: 'POST', body: JSON.stringify({ cert_pem: certPEM }) },
+    );
+  }
+
+  // gdprPath is the GDPR route prefix of one user in one tenant.
+  private gdprPath(tenantID: string, userID: string): string {
+    return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/gdpr`;
+  }
+
+  async grantConsent(tenantID: string, userID: string, req: GrantConsentRequest): Promise<UserConsent> {
+    return this.fetchJSON<UserConsent>(`${this.gdprPath(tenantID, userID)}/consent`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  async listUserConsents(tenantID: string, userID: string): Promise<UserConsent[]> {
+    const consents = await this.fetchJSON<UserConsent[] | null>(
+      `${this.gdprPath(tenantID, userID)}/consents`,
+    );
+    return consents ?? [];
+  }
+
+  async getConsent(tenantID: string, userID: string, purpose: ConsentPurpose): Promise<UserConsent> {
+    return this.fetchJSON<UserConsent>(
+      `${this.gdprPath(tenantID, userID)}/consent/${encodeURIComponent(purpose)}`,
+    );
+  }
+
+  async withdrawConsent(
+    tenantID: string,
+    userID: string,
+    purpose: ConsentPurpose,
+    req?: WithdrawConsentRequest,
+  ): Promise<UserConsent> {
+    return this.fetchJSON<UserConsent>(
+      `${this.gdprPath(tenantID, userID)}/consent/${encodeURIComponent(purpose)}/withdraw`,
+      { method: 'PUT', body: JSON.stringify(req ?? {}) },
+    );
+  }
+
+  async requestDataExport(
+    tenantID: string,
+    userID: string,
+    req?: RequestDataExportRequest,
+  ): Promise<DataExportRequest> {
+    return this.fetchJSON<DataExportRequest>(`${this.gdprPath(tenantID, userID)}/export`, {
+      method: 'POST',
+      body: JSON.stringify(req ?? {}),
+    });
+  }
+
+  async getExportStatus(tenantID: string, userID: string, exportID: string): Promise<DataExportRequest> {
+    return this.fetchJSON<DataExportRequest>(
+      `${this.gdprPath(tenantID, userID)}/export/${encodeURIComponent(exportID)}`,
+    );
+  }
+
+  // downloadExport reads the export as JSON: DownloadExport always writes
+  // application/json, whatever format the request named.
+  async downloadExport(tenantID: string, userID: string, exportID: string): Promise<UserDataExport> {
+    return this.fetchJSON<UserDataExport>(
+      `${this.gdprPath(tenantID, userID)}/export/${encodeURIComponent(exportID)}/download`,
+    );
+  }
+
+  async requestDeletion(
+    tenantID: string,
+    userID: string,
+    req?: RequestDeletionRequest,
+  ): Promise<DeletionRequest> {
+    return this.fetchJSON<DeletionRequest>(`${this.gdprPath(tenantID, userID)}/deletion`, {
+      method: 'POST',
+      body: JSON.stringify(req ?? {}),
+    });
+  }
+
+  async getDeletionStatus(tenantID: string, userID: string, deletionID: string): Promise<DeletionRequest> {
+    return this.fetchJSON<DeletionRequest>(
+      `${this.gdprPath(tenantID, userID)}/deletion/${encodeURIComponent(deletionID)}`,
+    );
+  }
+
+  async cancelDeletion(
+    tenantID: string,
+    userID: string,
+    deletionID: string,
+    cancelledBy?: string,
+  ): Promise<DeletionRequest> {
+    const query = cancelledBy ? `?${new URLSearchParams({ cancelled_by: cancelledBy }).toString()}` : '';
+    return this.fetchJSON<DeletionRequest>(
+      `${this.gdprPath(tenantID, userID)}/deletion/${encodeURIComponent(deletionID)}${query}`,
+      { method: 'DELETE' },
     );
   }
 }
@@ -3645,6 +4655,241 @@ class RestKMSClient implements KMSClient {
       `/api/v1/kms/keys/${encodeURIComponent(name)}/default`,
       { method: 'PUT' },
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RestXKMSKeysClient
+// ---------------------------------------------------------------------------
+
+/** RestXKMSKeysClient implements XKMSKeysClient over /api/v1/xkms/keys/*. */
+export class RestXKMSKeysClient implements XKMSKeysClient {
+  private readonly baseUrl: string;
+  private readonly config: ClientConfig;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.config = config;
+  }
+
+  private async authHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {};
+    const tok = await resolveToken(this.config.token);
+    if (tok) headers['Authorization'] = `Bearer ${tok}`;
+    if (this.config.tenantID) headers['X-Tenant-ID'] = this.config.tenantID;
+    return headers;
+  }
+
+  private async fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+    const url = `${this.baseUrl}${path}`;
+    const auth = await this.authHeaders();
+    const resp = await fetch(url, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...auth,
+        ...(init?.headers ?? {}),
+      },
+    });
+    if (!resp.ok) {
+      let message = resp.statusText;
+      try {
+        const body = (await resp.json()) as { error?: string; message?: string };
+        message = body.error ?? body.message ?? message;
+      } catch {
+        // Use statusText when body is not parseable.
+      }
+      throw new APIError(resp.status, message);
+    }
+    return parseResponseBody<T>(resp);
+  }
+
+  private keyPath(id: string, suffix = ''): string {
+    return `/api/v1/xkms/keys/${encodeURIComponent(id)}${suffix}`;
+  }
+
+  private static backendQuery(backend?: string): string {
+    return backend ? `?backend=${encodeURIComponent(backend)}` : '';
+  }
+
+  // Maps to GET /api/v1/xkms/keys[?backend=]
+  async listKeys(backend?: string): Promise<XKMSListKeysResponse> {
+    return this.fetchJSON<XKMSListKeysResponse>(
+      `/api/v1/xkms/keys${RestXKMSKeysClient.backendQuery(backend)}`,
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/keys (201)
+  async generateKey(req: XKMSGenerateKeyRequest): Promise<XKMSGenerateKeyResponse> {
+    return this.fetchJSON<XKMSGenerateKeyResponse>('/api/v1/xkms/keys', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/xkms/keys/{id}[?backend=]
+  async getKey(id: string, backend?: string): Promise<XKMSKeyInfo> {
+    return this.fetchJSON<XKMSKeyInfo>(
+      this.keyPath(id, RestXKMSKeysClient.backendQuery(backend)),
+    );
+  }
+
+  // Maps to DELETE /api/v1/xkms/keys/{id}
+  async deleteKey(id: string): Promise<XKMSDeleteKeyResponse> {
+    return this.fetchJSON<XKMSDeleteKeyResponse>(this.keyPath(id), { method: 'DELETE' });
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/rotate
+  async rotateKey(id: string): Promise<XKMSRotateKeyResponse> {
+    return this.fetchJSON<XKMSRotateKeyResponse>(this.keyPath(id, '/rotate'), { method: 'POST' });
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/encrypt
+  async encrypt(id: string, req: XKMSEncryptRequest): Promise<XKMSEncryptResponse> {
+    return this.fetchJSON<XKMSEncryptResponse>(this.keyPath(id, '/encrypt'), {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/decrypt
+  async decrypt(id: string, req: XKMSDecryptRequest): Promise<XKMSDecryptResponse> {
+    return this.fetchJSON<XKMSDecryptResponse>(this.keyPath(id, '/decrypt'), {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/sign
+  async sign(id: string, req: XKMSSignRequest): Promise<XKMSSignResponse> {
+    return this.fetchJSON<XKMSSignResponse>(this.keyPath(id, '/sign'), {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/verify
+  async verify(id: string, req: XKMSVerifyRequest): Promise<XKMSVerifyResponse> {
+    return this.fetchJSON<XKMSVerifyResponse>(this.keyPath(id, '/verify'), {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/xkms/keys/{id}/versions
+  async listKeyVersions(id: string): Promise<XKMSListKeyVersionsResponse> {
+    return this.fetchJSON<XKMSListKeyVersionsResponse>(this.keyPath(id, '/versions'));
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/versions/enable-all
+  async enableAllKeyVersions(id: string): Promise<XKMSBulkKeyVersionsResponse> {
+    return this.fetchJSON<XKMSBulkKeyVersionsResponse>(
+      this.keyPath(id, '/versions/enable-all'),
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/versions/disable-all
+  async disableAllKeyVersions(id: string): Promise<XKMSBulkKeyVersionsResponse> {
+    return this.fetchJSON<XKMSBulkKeyVersionsResponse>(
+      this.keyPath(id, '/versions/disable-all'),
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/versions/{version}/enable
+  async enableKeyVersion(id: string, version: number): Promise<XKMSKeyVersionStatusResponse> {
+    return this.fetchJSON<XKMSKeyVersionStatusResponse>(
+      this.keyPath(id, `/versions/${encodeURIComponent(String(version))}/enable`),
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/versions/{version}/disable
+  async disableKeyVersion(id: string, version: number): Promise<XKMSKeyVersionStatusResponse> {
+    return this.fetchJSON<XKMSKeyVersionStatusResponse>(
+      this.keyPath(id, `/versions/${encodeURIComponent(String(version))}/disable`),
+      { method: 'POST' },
+    );
+  }
+}
+
+// RestXKMSClient drives the xkms passthrough routes (/api/v1/xkms/*).
+export class RestXKMSClient implements XKMSClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to GET /api/v1/xkms/backends.
+  async listBackends(): Promise<XKMSListBackendsResponse> {
+    return this.http.fetchJSON<XKMSListBackendsResponse>('/api/v1/xkms/backends');
+  }
+
+  // Maps to GET /api/v1/xkms/backends/{id}.
+  async getBackend(id: string): Promise<XKMSBackendInfo> {
+    return this.http.fetchJSON<XKMSBackendInfo>(
+      `/api/v1/xkms/backends/${encodeURIComponent(id)}`,
+    );
+  }
+
+  // Maps to GET /api/v1/xkms/health.
+  async health(): Promise<XKMSHealthResponse> {
+    return this.http.fetchJSON<XKMSHealthResponse>('/api/v1/xkms/health');
+  }
+
+  // Maps to GET /api/v1/xkms/seal/capability[?backend=].
+  async canSeal(backend?: string): Promise<XKMSSealCapabilityResponse> {
+    const q = backend ? `?backend=${encodeURIComponent(backend)}` : '';
+    return this.http.fetchJSON<XKMSSealCapabilityResponse>(
+      `/api/v1/xkms/seal/capability${q}`,
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/seal.
+  async seal(req: XKMSSealRequest): Promise<XKMSSealResponse> {
+    return this.http.fetchJSON<XKMSSealResponse>('/api/v1/xkms/seal', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/unseal.
+  async unseal(req: XKMSUnsealRequest): Promise<XKMSUnsealResponse> {
+    return this.http.fetchJSON<XKMSUnsealResponse>('/api/v1/xkms/unseal', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/xkms/certs[?backend=].
+  async listCertificates(backend?: string): Promise<XKMSListCertificatesResponse> {
+    const q = backend ? `?backend=${encodeURIComponent(backend)}` : '';
+    return this.http.fetchJSON<XKMSListCertificatesResponse>(`/api/v1/xkms/certs${q}`);
+  }
+
+  // Maps to GET /api/v1/xkms/certs/{id}.
+  async getCertificate(keyID: string): Promise<XKMSCertificateResponse> {
+    return this.http.fetchJSON<XKMSCertificateResponse>(
+      `/api/v1/xkms/certs/${encodeURIComponent(keyID)}`,
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/certs?key_id= (200 with an empty body).
+  async saveCertificate(keyID: string, certificatePEM: string): Promise<void> {
+    await this.http.fetchVoid(`/api/v1/xkms/certs?key_id=${encodeURIComponent(keyID)}`, {
+      method: 'POST',
+      body: JSON.stringify({ certificate_pem: certificatePEM }),
+    });
+  }
+
+  // Maps to DELETE /api/v1/xkms/certs/{id} (200 with an empty body).
+  async deleteCertificate(keyID: string): Promise<void> {
+    await this.http.fetchVoid(`/api/v1/xkms/certs/${encodeURIComponent(keyID)}`, {
+      method: 'DELETE',
+    });
   }
 }
 
@@ -4058,6 +5303,68 @@ export class RestCAClient implements CAClient {
       `/api/v1/xkms/ca/revoked/${encodeURIComponent(serialNumber)}`,
     );
   }
+
+  // The xkms CA passthrough routes carry Go []byte fields, so every *_pem
+  // field travels as base64 of the PEM text. xkmsPEM decodes one, falling
+  // back to the raw string (as generateCRL does) when it is not base64.
+  private static xkmsPEM(wire: string | undefined): string {
+    if (!wire) return wire ?? '';
+    try {
+      return atob(wire);
+    } catch {
+      return wire;
+    }
+  }
+
+  async xkmsGetCABundle(opts?: XKMSCABundleOptions): Promise<XKMSCABundle> {
+    const q: string[] = [];
+    if (opts?.store_type) q.push(`store_type=${encodeURIComponent(opts.store_type)}`);
+    if (opts?.algorithm) q.push(`algorithm=${encodeURIComponent(opts.algorithm)}`);
+    const path = '/api/v1/xkms/ca/bundle' + (q.length ? `?${q.join('&')}` : '');
+    const wire = await this.http.fetchJSON<XKMSCABundle>(path);
+    return { ...wire, bundle_pem: RestCAClient.xkmsPEM(wire.bundle_pem), certificates: wire.certificates ?? [] };
+  }
+
+  async xkmsGetCACertificate(identity?: string): Promise<XKMSCACertificate> {
+    const path = '/api/v1/xkms/ca/cert' + (identity ? `?identity=${encodeURIComponent(identity)}` : '');
+    const wire = await this.http.fetchJSON<XKMSCACertificate>(path);
+    return { ...wire, certificate_pem: RestCAClient.xkmsPEM(wire.certificate_pem) };
+  }
+
+  async xkmsSignCSR(req: XKMSCASignCSRRequest): Promise<XKMSCASignCSRResponse> {
+    const wire = await this.http.fetchJSON<XKMSCASignCSRResponse>('/api/v1/xkms/ca/sign', {
+      method: 'POST',
+      body: JSON.stringify({ ...req, csr_pem: btoa(req.csr_pem) }),
+    });
+    return {
+      ...wire,
+      certificate_pem: RestCAClient.xkmsPEM(wire.certificate_pem),
+      chain_pem: RestCAClient.xkmsPEM(wire.chain_pem),
+    };
+  }
+
+  async xkmsIssueCertificate(req: XKMSCAIssueRequest): Promise<XKMSCAIssueResponse> {
+    const wire = await this.http.fetchJSON<XKMSCAIssueResponse>('/api/v1/xkms/ca/issue', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+    const out: XKMSCAIssueResponse = {
+      ...wire,
+      certificate_pem: RestCAClient.xkmsPEM(wire.certificate_pem),
+      chain_pem: RestCAClient.xkmsPEM(wire.chain_pem),
+    };
+    if (wire.private_key_pem) out.private_key_pem = RestCAClient.xkmsPEM(wire.private_key_pem);
+    return out;
+  }
+
+  async xkmsRevokeCertificate(serialNumber: string, reason: number, tenantId?: string): Promise<XKMSCARevokeResponse> {
+    const body: { serial_number: string; reason: number; tenant_id?: string } = { serial_number: serialNumber, reason };
+    if (tenantId) body.tenant_id = tenantId;
+    return this.http.fetchJSON<XKMSCARevokeResponse>('/api/v1/xkms/ca/revoke', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -4391,6 +5698,834 @@ export class RestDEKClient implements DEKClient {
   }
 }
 
+/**
+ * RestAttestationClient manages the attestation verifier's endorsements and
+ * reference values over REST (/api/v1/attestation/*).
+ */
+/** pemTextToBase64 encodes PEM text as the base64 of its UTF-8 bytes (a Go []byte on the wire). */
+export function pemTextToBase64(pem: string): string {
+  return bytesToBase64(new TextEncoder().encode(pem));
+}
+
+/** base64ToPEMText decodes a Go []byte field back to the PEM text it carries. */
+export function base64ToPEMText(b64: string): string {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+function endorsementFromWire(wire: Endorsement): Endorsement {
+  const out: Endorsement = { ...wire };
+  if (wire.certificate_pem) out.certificate_pem = base64ToPEMText(wire.certificate_pem);
+  if (wire.public_key_pem) out.public_key_pem = base64ToPEMText(wire.public_key_pem);
+  return out;
+}
+
+export class RestAttestationClient implements AttestationClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to PUT /api/v1/attestation/endorsements/{name}
+  //
+  // The handler decodes certificate_pem and public_key_pem into Go []byte, so
+  // on the wire they are base64 of the PEM text; this client takes and returns
+  // the PEM text itself and does that encoding exactly once.
+  async putEndorsement(name: string, req: PutEndorsementRequest): Promise<Endorsement> {
+    const body: PutEndorsementRequest = { kind: req.kind };
+    if (req.certificate_pem !== undefined) body.certificate_pem = pemTextToBase64(req.certificate_pem);
+    if (req.public_key_pem !== undefined) body.public_key_pem = pemTextToBase64(req.public_key_pem);
+    const wire = await this.http.fetchJSON<Endorsement>(
+      `/api/v1/attestation/endorsements/${encodeURIComponent(name)}`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    );
+    return endorsementFromWire(wire);
+  }
+
+  // Maps to GET /api/v1/attestation/endorsements[?kind=]
+  async listEndorsements(kind?: EndorsementKind): Promise<ListEndorsementsResponse> {
+    const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+    const wire = await this.http.fetchJSON<ListEndorsementsResponse>(
+      `/api/v1/attestation/endorsements${query}`,
+    );
+    return { ...wire, endorsements: (wire?.endorsements ?? []).map(endorsementFromWire) };
+  }
+
+  // Maps to DELETE /api/v1/attestation/endorsements/{name}
+  async deleteEndorsement(name: string): Promise<void> {
+    return this.http.fetchVoid(
+      `/api/v1/attestation/endorsements/${encodeURIComponent(name)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to PUT /api/v1/attestation/reference-values/{name}
+  async putReferenceValues(name: string, signedCoRIM: string): Promise<ReferenceValues> {
+    const req: PutReferenceValuesRequest = { signed_corim: signedCoRIM };
+    return this.http.fetchJSON<ReferenceValues>(
+      `/api/v1/attestation/reference-values/${encodeURIComponent(name)}`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to GET /api/v1/attestation/reference-values/{name}
+  async getReferenceValues(name: string): Promise<ReferenceValues> {
+    return this.http.fetchJSON<ReferenceValues>(
+      `/api/v1/attestation/reference-values/${encodeURIComponent(name)}`,
+    );
+  }
+
+  // Maps to GET /api/v1/attestation/reference-values
+  async listReferenceValues(): Promise<ListReferenceValuesResponse> {
+    const wire = await this.http.fetchJSON<ListReferenceValuesResponse>(
+      '/api/v1/attestation/reference-values',
+    );
+    return { ...wire, reference_values: wire?.reference_values ?? [] };
+  }
+
+  // Maps to DELETE /api/v1/attestation/reference-values/{name}
+  async deleteReferenceValues(name: string): Promise<void> {
+    return this.http.fetchVoid(
+      `/api/v1/attestation/reference-values/${encodeURIComponent(name)}`,
+      { method: 'DELETE' },
+    );
+  }
+}
+
+/** pivQuery builds a `?k=v&...` suffix from the set values, each encoded. */
+function pivQuery(params: Record<string, string | undefined>): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '') parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+  }
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
+/**
+ * RestPIVClient manages xkms PIV slots over REST
+ * (/api/v1/xkms/piv/slots*, pkg/api/rest/handlers_xkms.go).
+ *
+ * The server's certificate, key, CSR and chain fields are Go []byte, so JSON
+ * carries them as base64. This client base64-encodes PEM text on writes and
+ * decodes the PEM fields of responses; a DER certificate is already base64
+ * and passes through unchanged.
+ */
+export class RestPIVClient implements PIVClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  private slotPath(slot: string): string {
+    return `/api/v1/xkms/piv/slots/${encodeURIComponent(slot)}`;
+  }
+
+  // Maps to GET /api/v1/xkms/piv/slots[?backend=]
+  async listSlots(backend?: string): Promise<ListPIVSlotsResponse> {
+    const wire = await this.http.fetchJSON<ListPIVSlotsResponse>(
+      `/api/v1/xkms/piv/slots${pivQuery({ backend })}`,
+    );
+    return { ...wire, slots: wire?.slots ?? [] };
+  }
+
+  // Maps to GET /api/v1/xkms/piv/slots/{slot}/cert[?backend=&format=]
+  async getCertificate(slot: string, opts: GetPIVCertificateOptions = {}): Promise<GetPIVCertificateResponse> {
+    const wire = await this.http.fetchJSON<GetPIVCertificateResponse>(
+      `${this.slotPath(slot)}/cert${pivQuery({ backend: opts.backend, format: opts.format })}`,
+    );
+    return wire.format === 'pem' && wire.certificate
+      ? { ...wire, certificate: base64ToPEMText(wire.certificate) }
+      : wire;
+  }
+
+  // Maps to PUT /api/v1/xkms/piv/slots/{slot}/cert (200, empty body)
+  async storeCertificate(slot: string, req: StorePIVCertificateRequest): Promise<void> {
+    await this.http.fetchVoid(`${this.slotPath(slot)}/cert`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        ...req,
+        certificate: req.format === 'pem' ? pemTextToBase64(req.certificate) : req.certificate,
+      }),
+    });
+  }
+
+  // Maps to DELETE /api/v1/xkms/piv/slots/{slot}/cert[?backend=] (200, empty body)
+  async deleteCertificate(slot: string, backend?: string): Promise<void> {
+    await this.http.fetchVoid(`${this.slotPath(slot)}/cert${pivQuery({ backend })}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/piv/slots/{slot}/key (201)
+  async generateKey(slot: string, req: GeneratePIVKeyRequest): Promise<GeneratePIVKeyResponse> {
+    const wire = await this.http.fetchJSON<GeneratePIVKeyResponse>(`${this.slotPath(slot)}/key`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+    const out: GeneratePIVKeyResponse = { ...wire };
+    if (wire.certificate) out.certificate = base64ToPEMText(wire.certificate);
+    if (wire.public_key) out.public_key = base64ToPEMText(wire.public_key);
+    if (wire.csr) out.csr = base64ToPEMText(wire.csr);
+    if (wire.chain_pem) out.chain_pem = base64ToPEMText(wire.chain_pem);
+    return out;
+  }
+
+  // Maps to POST /api/v1/xkms/piv/slots/{slot}/csr (201)
+  async generateCSR(slot: string, req: GeneratePIVCSRRequest): Promise<GeneratePIVCSRResponse> {
+    const wire = await this.http.fetchJSON<GeneratePIVCSRResponse>(`${this.slotPath(slot)}/csr`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+    return wire.csr ? { ...wire, csr: base64ToPEMText(wire.csr) } : wire;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RestBackupsClient
+// ---------------------------------------------------------------------------
+
+export class RestBackupsClient implements BackupsClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to GET /api/v1/backups[?limit=][&offset=]
+  async list(opts: BackupListOptions = {}): Promise<BackupListResponse> {
+    const params: Record<string, string> = {};
+    if (opts.limit !== undefined) params.limit = String(opts.limit);
+    if (opts.offset !== undefined) params.offset = String(opts.offset);
+    const query = new URLSearchParams(params).toString();
+    const wire = await this.http.fetchJSON<BackupListResponse>(
+      `/api/v1/backups${query ? `?${query}` : ''}`,
+      { method: 'GET' },
+    );
+    return { ...wire, backups: wire?.backups ?? [], total_count: wire?.total_count ?? 0 };
+  }
+
+  // Maps to POST /api/v1/backups/{id}/restore
+  async restore(backupID: string, req: BackupRestoreRequest = {}): Promise<BackupRestoreResponse> {
+    return this.http.fetchJSON<BackupRestoreResponse>(
+      `/api/v1/backups/${encodeURIComponent(backupID)}/restore`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to DELETE /api/v1/backups/{id}
+  async delete(backupID: string): Promise<BackupDeleteResponse> {
+    return this.http.fetchJSON<BackupDeleteResponse>(
+      `/api/v1/backups/${encodeURIComponent(backupID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to POST /api/v1/backups/{id}/verify
+  async verify(backupID: string): Promise<BackupVerifyResponse> {
+    return this.http.fetchJSON<BackupVerifyResponse>(
+      `/api/v1/backups/${encodeURIComponent(backupID)}/verify`,
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to GET /api/v1/backups/{id}/status
+  async status(backupID: string): Promise<BackupStatusResponse> {
+    return this.http.fetchJSON<BackupStatusResponse>(
+      `/api/v1/backups/${encodeURIComponent(backupID)}/status`,
+      { method: 'GET' },
+    );
+  }
+}
+
+/**
+ * RestClusterNodesClient manages cluster node membership over REST.
+ * Distinct from RestClusterClient (client.cluster).
+ */
+export class RestClusterNodesClient implements ClusterNodesClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to GET /api/v1/cluster/nodes/ (the trailing slash is part of the route).
+  async listNodes(): Promise<ListClusterNodesResponse> {
+    return this.http.fetchJSON<ListClusterNodesResponse>('/api/v1/cluster/nodes/');
+  }
+
+  // Maps to POST /api/v1/cluster/nodes/ (the trailing slash is part of the route).
+  async addNode(req: AddNodeRequest): Promise<AddNodeResponse> {
+    return this.http.fetchJSON<AddNodeResponse>('/api/v1/cluster/nodes/', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/cluster/nodes/non-leader.
+  async listNonLeaderNodes(): Promise<ListClusterNodesResponse> {
+    return this.http.fetchJSON<ListClusterNodesResponse>('/api/v1/cluster/nodes/non-leader');
+  }
+
+  // Maps to DELETE /api/v1/cluster/nodes/{nodeId}?shard_id= (shard_id is required).
+  async removeNode(nodeId: number, shardId: number): Promise<RemoveNodeResponse> {
+    return this.http.fetchJSON<RemoveNodeResponse>(
+      `/api/v1/cluster/nodes/${encodeURIComponent(String(nodeId))}?shard_id=${encodeURIComponent(String(shardId))}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to PUT /api/v1/cluster/nodes/{nodeId}/replace.
+  async replaceNode(nodeId: number, req: ReplaceNodeRequest): Promise<ReplaceNodeResponse> {
+    return this.http.fetchJSON<ReplaceNodeResponse>(
+      `/api/v1/cluster/nodes/${encodeURIComponent(String(nodeId))}/replace`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+}
+
+// entityQuery builds a query string from the parameters that are set.
+function entityQuery(params: Record<string, string | number | undefined>): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === '') continue;
+    parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+  }
+  return parts.length > 0 ? `?${parts.join('&')}` : '';
+}
+
+/** RestEntitiesClient implements EntitiesClient over the generic entity REST routes. */
+export class RestEntitiesClient implements EntitiesClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to GET /api/v1/entities/{type}/ (trailing slash).
+  async list(type: string, opts: EntityListOptions = {}): Promise<EntityList> {
+    const query = entityQuery({ limit: opts.limit, cursor: opts.cursor, consistency: opts.consistency });
+    const wire = await this.http.fetchJSON<EntityList>(
+      `/api/v1/entities/${encodeURIComponent(type)}/${query}`,
+    );
+    return { ...wire, entities: wire.entities ?? [] };
+  }
+
+  // Maps to POST /api/v1/entities/{type}/ (trailing slash).
+  // Maps to PUT /api/v1/entities/{type}/{id}.
+  async put(
+    type: string,
+    id: number | string,
+    data: unknown,
+    opts: EntityWriteOptions = {},
+  ): Promise<PutEntityResponse> {
+    // The ID travels only in the URL, which the handler takes as the entity's
+    // ID. The body's id is a uint64 on the server, so a decimal-string ID
+    // (an exact uint64 beyond 2^53) in the body would be refused with 400.
+    const body: PutEntityRequest = { entity_type: type, data };
+    return this.http.fetchJSON<PutEntityResponse>(
+      `/api/v1/entities/${encodeURIComponent(type)}/${encodeURIComponent(String(id))}${entityQuery({ write_mode: opts.write_mode })}`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    );
+  }
+
+  // Maps to GET /api/v1/entities/{type}/{id}.
+  async get(type: string, id: number | string, opts: EntityGetOptions = {}): Promise<EntityRecord> {
+    const query = entityQuery({ consistency: opts.consistency, timeout_ms: opts.timeout_ms });
+    return this.http.fetchJSON<EntityRecord>(
+      `/api/v1/entities/${encodeURIComponent(type)}/${encodeURIComponent(String(id))}${query}`,
+    );
+  }
+
+  // Maps to DELETE /api/v1/entities/{type}/{id}.
+  async delete(type: string, id: number | string, opts: EntityWriteOptions = {}): Promise<DeleteEntityResponse> {
+    return this.http.fetchJSON<DeleteEntityResponse>(
+      `/api/v1/entities/${encodeURIComponent(type)}/${encodeURIComponent(String(id))}${entityQuery({ write_mode: opts.write_mode })}`,
+      { method: 'DELETE' },
+    );
+  }
+}
+
+/**
+ * RestKMSAdminClient administers named KMS keys over REST: metadata, access
+ * policy and rotation policy under /api/v1/kms/keys/{name}/*.
+ */
+export class RestKMSAdminClient implements KMSAdminClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  private keyPath(name: string, suffix: string): string {
+    return `/api/v1/kms/keys/${encodeURIComponent(name)}/${suffix}`;
+  }
+
+  // Maps to GET /api/v1/kms/keys/{name}/metadata
+  async getKeyMetadata(name: string): Promise<KMSKeyMetadataResponse> {
+    return this.http.fetchJSON<KMSKeyMetadataResponse>(this.keyPath(name, 'metadata'));
+  }
+
+  // Maps to PUT /api/v1/kms/keys/{name}/metadata
+  async updateKeyMetadata(name: string, req: UpdateKMSKeyMetadataRequest): Promise<KMSKeyMetadataResponse> {
+    return this.http.fetchJSON<KMSKeyMetadataResponse>(this.keyPath(name, 'metadata'), {
+      method: 'PUT',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/kms/keys/{name}/policy
+  async getKeyPolicy(name: string): Promise<GetKMSKeyPolicyResponse> {
+    return this.http.fetchJSON<GetKMSKeyPolicyResponse>(this.keyPath(name, 'policy'));
+  }
+
+  // Maps to PUT /api/v1/kms/keys/{name}/policy
+  async setKeyPolicy(name: string, policy: KMSKeyPolicyInput): Promise<SetKMSKeyPolicyResponse> {
+    return this.http.fetchJSON<SetKMSKeyPolicyResponse>(this.keyPath(name, 'policy'), {
+      method: 'PUT',
+      body: JSON.stringify({ policy }),
+    });
+  }
+
+  // Maps to GET /api/v1/kms/keys/{name}/rotation-policy
+  async getKeyRotationPolicy(name: string): Promise<GetKMSRotationPolicyResponse> {
+    return this.http.fetchJSON<GetKMSRotationPolicyResponse>(this.keyPath(name, 'rotation-policy'));
+  }
+
+  // Maps to PUT /api/v1/kms/keys/{name}/rotation-policy
+  async setKeyRotationPolicy(name: string, req: KMSRotationPolicyInput): Promise<SetKMSRotationPolicyResponse> {
+    return this.http.fetchJSON<SetKMSRotationPolicyResponse>(this.keyPath(name, 'rotation-policy'), {
+      method: 'PUT',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to DELETE /api/v1/kms/keys/{name}/rotation-policy
+  async deleteKeyRotationPolicy(name: string): Promise<DeleteKMSRotationPolicyResponse> {
+    return this.http.fetchJSON<DeleteKMSRotationPolicyResponse>(this.keyPath(name, 'rotation-policy'), {
+      method: 'DELETE',
+    });
+  }
+}
+
+// RestObjectStorageAdminClient implements ObjectStorageAdminClient over REST.
+// The replies keep the Go field names (PascalCase); see objectstorage_admin.ts.
+export class RestObjectStorageAdminClient implements ObjectStorageAdminClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to POST /api/v1/admin/object-backends
+  async createBackend(req: ObjectStorageAdminCreateBackendRequest): Promise<ObjectStorageAdminCreateBackendResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminCreateBackendResponse>('/api/v1/admin/object-backends', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to PUT /api/v1/admin/object-backends/{name}
+  async updateBackend(
+    name: string,
+    req: ObjectStorageAdminUpdateBackendRequest,
+  ): Promise<ObjectStorageAdminUpdateBackendResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminUpdateBackendResponse>(
+      `/api/v1/admin/object-backends/${encodeURIComponent(name)}`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to DELETE /api/v1/admin/object-backends/{name}
+  async deleteBackend(
+    name: string,
+    req: ObjectStorageAdminDeleteBackendRequest = {},
+  ): Promise<ObjectStorageAdminDeleteBackendResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminDeleteBackendResponse>(
+      `/api/v1/admin/object-backends/${encodeURIComponent(name)}`,
+      { method: 'DELETE', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to PUT /api/v1/admin/object-backends/{name}/status
+  async setBackendStatus(name: string, enabled: boolean): Promise<ObjectStorageAdminBackendStatusResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminBackendStatusResponse>(
+      `/api/v1/admin/object-backends/${encodeURIComponent(name)}/status`,
+      { method: 'PUT', body: JSON.stringify({ enabled }) },
+    );
+  }
+
+  // Maps to POST /api/v1/admin/object-backends/{name}/compact
+  async compactBackend(
+    name: string,
+    req: ObjectStorageAdminCompactBackendRequest = {},
+  ): Promise<ObjectStorageAdminCompactBackendResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminCompactBackendResponse>(
+      `/api/v1/admin/object-backends/${encodeURIComponent(name)}/compact`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to GET /api/v1/admin/storage/stats[?backends=true][&tenants=true]
+  async storageStats(opts: ObjectStorageAdminStatsOptions = {}): Promise<ObjectStorageAdminStatsResponse> {
+    const params: Record<string, string> = {};
+    if (opts.backends) params.backends = 'true';
+    if (opts.tenants) params.tenants = 'true';
+    const query = new URLSearchParams(params).toString();
+    return this.http.fetchJSON<ObjectStorageAdminStatsResponse>(
+      `/api/v1/admin/storage/stats${query ? `?${query}` : ''}`,
+    );
+  }
+
+  // Maps to POST /api/v1/admin/storage/gc
+  async runGarbageCollection(req: ObjectStorageAdminGCRequest = {}): Promise<ObjectStorageAdminGCResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminGCResponse>('/api/v1/admin/storage/gc', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/admin/storage/gc/progress?operation_id=
+  async garbageCollectionProgress(operationID: string): Promise<ObjectStorageAdminGCProgressResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminGCProgressResponse>(
+      `/api/v1/admin/storage/gc/progress?operation_id=${encodeURIComponent(operationID)}`,
+    );
+  }
+
+  // Maps to POST /api/v1/admin/objects/repair
+  async repairObject(req: ObjectStorageAdminRepairRequest): Promise<ObjectStorageAdminRepairResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminRepairResponse>('/api/v1/admin/objects/repair', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+}
+
+/**
+ * parameterURL turns a parameter path such as "/app/db/host" into its route,
+ * /api/v1/parameters/app/db/host: the leading '/' dropped and each segment
+ * encodeURIComponent'd.
+ */
+function parameterURL(path: string): string {
+  const segments = path.replace(/^\/+/, '').split('/').map((s) => encodeURIComponent(s));
+  return `/api/v1/parameters/${segments.join('/')}`;
+}
+
+export class RestParametersClient implements ParametersClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to GET /api/v1/parameters/{path}[?with_decryption=false]
+  async get(path: string, opts: ParameterGetOptions = {}): Promise<GetParameterResponse> {
+    const query = opts.withDecryption !== undefined
+      ? `?with_decryption=${String(opts.withDecryption)}`
+      : '';
+    return this.http.fetchJSON<GetParameterResponse>(`${parameterURL(path)}${query}`);
+  }
+
+  // Maps to PUT /api/v1/parameters/{path}
+  async set(path: string, req: SetParameterRequest): Promise<SetParameterResponse> {
+    return this.http.fetchJSON<SetParameterResponse>(parameterURL(path), {
+      method: 'PUT',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to DELETE /api/v1/parameters/{path}
+  async delete(path: string): Promise<DeleteParameterResponse> {
+    return this.http.fetchJSON<DeleteParameterResponse>(parameterURL(path), { method: 'DELETE' });
+  }
+
+  // Maps to GET /api/v1/parameters/?prefix=&recursive=&with_values=&with_decryption=&cursor=&limit=
+  async list(opts: ParameterListOptions = {}): Promise<ListParametersResponse> {
+    const params: Record<string, string> = {};
+    if (opts.prefix !== undefined) params.prefix = opts.prefix;
+    if (opts.recursive !== undefined) params.recursive = String(opts.recursive);
+    if (opts.withValues !== undefined) params.with_values = String(opts.withValues);
+    if (opts.withDecryption !== undefined) params.with_decryption = String(opts.withDecryption);
+    if (opts.cursor !== undefined) params.cursor = opts.cursor;
+    if (opts.limit !== undefined) params.limit = String(opts.limit);
+    const query = new URLSearchParams(params).toString();
+    const wire = await this.http.fetchJSON<ListParametersResponse>(
+      `/api/v1/parameters/${query ? `?${query}` : ''}`,
+    );
+    return { ...wire, parameters: wire.parameters ?? [] };
+  }
+
+  // Maps to POST /api/v1/parameters/batch/get
+  async getBatch(req: GetParametersRequest): Promise<GetParametersResponse> {
+    return this.http.fetchJSON<GetParametersResponse>('/api/v1/parameters/batch/get', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/parameters/batch/set
+  async setBatch(req: SetParametersRequest): Promise<SetParametersResponse> {
+    return this.http.fetchJSON<SetParametersResponse>('/api/v1/parameters/batch/set', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/parameters/batch/delete
+  async deleteBatch(paths: string[]): Promise<DeleteParametersResponse> {
+    return this.http.fetchJSON<DeleteParametersResponse>('/api/v1/parameters/batch/delete', {
+      method: 'POST',
+      body: JSON.stringify({ paths }),
+    });
+  }
+
+  // Maps to POST /api/v1/parameters/search
+  async searchByTags(req: ParameterSearchByTagsRequest): Promise<ParameterSearchByTagsResponse> {
+    return this.http.fetchJSON<ParameterSearchByTagsResponse>('/api/v1/parameters/search', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RestVectorAdminClient — /api/v1/vector/admin/* surface.
+// ---------------------------------------------------------------------------
+
+// RestVectorAdminClient implements VectorAdminClient. Export and import move
+// JSON Lines, which FetchHelper does not parse, so sendText builds the
+// request the way newFetchHelper does but reads and sends text.
+export class RestVectorAdminClient implements VectorAdminClient {
+  private readonly http: FetchHelper;
+  private readonly baseUrl: string;
+  private readonly config: ClientConfig;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.config = config;
+  }
+
+  // Maps to GET /api/v1/vector/admin/stats/global
+  async getGlobalStats(): Promise<ClusterStatsResponse> {
+    return this.http.fetchJSON<ClusterStatsResponse>('/api/v1/vector/admin/stats/global');
+  }
+
+  // Maps to POST /api/v1/vector/admin/compact
+  async compactNamespace(namespace: string): Promise<CompactNamespaceResponse> {
+    return this.http.fetchJSON<CompactNamespaceResponse>('/api/v1/vector/admin/compact', {
+      method: 'POST',
+      body: JSON.stringify({ namespace }),
+    });
+  }
+
+  // Maps to GET /api/v1/vector/admin/compact/progress?operation_id=
+  async getCompactionProgress(operationId: string): Promise<CompactionProgress> {
+    return this.http.fetchJSON<CompactionProgress>(
+      `/api/v1/vector/admin/compact/progress?operation_id=${encodeURIComponent(operationId)}`,
+    );
+  }
+
+  // Maps to POST /api/v1/vector/admin/export/{namespace}
+  async exportVectors(namespace: string, req: ExportVectorsRequest = {}): Promise<VectorExportEntry[]> {
+    const text = await this.sendText(`/api/v1/vector/admin/export/${encodeURIComponent(namespace)}`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+    return text
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => JSON.parse(line) as VectorExportEntry);
+  }
+
+  // Maps to POST /api/v1/vector/admin/import/{namespace}
+  async importVectors(namespace: string, entries: VectorExportEntry[]): Promise<ImportVectorsResponse> {
+    const text = await this.sendText(`/api/v1/vector/admin/import/${encodeURIComponent(namespace)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-ndjson' },
+      body: entries.map((e) => JSON.stringify(e)).join('\n'),
+    });
+    return JSON.parse(text) as ImportVectorsResponse;
+  }
+
+  // sendText sends a request with newFetchHelper's headers and error
+  // handling and returns the response body as text.
+  private async sendText(path: string, init: FetchInit): Promise<string> {
+    const headers: Record<string, string> = {};
+    const tok = await resolveToken(this.config.token);
+    if (tok) headers['Authorization'] = `Bearer ${tok}`;
+    if (this.config.tenantID) headers['X-Tenant-ID'] = this.config.tenantID;
+    const resp = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...headers,
+        ...(init.headers ?? {}),
+      },
+    });
+    if (!resp.ok) {
+      let message = resp.statusText;
+      try {
+        const body = (await resp.json()) as { error?: string; message?: string };
+        message = body.error ?? body.message ?? message;
+      } catch {
+        // Body not JSON: fall back to statusText.
+      }
+      throw new APIError(resp.status, message);
+    }
+    return resp.text();
+  }
+}
+
+// xkmsFido2TenantQuery renders the optional ?tenant_id= query; without a
+// tenant the server uses the caller's session tenant.
+function xkmsFido2TenantQuery(tenantId?: string): string {
+  return tenantId !== undefined ? `?tenant_id=${encodeURIComponent(tenantId)}` : '';
+}
+
+// RestXKMSFIDO2Client registers and authenticates FIDO2 passkeys over REST.
+export class RestXKMSFIDO2Client implements XKMSFIDO2Client {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to POST /api/v1/xkms/fido2/register/begin[?tenant_id=]
+  async beginRegistration(
+    req: XKMSFIDO2BeginRegistrationRequest,
+    tenantId?: string,
+  ): Promise<XKMSFIDO2Challenge> {
+    return this.http.fetchJSON<XKMSFIDO2Challenge>(
+      `/api/v1/xkms/fido2/register/begin${xkmsFido2TenantQuery(tenantId)}`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/fido2/register/finish[?tenant_id=]
+  async finishRegistration(
+    req: XKMSFIDO2FinishRegistrationRequest,
+    tenantId?: string,
+  ): Promise<XKMSFIDO2FinishRegistrationResponse> {
+    return this.http.fetchJSON<XKMSFIDO2FinishRegistrationResponse>(
+      `/api/v1/xkms/fido2/register/finish${xkmsFido2TenantQuery(tenantId)}`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/fido2/credentials/begin (the session's tenant)
+  async beginAddCredential(): Promise<XKMSFIDO2Challenge> {
+    return this.http.fetchJSON<XKMSFIDO2Challenge>('/api/v1/xkms/fido2/credentials/begin', {
+      method: 'POST',
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/fido2/authenticate/begin[?tenant_id=]
+  async beginAuthentication(
+    req: XKMSFIDO2BeginAuthenticationRequest,
+    tenantId?: string,
+  ): Promise<XKMSFIDO2Challenge> {
+    return this.http.fetchJSON<XKMSFIDO2Challenge>(
+      `/api/v1/xkms/fido2/authenticate/begin${xkmsFido2TenantQuery(tenantId)}`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/fido2/authenticate/finish[?tenant_id=]
+  async finishAuthentication(
+    req: XKMSFIDO2FinishAuthenticationRequest,
+    tenantId?: string,
+  ): Promise<XKMSFIDO2FinishAuthenticationResponse> {
+    return this.http.fetchJSON<XKMSFIDO2FinishAuthenticationResponse>(
+      `/api/v1/xkms/fido2/authenticate/finish${xkmsFido2TenantQuery(tenantId)}`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RestRegistryClient
+// ---------------------------------------------------------------------------
+
+export class RestRegistryClient implements RegistryClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to POST /api/v1/registry/instances (201).
+  async register(instance: RegistryServiceInstance, ttlSeconds: number): Promise<RegistryLeaseResponse> {
+    const req: RegistryRegisterRequest = { instance, ttl_seconds: ttlSeconds };
+    return this.http.fetchJSON<RegistryLeaseResponse>('/api/v1/registry/instances', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/registry/leases/{lease_id}/renew.
+  async renew(leaseId: string): Promise<RegistryLeaseResponse> {
+    return this.http.fetchJSON<RegistryLeaseResponse>(
+      `/api/v1/registry/leases/${encodeURIComponent(leaseId)}/renew`,
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to DELETE /api/v1/registry/leases/{lease_id} (204).
+  async deregister(leaseId: string): Promise<void> {
+    return this.http.fetchVoid(`/api/v1/registry/leases/${encodeURIComponent(leaseId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Maps to GET /api/v1/registry/services/{service}.
+  async resolve(service: string): Promise<RegistryResolveResponse> {
+    const wire = await this.http.fetchJSON<RegistryResolveResponse>(
+      `/api/v1/registry/services/${encodeURIComponent(service)}`,
+    );
+    return { ...wire, instances: wire.instances ?? [] };
+  }
+}
+
+/** RestCacheClient reads and manages the server's cache over REST. */
+export class RestCacheClient implements CacheClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to GET /api/v1/cache/stats.
+  async stats(): Promise<CacheStatsResponse> {
+    return this.http.fetchJSON<CacheStatsResponse>('/api/v1/cache/stats');
+  }
+
+  // Maps to POST /api/v1/cache/clear (no body).
+  async clear(): Promise<CacheClearResponse> {
+    return this.http.fetchJSON<CacheClearResponse>('/api/v1/cache/clear', { method: 'POST' });
+  }
+
+  // Maps to GET /api/v1/cache/config.
+  async getConfig(): Promise<CacheConfigResponse> {
+    return this.http.fetchJSON<CacheConfigResponse>('/api/v1/cache/config');
+  }
+
+  // Maps to PUT /api/v1/cache/config; only the fields given are sent.
+  async updateConfig(req: CacheConfigUpdateRequest): Promise<CacheConfigUpdateResponse> {
+    const body: CacheConfigUpdateRequest = {};
+    if (req.l1_size !== undefined) body.l1_size = req.l1_size;
+    if (req.l1_ttl_seconds !== undefined) body.l1_ttl_seconds = req.l1_ttl_seconds;
+    return this.http.fetchJSON<CacheConfigUpdateResponse>('/api/v1/cache/config', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -4716,7 +6851,8 @@ export class RestTenantBarrierClient implements TenantBarrierClient {
   ): Promise<TenantBarrierInitResponse | undefined> {
     const { passphrase, ...rest } = req;
     const body = passphrase === undefined ? rest : { ...rest, passphrase: bytesToBase64(passphrase) };
-    // The shamir strategy returns 200 with the minted shares; the none and
+    // The shamir strategy returns 200 with share-free metadata (threshold,
+    // total_shares, share_count: the shares are sealed to officers); the none and
     // passphrase strategies return 204 No Content. fetchJSON yields undefined
     // on a 204, so the union return type already covers both cases.
     return this.http.fetchJSON<TenantBarrierInitResponse | undefined>(
@@ -4870,6 +7006,70 @@ export class RestClusterClient implements ClusterClient {
     });
   }
 
+  // Maps to GET /api/v1/cluster/leader.
+  async leader(): Promise<ClusterLeaderResponse> {
+    return this.http.fetchJSON<ClusterLeaderResponse>('/api/v1/cluster/leader', {
+      method: 'GET',
+    });
+  }
+
+  // Maps to GET /api/v1/cluster/leader/{shardID}.
+  async shardLeader(shardID: number): Promise<ShardLeaderResponse> {
+    return this.http.fetchJSON<ShardLeaderResponse>(
+      `/api/v1/cluster/leader/${encodeURIComponent(String(shardID))}`,
+      { method: 'GET' },
+    );
+  }
+
+  // Maps to POST /api/v1/cluster/rebalance/.
+  async startRebalance(req?: RebalanceRequest): Promise<RebalanceResponse> {
+    return this.http.fetchJSON<RebalanceResponse>('/api/v1/cluster/rebalance/', {
+      method: 'POST',
+      body: JSON.stringify(req ?? {}),
+    });
+  }
+
+  // Maps to GET /api/v1/cluster/rebalance/status[?operation_id=].
+  async rebalanceStatus(operationID?: string): Promise<RebalanceStatusResponse> {
+    const query = operationID ? `?operation_id=${encodeURIComponent(operationID)}` : '';
+    return this.http.fetchJSON<RebalanceStatusResponse>(
+      `/api/v1/cluster/rebalance/status${query}`,
+      { method: 'GET' },
+    );
+  }
+
+  // Maps to GET /api/v1/cluster/rebalance/plan.
+  async rebalancePlan(): Promise<RebalancePlanResponse> {
+    return this.http.fetchJSON<RebalancePlanResponse>('/api/v1/cluster/rebalance/plan', {
+      method: 'GET',
+    });
+  }
+
+  // Maps to POST /api/v1/cluster/migrate/.
+  async startMigration(req: MigrationRequest): Promise<MigrationResponse> {
+    return this.http.fetchJSON<MigrationResponse>('/api/v1/cluster/migrate/', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/cluster/migrate/status?operation_id=.
+  async migrationStatus(operationID: string): Promise<MigrationStatusResponse> {
+    return this.http.fetchJSON<MigrationStatusResponse>(
+      `/api/v1/cluster/migrate/status?operation_id=${encodeURIComponent(operationID)}`,
+      { method: 'GET' },
+    );
+  }
+
+  // Maps to DELETE /api/v1/cluster/migrate/?operation_id=.
+  async cancelMigration(operationID: string): Promise<CancelMigrationResponse> {
+    return this.http.fetchJSON<CancelMigrationResponse>(
+      `/api/v1/cluster/migrate/?operation_id=${encodeURIComponent(operationID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to GET /api/v1/cluster/nodes.
   async listNodes(): Promise<ListClusterNodesResponse> {
     const resp = await this.http.fetchJSON<ListClusterNodesResponse>('/api/v1/cluster/nodes', {
       method: 'GET',
@@ -5304,6 +7504,51 @@ export class RestAuthorizedKeysClient implements SSHAuthorizedKeysClient {
     });
     return { entry };
   }
+
+  // add stores an authorized_keys entry under scope/owner/name.
+  // Maps to POST /api/v1/ssh/authorized/keys (201, empty body).
+  async add(req: AddAuthorizedKeyRequest): Promise<void> {
+    await this.fetchSSH<void>('/api/v1/ssh/authorized/keys', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // list returns the stored entries, optionally filtered by scope and owner.
+  // Maps to GET /api/v1/ssh/authorized/keys[?scope=&owner=].
+  async list(req?: ListAuthorizedKeysRequest): Promise<SSHAuthorizedEntry[]> {
+    const params: string[] = [];
+    if (req?.scope) params.push(`scope=${encodeURIComponent(req.scope)}`);
+    if (req?.owner) params.push(`owner=${encodeURIComponent(req.owner)}`);
+    const query = params.length > 0 ? `?${params.join('&')}` : '';
+    const resp = await this.fetchSSH<{ items?: SSHAuthorizedEntry[] | null } | undefined>(
+      `/api/v1/ssh/authorized/keys${query}`,
+      { method: 'GET' },
+    );
+    return resp?.items ?? [];
+  }
+
+  // get returns one stored entry.
+  // Maps to GET /api/v1/ssh/authorized/keys/{scope}/{owner}/{name}.
+  async get(scope: SSHScope, owner: string, name: string): Promise<SSHAuthorizedEntry> {
+    return this.fetchSSH<SSHAuthorizedEntry>(authorizedKeyPath(scope, owner, name), {
+      method: 'GET',
+    });
+  }
+
+  // remove deletes one stored entry.
+  // Maps to DELETE /api/v1/ssh/authorized/keys/{scope}/{owner}/{name} (204).
+  async remove(scope: SSHScope, owner: string, name: string): Promise<void> {
+    await this.fetchSSH<void>(authorizedKeyPath(scope, owner, name), {
+      method: 'DELETE',
+    });
+  }
+}
+
+// authorizedKeyPath builds /api/v1/ssh/authorized/keys/{scope}/{owner}/{name},
+// encoding each segment.
+function authorizedKeyPath(scope: SSHScope, owner: string, name: string): string {
+  return `/api/v1/ssh/authorized/keys/${encodeURIComponent(scope)}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
 }
 
 // =============================================================================
@@ -5361,6 +7606,20 @@ export class RestClient implements Client {
   readonly trust: TrustClient;
   readonly crypto: CryptoClient;
   readonly dek: DEKClient;
+  readonly attestation: AttestationClient;
+  readonly xkmsKeys: XKMSKeysClient;
+  readonly piv: PIVClient;
+  readonly xkms: XKMSClient;
+  readonly backups: BackupsClient;
+  readonly clusterNodes: ClusterNodesClient;
+  readonly entities: EntitiesClient;
+  readonly kmsAdmin: KMSAdminClient;
+  readonly objectStorageAdmin: ObjectStorageAdminClient;
+  readonly parameters: ParametersClient;
+  readonly vectorAdmin: VectorAdminClient;
+  readonly xkmsFido2: XKMSFIDO2Client;
+  readonly registry: RegistryClient;
+  readonly cache: CacheClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -5404,6 +7663,20 @@ export class RestClient implements Client {
     this.trust = new RestTrustClient(baseUrl, config);
     this.crypto = new RestCryptoClient(baseUrl, config);
     this.dek = new RestDEKClient(baseUrl, config);
+    this.attestation = new RestAttestationClient(baseUrl, config);
+    this.xkmsKeys = new RestXKMSKeysClient(baseUrl, config);
+    this.piv = new RestPIVClient(baseUrl, config);
+    this.xkms = new RestXKMSClient(baseUrl, config);
+    this.backups = new RestBackupsClient(baseUrl, config);
+    this.clusterNodes = new RestClusterNodesClient(baseUrl, config);
+    this.entities = new RestEntitiesClient(baseUrl, config);
+    this.kmsAdmin = new RestKMSAdminClient(baseUrl, config);
+    this.objectStorageAdmin = new RestObjectStorageAdminClient(baseUrl, config);
+    this.parameters = new RestParametersClient(baseUrl, config);
+    this.vectorAdmin = new RestVectorAdminClient(baseUrl, config);
+    this.xkmsFido2 = new RestXKMSFIDO2Client(baseUrl, config);
+    this.registry = new RestRegistryClient(baseUrl, config);
+    this.cache = new RestCacheClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);

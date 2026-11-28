@@ -116,7 +116,7 @@ describe('McpBarrierClient tools', () => {
       tool: 'qrdb_barrier_rekey',
       args: { threshold: 3, total: 5 },
       reply: { threshold: 3, total_shares: 5, share_count: 5 },
-      want: { shares: [], threshold: 3, total_shares: 5 },
+      want: { share_count: 5, threshold: 3, total_shares: 5 },
     },
     {
       name: 'generateRecoveryKeys',
@@ -124,7 +124,7 @@ describe('McpBarrierClient tools', () => {
       tool: 'qrdb_barrier_recovery_generate',
       args: { threshold: 2, total: 4 },
       reply: { threshold: 2, total: 4, share_count: 4 },
-      want: { keys: [], threshold: 2, total: 4 },
+      want: { share_count: 4, threshold: 2, total: 4 },
     },
     {
       name: 'recoverWithKeys',

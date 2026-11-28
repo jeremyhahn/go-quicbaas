@@ -64,7 +64,13 @@ var (
 // it in ci-gate's needs and as a full check line. publish-images is outside
 // the gate by the ci-template's design (v1.30): a registry fault must not turn
 // main red, and every consumer falls back to a local build.
+//
+// e2e-ui runs the Playwright chromium-no-backend suite against a real daemon
+// (make test-e2e-docker) on every non-draft, non-docs PR but does not gate
+// (#2577): making it a required check needs the CI-template owner's approval
+// and a branch-protection change, so it stays outside CI Gate until then.
 var nonGatingJobs = map[string]bool{
+	"e2e-ui":         true,
 	"integration":    true,
 	"publish-images": true,
 }

@@ -24,6 +24,7 @@
   import ToastContainer from './components/core/ToastContainer.svelte';
   import { initTheme } from './stores/theme.svelte.ts';
   import { setConnected, setConnectionError } from './stores/connection.svelte.ts';
+  import { activeConnection } from './stores/sdkClient.ts';
 
   // ---------------------------------------------------------------------------
   // App state machine
@@ -45,10 +46,11 @@
 
       initTheme();
 
-      // In web mode, the daemon is reached via proxy at window.location.origin.
-      // Mark as connected optimistically; health polling will detect failures.
-      const origin = window.location.origin;
-      setConnected(origin, 'rest');
+      // In web mode, the daemon is reached via proxy at window.location.origin,
+      // or at the address saved in the Connection view. Mark as connected
+      // optimistically; health polling will detect failures.
+      const active = activeConnection();
+      setConnected(active.address || window.location.origin, active.transport);
 
       appState = 'app';
     } catch (err: unknown) {

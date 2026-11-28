@@ -45,6 +45,23 @@ function restCalls(): Array<{ url: string; method: string; body: unknown }> {
 }
 
 describe('RestClient.prompts — the /api/v1/prompts routes', () => {
+  it('a job status read keeps the prompt versions the job ran with', async () => {
+    const ref = {
+      set: 'sdlc',
+      name: 'worker_charter',
+      scope: 'project',
+      scope_id: 'p1',
+      version: 1,
+      hash: 'abcdef0123',
+    };
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ job_id: 'j1', prompts: [ref] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    const job = await new RestClient('http://localhost:8080').orchestrator.getJobStatus('t1', 'j1');
+    expect(job.prompts).toEqual([ref]);
+  });
+
   it('maps each verb to its route, method, query and body', async () => {
     restReply();
     const p = new RestClient('http://localhost:8080').prompts;

@@ -55,7 +55,7 @@ interface VirtualCredential {
 }
 
 /** Minimal view of an mTLS response: everything this module reads. */
-interface MTLSResponse {
+export interface MTLSResponse {
   status: number;
   sessionID: string;
   body: string;
@@ -84,7 +84,7 @@ function base64ToBase64URL(s: string): string {
  * Rejects on transport failure — including a certificate that does not verify,
  * which is a real finding here and not something to route around.
  */
-function mtlsRequest(
+export function mtlsRequest(
   url: string,
   method: string,
   cfg: LiveTenantConfig,
@@ -280,18 +280,13 @@ async function createCredentialInPage(page: Page, optionsJSON: string): Promise<
  * with "A request is already pending", which is recovered from by reloading the
  * page, never by retrying into it.
  */
-export async function ensurePasskey(
-  page: Page,
-  cdp: CDPSession,
-  authenticatorId: string,
-  cfg: LiveTenantConfig,
-  serverBase: string,
-): Promise<boolean> {
-  const restored = await restoreCredential(cdp, authenticatorId);
-  if (restored !== null && (await assertableCredentialIDs(cfg, serverBase)).includes(restored)) {
-    return false;
-  }
-
+/**
+ * Register a new passkey for cfg.email in the page's virtual authenticator,
+ * authorizing the registration with the admin client certificate in cfg. The
+ * first-boot path calls this directly: its scratch daemon has no earlier
+ * credential worth restoring, and it must not overwrite the live run's saved one.
+ */
+export async function enrolPasskey(page: Page, cfg: LiveTenantConfig, serverBase: string): Promise<void> {
   const tenantBase = `${serverBase}/api/v1/iam/${encodeURIComponent(cfg.tenant)}/webauthn/registration`;
   const begin = await postJSON(
     `${tenantBase}/begin`,
@@ -305,6 +300,21 @@ export async function ensurePasskey(
 
   const attestation = await createCredentialInPage(page, begin.body);
   await postJSON(`${tenantBase}/finish`, cfg, { 'X-Session-Id': begin.sessionID }, attestation);
+}
+
+export async function ensurePasskey(
+  page: Page,
+  cdp: CDPSession,
+  authenticatorId: string,
+  cfg: LiveTenantConfig,
+  serverBase: string,
+): Promise<boolean> {
+  const restored = await restoreCredential(cdp, authenticatorId);
+  if (restored !== null && (await assertableCredentialIDs(cfg, serverBase)).includes(restored)) {
+    return false;
+  }
+
+  await enrolPasskey(page, cfg, serverBase);
 
   await saveCredential(cdp, authenticatorId);
   return true;

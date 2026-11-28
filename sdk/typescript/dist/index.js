@@ -14,6 +14,7 @@
 export { createClient, getClient, isDesktop, isWailsRuntime, createBarrierClient, createCeremonyClient, createBootstrapClient, } from './factory.js';
 export { formatAgentRef, parseAgentRef } from './agents.js';
 export { parseJSONPreservingLargeIntegers, quoteUnrepresentableIntegers, } from './json.js';
+export { RestClusterNodesClient } from './rest.js';
 // SandboxMode const object (not a type — must be a named export, not type-only).
 export { SandboxMode } from './types.js';
 // SPEND_UNATTRIBUTED is a value, not a type: a caller drilling into a spend

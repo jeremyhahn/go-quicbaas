@@ -1,13 +1,13 @@
 # Prompt sets
 
-> **Status: NORMATIVE** · Last verified: 2026-10-15
+> **Status: NORMATIVE** · Last verified: 2026-11-23
 > Every instruction the Software Factory sends an agent is markdown embedded in
 > the binary, declared, validated and rendered by `pkg/orchestration/prompts`,
 > and kept as tenant-scoped, versioned records that each job resolves once at
 > launch (go-quicbaas#804), served by every transport and the CLI (#805), with
 > the workflow role charters among them (#807). All of it is described here as
-> built. The GUI is not: it is go-quicbaas#806, specified in
-> [GUI](#gui-806-not-built-yet).
+> built. The GUI is built too: it is the console's Prompts page, described in
+> [GUI](#gui).
 
 ## What exists
 
@@ -403,8 +403,9 @@ SDLC worker, reviewer and triage charters an Agent spawn falls back to); see
 Every transport serves the prompt verbs — REST, gRPC (and Unix), QUIC, MCP
 and the embedded in-process transport — through the Go SDK's `Prompts()`
 client, and `quicbaas prompts` edits them; see [api.md](api.md#prompt-sets)
-and [cli.md](cli.md#quicbaas-prompts). Still to come: the TypeScript client
-and the GUI (#806). Until then no GUI screen edits a record.
+and [cli.md](cli.md#quicbaas-prompts). The TypeScript SDK's `prompts` client
+serves the same verbs, and the console's Prompts page edits records through
+it; see [GUI](#gui).
 
 ### Verbs
 
@@ -430,22 +431,45 @@ store is `503` / `Unavailable`. `Get` is `404` when nothing is overridden at
 that scope; `Effective` always answers with its `origin` and the chain. QUIC
 serves the REST routes over HTTP/3 and Unix serves gRPC over a domain socket.
 
-### GUI (#806, not built yet)
+### GUI
 
-A standalone page under SOFTWARE FACTORY, `#/prompts?set=&project=`:
+The console's Prompts page (`#/prompts`) shows one set at one scope. A set
+picker and a scope picker (tenant or project, with the project chosen) choose
+what it shows, and a link of the form `#/prompts?set=&scope=&project=` opens
+the page on that set and scope; `name=` and `version=` also open a prompt and
+mark that revision.
 
-- a scope picker (tenant or project) and one tab per set;
-- a list showing each prompt's name, whether it is overridden here or
-  inherited from the tenant or the system, and its effective version and hash;
-- an editor that shows the placeholders and required markers, flags a missing
-  marker before saving (the server stays authoritative), requires a note and
-  saves with compare-and-swap, naming who changed the record on a `409` and the
-  marker on a `400`;
-- an inherited prompt shown read-only, with "Override here";
-- panels for the history (view a version, roll back with a note), the diff
-  against the parent and the effective body with its chain;
-- a `403` shows an empty state naming the permission and hides the write verbs;
-  a `503` says the prompt store is not running on this node.
+The list shows each prompt of the set with an origin badge: whether the scope
+holds its own edited record or the prompt is inherited from a parent scope or
+the system, and which version a job would run. Opening a prompt shows its
+effective body and the resolution chain that chose it, with each layer marked
+when it answered.
 
-A job's detail view lists the prompts it ran with, as `set/name · scope · vN ·
-hash`, each linking to the page.
+From an open prompt the operator can:
+
+- edit the body: the editor lists the placeholders of the body it starts from,
+  warns when the draft drops one, takes a note, and saves with
+  `expected_version`, the scope record's version when the page read it. A
+  `409` (another operator saved first) or a `400` (the server names the marker
+  the body misses) keeps the draft in front of the operator with the server's
+  message;
+- read the history, view an earlier version, and roll back to it after a
+  confirmation, with an optional note;
+- reset the scope to follow its parent again, after a confirmation;
+- diff the body against the parent scope's.
+
+A `403` or `503` on the first list read shows the page's unavailable state
+(no access to prompts, or the prompt store is not running on this node)
+instead of an empty list; a write refused `403` hides the write verbs. A
+transport that does not carry prompts shows the same state, naming the
+transport. An answer read for a tenant or a selection the operator has since
+left is dropped, and a session change closes the open prompt, its draft and its
+history.
+
+The TypeScript SDK carries prompts on its REST and MCP transports; the
+console's other transports (QUIC, Unix, Wails and gRPC-Web) refuse the calls,
+and the page says so.
+
+A job's detail view has a Prompts group listing the prompts the job ran with,
+as `set/name · scope · vN · hash`, each a link to that version on the Prompts
+page.

@@ -38,6 +38,8 @@
   import { readFilters, selected, type FilterValues } from '../../lib/filters.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { onSessionScopeChange, sessionGeneration } from '../../stores/auth.svelte.ts';
+  import { untrack } from 'svelte';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import StatusBadge from '../../components/core/StatusBadge.svelte';
   import { statusToVariant } from '../../components/core/statusVariant.ts';
@@ -46,7 +48,13 @@
   import EmptyState from '../../components/core/EmptyState.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
   import type { Column, PageRequest } from '../../lib/dataTable.ts';
-  import type { DecomposeTaskRequest, ClaimTaskRequest, CompleteTaskRequest } from '@quicbaas/sdk';
+  import type {
+    DecomposeTaskRequest,
+    ClaimTaskRequest,
+    CompleteTaskRequest,
+    CreateTaskRequest,
+    WorkItem,
+  } from '@quicbaas/sdk';
   import { formatDateTime, formatRelative } from '../../lib/time.ts';
   import {
     budgetLabel,
@@ -69,6 +77,35 @@
 
   let createTaskOpen = $state(false);
   let decomposingID = $state('');
+  // decomposition holds the work items the last decompose returned. The
+  // decompose route only proposes them (it saves nothing), so they are shown
+  // here until the operator creates them as tasks or dismisses them.
+  //
+  // A decomposition is bound to the scope it was made in: the tenant the
+  // header had selected and the login session. Adoption writes into that
+  // captured tenant, never the live one, and a scope change discards the
+  // panel (and stops an adoption in flight), so one tenant's task text is
+  // never created under another.
+  type DecompositionScope = { tenantID: string; generation: number };
+  let decomposition: { parent: Task; items: WorkItem[]; scope: DecompositionScope } | null = $state(null);
+  let adopting = $state(false);
+
+  function currentScope(): DecompositionScope {
+    return { tenantID: orchestratorStore.activeTenantID, generation: sessionGeneration() };
+  }
+
+  function inScope(scope: DecompositionScope): boolean {
+    const now = currentScope();
+    return now.tenantID === scope.tenantID && now.generation === scope.generation;
+  }
+
+  $effect(() => {
+    const tenantID = orchestratorStore.activeTenantID;
+    const held = untrack(() => decomposition);
+    if (held !== null && held.scope.tenantID !== tenantID) decomposition = null;
+  });
+
+  $effect(() => onSessionScopeChange(() => { decomposition = null; }));
   let claimingID = $state('');
   let completingID = $state('');
 
@@ -266,25 +303,92 @@
     routeTaskDetail(task.id);
   }
 
-  async function handleDecompose(taskID: string, e: Event): Promise<void> {
+  // handleDecompose asks the orchestrator to break the task's text into work
+  // items: the decompose route takes the task text (its description, or its
+  // subject when it has none), not a task ID, and answers with work_items.
+  async function handleDecompose(task: Task, e: Event): Promise<void> {
     e.stopPropagation();
-    decomposingID = taskID;
+    decomposingID = task.id;
+    const scope = currentScope();
     const req: DecomposeTaskRequest = {
-      tenant_id: orchestratorStore.activeTenantID,
-      task_id: taskID,
+      tenant_id: scope.tenantID,
+      task: task.description || task.subject,
+      ...(task.project_id ? { project_ids: [task.project_id] } : {}),
     };
     try {
       const client = await getSDKClient();
       const resp = await client.orchestrator.decomposeTask(req);
-      const count = resp.tasks?.length ?? 0;
-      showToast('success', `Task decomposed into ${count} sub-task${count === 1 ? '' : 's'}`);
-      refreshTasks();
+      // The tenant or session changed while the request was out: the answer
+      // belongs to a scope this page no longer shows, so it is dropped.
+      if (!inScope(scope)) return;
+      const items = resp.work_items ?? [];
+      const count = items.length;
+      decomposition = count > 0 ? { parent: task, items, scope } : null;
+      showToast('success', `Task decomposed into ${count} work item${count === 1 ? '' : 's'}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast('error', `Decompose failed: ${msg}`);
     } finally {
       decomposingID = '';
     }
+  }
+
+  // adoptDecomposition creates one task per proposed work item, in the
+  // parent's team and tagged with the parent it came from, then refreshes
+  // the list. Items that fail to create stay in the panel so none is lost.
+  async function adoptDecomposition(): Promise<void> {
+    if (decomposition === null || adopting) return;
+    const { parent, items, scope } = decomposition;
+    if (!inScope(scope)) {
+      decomposition = null;
+      return;
+    }
+    adopting = true;
+    const failed: WorkItem[] = [];
+    let created = 0;
+    try {
+      const client = await getSDKClient();
+      for (const item of items) {
+        if (!inScope(scope)) {
+          // The header moved to another tenant (or the session ended) mid
+          // batch: stop, rather than split one batch across two scopes.
+          adopting = false;
+          decomposition = null;
+          showToast('error', `Stopped after ${created} task${created === 1 ? '' : 's'}: the tenant or session changed`);
+          refreshTasks();
+          return;
+        }
+        const req: CreateTaskRequest = {
+          tenant_id: scope.tenantID,
+          subject: item.title,
+          team_name: parent.team_name,
+          description: item.description || undefined,
+          metadata: { decomposed_from: parent.id },
+          // Keep the parent's project scope so claiming stays restricted to
+          // the project's fleet-node roles.
+          project_id: item.project_id || parent.project_id || undefined,
+        };
+        try {
+          await client.orchestrator.createTask(req);
+          created++;
+        } catch {
+          failed.push(item);
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast('error', `Creating tasks failed: ${msg}`);
+      adopting = false;
+      return;
+    }
+    adopting = false;
+    decomposition = failed.length > 0 && inScope(scope) ? { parent, items: failed, scope } : null;
+    if (failed.length > 0) {
+      showToast('error', `Created ${created} task${created === 1 ? '' : 's'}; ${failed.length} failed`);
+    } else {
+      showToast('success', `Created ${created} task${created === 1 ? '' : 's'} from the decomposition`);
+    }
+    refreshTasks();
   }
 
   async function handleClaim(taskID: string, e: Event): Promise<void> {
@@ -371,6 +475,35 @@
       </div>
     {/snippet}
   </PageHeader>
+
+  {#if decomposition !== null}
+    <section class="card bg-base-200 rounded-box mb-4" data-testid="decomposition" aria-label="Decomposition">
+      <div class="card-body p-4 gap-3">
+        <h2 class="font-semibold">
+          Proposed work items for “{decomposition.parent.subject}”
+        </h2>
+        <p class="text-xs text-base-content/70">
+          Nothing is saved yet. Create them as tasks in {decomposition.parent.team_name || 'the parent task’s team'}, or dismiss them.
+        </p>
+        <ol class="list-decimal ml-5 space-y-1 text-sm">
+          {#each decomposition.items as item, i (item.id || i)}
+            <li data-testid="decomposition-item">
+              <span class="font-medium">{item.title}</span>
+              {#if item.description}<span class="text-base-content/70"> — {item.description}</span>{/if}
+            </li>
+          {/each}
+        </ol>
+        <div class="flex gap-2">
+          <button class="btn btn-sm btn-primary" disabled={adopting} onclick={() => { void adoptDecomposition(); }}>
+            Create {decomposition.items.length} task{decomposition.items.length === 1 ? '' : 's'}
+          </button>
+          <button class="btn btn-sm btn-ghost" disabled={adopting} onclick={() => { decomposition = null; }}>
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </section>
+  {/if}
 
   <!--
     THE TWO LAYOUTS ANSWER FOR THEMSELVES. The table is server-paged: it owns
@@ -549,7 +682,7 @@
               {/if}
               <button
                 class="btn btn-ghost btn-xs font-medium text-base-content/80"
-                onclick={(e) => { void handleDecompose(task.id, e); }}
+                onclick={(e) => { void handleDecompose(task, e); }}
                 disabled={decomposingID === task.id}
                 aria-label="Decompose task {task.subject}"
                 title="Decompose"
@@ -619,7 +752,7 @@
                 <div class="mt-2">
                   <button
                     class="btn btn-ghost btn-xs w-full"
-                    onclick={(e) => { void handleDecompose(task.id, e); }}
+                    onclick={(e) => { void handleDecompose(task, e); }}
                     disabled={decomposingID === task.id}
                   >
                     {#if decomposingID === task.id}

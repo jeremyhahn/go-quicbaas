@@ -53,6 +53,18 @@ function bytesToBase64(bytes) {
     }
     return btoa(binary);
 }
+// policyWireBody serializes a policy create, update or validate request. The
+// server decodes spec_yaml into a Go []byte, so the document text goes on the
+// wire as the base64 of its UTF-8 bytes; every other field is sent unchanged,
+// and an undefined spec_yaml is left out.
+function policyWireBody(req) {
+    const { spec_yaml, ...rest } = req;
+    const wire = { ...rest };
+    if (spec_yaml !== undefined) {
+        wire.spec_yaml = bytesToBase64(utf8Bytes(spec_yaml));
+    }
+    return JSON.stringify(wire);
+}
 // parseResponseBody reads the body of a 2xx fetch Response and returns the
 // parsed JSON, tolerating 204 No Content and empty bodies (returns undefined
 // as T). All fetchJSON and fetchSSH success tails delegate here to prevent
@@ -588,9 +600,11 @@ class RestOrchestratorClient {
     async resolveAttention(req) {
         return this.fetchJSON(`/attention/${encodeURIComponent(req.task_id)}/resolve?tenant_id=${encodeURIComponent(req.tenant_id)}`, { method: 'POST', body: JSON.stringify({ action: req.action, answer: req.answer }) });
     }
-    // decomposeTask maps to POST /api/v1/orchestrator/tasks/:taskID/decompose
+    // decomposeTask maps to POST /api/v1/orchestrator/tasks/decompose?tenant_id=<id>
+    // The tenant travels as the query; every other field is the JSON body.
     async decomposeTask(req) {
-        return this.fetchJSON(`/tasks/${encodeURIComponent(req.task_id)}/decompose?tenant_id=${encodeURIComponent(req.tenant_id)}`, { method: 'POST', body: JSON.stringify(req) });
+        const { tenant_id, ...body } = req;
+        return this.fetchJSON(`/tasks/decompose?tenant_id=${encodeURIComponent(tenant_id)}`, { method: 'POST', body: JSON.stringify(body) });
     }
     // registerFleetNode maps to POST /api/v1/fleet
     async registerFleetNode(req) {
@@ -1021,10 +1035,48 @@ class RestVectorsClient {
             method: 'DELETE',
         });
     }
+    // getNamespace maps to GET /api/v1/vector/namespaces/{namespace}
+    async getNamespace(namespace) {
+        return this.fetchJSON(`/api/v1/vector/namespaces/${encodeURIComponent(namespace)}`);
+    }
+    // getNamespaceStats maps to GET /api/v1/vector/namespaces/{namespace}/stats
+    async getNamespaceStats(namespace) {
+        return this.fetchJSON(`/api/v1/vector/namespaces/${encodeURIComponent(namespace)}/stats`);
+    }
+    // rebuildIndex maps to POST /api/v1/vector/namespaces/{namespace}/index/rebuild
+    async rebuildIndex(namespace, req) {
+        return this.fetchJSON(`/api/v1/vector/namespaces/${encodeURIComponent(namespace)}/index/rebuild`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // getIndexProgress maps to GET /api/v1/vector/namespaces/{namespace}/index/progress?operation_id=
+    async getIndexProgress(namespace, operationID) {
+        return this.fetchJSON(`/api/v1/vector/namespaces/${encodeURIComponent(namespace)}/index/progress?operation_id=${encodeURIComponent(operationID)}`);
+    }
     // searchSimilar maps to POST /api/v1/vector/namespaces/{namespace}/search/similar
     async searchSimilar(namespace, req) {
         const raw = await this.fetchJSON(`/api/v1/vector/namespaces/${encodeURIComponent(namespace)}/search/similar`, { method: 'POST', body: JSON.stringify(req) });
         return raw.results ?? [];
+    }
+    // health maps to GET /api/v1/vector/health
+    async health() {
+        return this.fetchJSON('/api/v1/vector/health');
+    }
+    // clusterStats maps to GET /api/v1/vector/cluster/stats
+    async clusterStats() {
+        return this.fetchJSON('/api/v1/vector/cluster/stats');
+    }
+    // hybridSearch maps to POST /api/v1/vector/hybrid-search
+    async hybridSearch(req) {
+        return this.fetchJSON('/api/v1/vector/hybrid-search', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // searchByMetadata maps to POST /api/v1/vector/search-by-metadata
+    async searchByMetadata(req) {
+        return this.fetchJSON('/api/v1/vector/search-by-metadata', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
     }
 }
 // RestTimeSeriesClient implements TimeSeriesClient over the QuicBaaS REST API.
@@ -1098,15 +1150,32 @@ class RestTimeSeriesClient {
             method: 'DELETE',
         });
     }
+    // writeBatch maps to POST /api/v1/timeseries/write-batch
+    async writeBatch(points) {
+        return this.fetchJSON('/api/v1/timeseries/write-batch', {
+            method: 'POST',
+            body: JSON.stringify({ points }),
+        });
+    }
+    // getRetentionPolicy maps to GET /api/v1/timeseries/retention/{metric}
+    async getRetentionPolicy(metric) {
+        return this.fetchJSON(`/api/v1/timeseries/retention/${encodeURIComponent(metric)}`);
+    }
+    // setRetentionPolicy maps to PUT /api/v1/timeseries/retention/{metric}
+    async setRetentionPolicy(metric, policy) {
+        return this.fetchJSON(`/api/v1/timeseries/retention/${encodeURIComponent(metric)}`, { method: 'PUT', body: JSON.stringify({ policy }) });
+    }
 }
 // RestObjectsClient implements ObjectsClient over the QuicBaaS REST API.
 // Endpoints live under /api/v1/objects.
 class RestObjectsClient {
     baseUrl;
     config;
+    http;
     constructor(baseUrl, config = {}) {
         this.baseUrl = baseUrl.replace(/\/$/, '');
         this.config = config;
+        this.http = newFetchHelper(baseUrl, config);
     }
     async authHeaders() {
         const headers = {};
@@ -1190,6 +1259,30 @@ class RestObjectsClient {
         if (!resp.ok) {
             throw new APIError(resp.status, resp.statusText);
         }
+    }
+    // batchPut maps to POST /api/v1/objects/batch
+    async batchPut(objects) {
+        return this.http.fetchJSON('/api/v1/objects/batch', {
+            method: 'POST',
+            body: JSON.stringify({ objects }),
+        });
+    }
+    // batchGet maps to POST /api/v1/objects/batch/get
+    async batchGet(keys, opts) {
+        const body = { keys };
+        if (opts?.includeMetadata !== undefined)
+            body.include_metadata = opts.includeMetadata;
+        return this.http.fetchJSON('/api/v1/objects/batch/get', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+    }
+    // batchDelete maps to POST /api/v1/objects/batch/delete
+    async batchDelete(keys) {
+        return this.http.fetchJSON('/api/v1/objects/batch/delete', {
+            method: 'POST',
+            body: JSON.stringify({ keys }),
+        });
     }
 }
 // RestAuthClient implements AuthClient using the QuicBaaS REST auth endpoints.
@@ -2468,11 +2561,195 @@ class RestIAMClient {
     async revokeRoleFromUser(tenantID, userID, role) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/roles/${encodeURIComponent(role)}`, { method: 'DELETE' });
     }
+    async listSessions(opts) {
+        const params = new URLSearchParams();
+        if (opts?.user_id)
+            params.set('user_id', opts.user_id);
+        if (opts?.tenant_id)
+            params.set('tenant_id', opts.tenant_id);
+        const qs = params.toString();
+        return this.fetchJSON(`/api/v1/iam/sessions${qs ? `?${qs}` : ''}`);
+    }
+    async getSession(sessionID) {
+        return this.fetchJSON(`/api/v1/iam/sessions/${encodeURIComponent(sessionID)}`);
+    }
+    async revokeSession(sessionID) {
+        await this.fetchJSON(`/api/v1/iam/sessions/${encodeURIComponent(sessionID)}`, { method: 'DELETE' });
+    }
+    async revokeAllSessions(opts) {
+        const params = new URLSearchParams();
+        if (opts?.except)
+            params.set('except', opts.except);
+        if (opts?.user_id)
+            params.set('user_id', opts.user_id);
+        if (opts?.tenant_id)
+            params.set('tenant_id', opts.tenant_id);
+        const qs = params.toString();
+        await this.fetchJSON(`/api/v1/iam/sessions${qs ? `?${qs}` : ''}`, { method: 'DELETE' });
+    }
+    async revokeOtherSessions(keepSessionID) {
+        return this.fetchJSON('/api/v1/iam/sessions/revoke-others', { method: 'POST', body: JSON.stringify({ keep_session_id: keepSessionID }) });
+    }
+    userPath(tenantID, userID) {
+        return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`;
+    }
+    // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+    async listWebAuthnCredentials(tenantID, userID) {
+        return this.fetchJSON(`${this.userPath(tenantID, userID)}/webauthn/credentials/`);
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+    async deleteAllWebAuthnCredentials(tenantID, userID) {
+        return this.fetchJSON(`${this.userPath(tenantID, userID)}/webauthn/credentials/`, { method: 'DELETE' });
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id}
+    async deleteWebAuthnCredential(tenantID, userID, credentialID) {
+        await this.fetchJSON(`${this.userPath(tenantID, userID)}/webauthn/credentials/${encodeURIComponent(credentialID)}`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+    async createAccountLink(tenantID, userID, req) {
+        return this.fetchJSON(`${this.userPath(tenantID, userID)}/links/`, {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+    async listAccountLinks(tenantID, userID, opts) {
+        const params = new URLSearchParams();
+        if (opts?.limit !== undefined)
+            params.set('limit', String(opts.limit));
+        if (opts?.offset !== undefined)
+            params.set('offset', String(opts.offset));
+        const qs = params.toString();
+        return this.fetchJSON(`${this.userPath(tenantID, userID)}/links/${qs ? `?${qs}` : ''}`);
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id}
+    async deleteAccountLink(tenantID, userID, providerID) {
+        await this.fetchJSON(`${this.userPath(tenantID, userID)}/links/${encodeURIComponent(providerID)}`, {
+            method: 'DELETE',
+        });
+    }
+    mfaPath(tenantID, userID) {
+        return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/mfa`;
+    }
+    // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+    async getMFAStatus(tenantID, userID) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/`);
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+    async disableMFA(tenantID, userID) {
+        await this.fetchJSON(`${this.mfaPath(tenantID, userID)}/`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll
+    async beginMFAEnrollment(tenantID, userID, method) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/enroll`, { method: 'POST', body: JSON.stringify(method ? { method } : {}) });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify
+    async completeMFAEnrollment(tenantID, userID, enrollmentID, code) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/verify`, { method: 'POST', body: JSON.stringify({ enrollment_id: enrollmentID, code }) });
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id}
+    async cancelMFAEnrollment(tenantID, userID, enrollmentID) {
+        await this.fetchJSON(`${this.mfaPath(tenantID, userID)}/enroll/${encodeURIComponent(enrollmentID)}`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge
+    async beginMFAChallenge(tenantID, userID, sessionToken) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/challenge`, { method: 'POST', body: JSON.stringify({ session_token: sessionToken }) });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge
+    async verifyMFAChallenge(tenantID, userID, challengeID, code) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/verify-challenge`, { method: 'POST', body: JSON.stringify({ challenge_id: challengeID, code }) });
+    }
+    // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+    async getBackupCodeStatus(tenantID, userID) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/backup-codes`);
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+    async generateBackupCodes(tenantID, userID) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/backup-codes`, { method: 'POST' });
+    }
     async updateTenant(tenantID, req) {
         return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}`, { method: 'PUT', body: JSON.stringify(req) });
     }
     async deleteTenant(tenantID) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}`, { method: 'DELETE' });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}
+    async getTenant(tenantID) {
+        // Same wire shape as a listTenants element: created/updated → *_at.
+        const t = await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}`);
+        return {
+            id: t.id ?? '',
+            name: t.name ?? '',
+            description: t.description ?? '',
+            created_at: t.created_at ?? t.created ?? '',
+            updated_at: t.updated_at ?? t.updated ?? '',
+        };
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}
+    async getUser(tenantID, userID) {
+        // Same wire shape as a listUsers element; normalised the same way.
+        const u = await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`);
+        return {
+            id: u.id ?? '',
+            tenant_id: u.tenant_id ?? tenantID,
+            username: u.username ?? u.name ?? u.email ?? '',
+            email: u.email ?? '',
+            lifecycle: u.lifecycle,
+            roles: u.roles ?? (u.role ? [u.role] : []),
+            created_at: u.created_at ?? u.created ?? '',
+            updated_at: u.updated_at ?? u.updated ?? '',
+        };
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}/sessions[?limit=N]
+    async listUserSessions(tenantID, userID, limit) {
+        const qs = limit !== undefined && limit > 0 ? `?limit=${limit}` : '';
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions${qs}`);
+    }
+    // Maps to DELETE /api/v1/tenants/{tenantID}/users/{userID}/sessions
+    async revokeAllUserSessions(tenantID, userID) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions`, { method: 'DELETE' });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/apps/?limit=&offset=
+    async listApps(tenantID, opts) {
+        const params = new URLSearchParams();
+        if (opts?.limit !== undefined)
+            params.set('limit', String(opts.limit));
+        if (opts?.offset !== undefined)
+            params.set('offset', String(opts.offset));
+        const qs = params.toString();
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${qs ? `?${qs}` : ''}`);
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/apps/ (201)
+    async registerApp(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/apps/{clientID}
+    async getApp(tenantID, clientID) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`);
+    }
+    // Maps to PUT /api/v1/tenants/{tenantID}/apps/{clientID}
+    async updateApp(tenantID, clientID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`, { method: 'PUT', body: JSON.stringify({ ...req, client_id: clientID }) });
+    }
+    // Maps to DELETE /api/v1/tenants/{tenantID}/apps/{clientID} (204)
+    async deleteApp(tenantID, clientID) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/apps/{clientID}/rotate-secret
+    async rotateAppSecret(tenantID, clientID) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}/rotate-secret`, { method: 'POST' });
+    }
+    // Maps to PATCH /api/v1/tenants/{tenantID}/quotas (204)
+    async updateTenantQuotas(tenantID, quotas) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/quotas`, { method: 'PATCH', body: JSON.stringify(quotas) });
+    }
+    // Maps to PATCH /api/v1/tenants/{tenantID}/entitlements (204)
+    async updateTenantEntitlements(tenantID, entitlements) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/entitlements`, { method: 'PATCH', body: JSON.stringify(entitlements) });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/provision (201)
+    async provisionTenant(req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(req.tenant_id)}/provision`, { method: 'POST', body: JSON.stringify(req) });
     }
     async listRoles(tenantID) {
         // Server returns {limit, offset, roles:[...]} — count field absent; derive it.
@@ -2493,6 +2770,101 @@ class RestIAMClient {
     async updateRole(tenantID, roleID, req) {
         return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`, { method: 'PUT', body: JSON.stringify(req) });
     }
+    // Maps to GET /api/v1/iam/audit?tenant_id=&event_type=&category=&outcome=&actor_id=&resource_id=&start_time=&end_time=&limit=&offset=
+    async listAuditEvents(opts) {
+        const q = [];
+        const add = (name, v) => {
+            if (v !== undefined)
+                q.push(`${name}=${encodeURIComponent(String(v))}`);
+        };
+        add('tenant_id', opts?.tenantID);
+        add('event_type', opts?.eventType);
+        add('category', opts?.category);
+        add('outcome', opts?.outcome);
+        add('actor_id', opts?.actorID);
+        add('resource_id', opts?.resourceID);
+        add('start_time', opts?.startTime);
+        add('end_time', opts?.endTime);
+        add('limit', opts?.limit);
+        add('offset', opts?.offset);
+        const qs = q.length > 0 ? `?${q.join('&')}` : '';
+        return this.fetchJSON(`/api/v1/iam/audit${qs}`);
+    }
+    // Maps to GET /api/v1/iam/audit/{id}?tenant_id=
+    async getAuditEvent(eventID, tenantID) {
+        const qs = tenantID !== undefined ? `?tenant_id=${encodeURIComponent(tenantID)}` : '';
+        return this.fetchJSON(`/api/v1/iam/audit/${encodeURIComponent(eventID)}${qs}`);
+    }
+    // Maps to POST /api/v1/iam/audit
+    async recordAuditEvent(req) {
+        return this.fetchJSON('/api/v1/iam/audit', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to DELETE /api/v1/iam/audit?before=&tenant_id=
+    async deleteAuditEventsBefore(before, tenantID) {
+        let qs = `?before=${encodeURIComponent(before)}`;
+        if (tenantID !== undefined)
+            qs += `&tenant_id=${encodeURIComponent(tenantID)}`;
+        return this.fetchJSON(`/api/v1/iam/audit${qs}`, {
+            method: 'DELETE',
+        });
+    }
+    // Maps to GET /api/v1/admin/impersonation/?active=true&admin_user_id=
+    async listImpersonations(opts) {
+        const q = [];
+        if (opts?.activeOnly === true)
+            q.push('active=true');
+        if (opts?.adminUserID !== undefined)
+            q.push(`admin_user_id=${encodeURIComponent(opts.adminUserID)}`);
+        const qs = q.length > 0 ? `?${q.join('&')}` : '';
+        return this.fetchJSON(`/api/v1/admin/impersonation/${qs}`);
+    }
+    // Maps to POST /api/v1/admin/impersonation/start
+    async startImpersonation(req) {
+        return this.fetchJSON('/api/v1/admin/impersonation/start', { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/admin/impersonation/{sessionID}/end
+    async endImpersonation(sessionID) {
+        return this.fetchJSON(`/api/v1/admin/impersonation/${encodeURIComponent(sessionID)}/end`, { method: 'POST' });
+    }
+    // Maps to GET /api/v1/admin/users/{userID}/impersonations
+    async listUserImpersonations(userID) {
+        return this.fetchJSON(`/api/v1/admin/users/${encodeURIComponent(userID)}/impersonations`);
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}
+    async getRole(tenantID, roleID) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`);
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/providers/
+    async registerProvider(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/providers/?limit=&offset=&type=
+    async listProviders(tenantID, opts) {
+        const q = [];
+        if (opts?.limit !== undefined)
+            q.push(`limit=${encodeURIComponent(String(opts.limit))}`);
+        if (opts?.offset !== undefined)
+            q.push(`offset=${encodeURIComponent(String(opts.offset))}`);
+        if (opts?.type !== undefined)
+            q.push(`type=${encodeURIComponent(opts.type)}`);
+        const qs = q.length > 0 ? `?${q.join('&')}` : '';
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${qs}`);
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/providers/{providerID}
+    async getProvider(tenantID, providerID) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`);
+    }
+    // Maps to PUT /api/v1/tenants/{tenantID}/providers/{providerID}
+    async updateProvider(tenantID, providerID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`, { method: 'PUT', body: JSON.stringify(req) });
+    }
+    // Maps to DELETE /api/v1/tenants/{tenantID}/providers/{providerID}
+    async deleteProvider(tenantID, providerID) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`, { method: 'DELETE' });
+    }
     async deleteRole(tenantID, roleID) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`, { method: 'DELETE' });
     }
@@ -2503,13 +2875,34 @@ class RestIAMClient {
         return { policies, count: raw.count ?? policies.length };
     }
     async createPolicy(tenantID, req) {
-        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies`, { method: 'POST', body: JSON.stringify(req) });
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies`, { method: 'POST', body: policyWireBody(req) });
     }
     async updatePolicy(tenantID, policyName, req) {
-        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`, { method: 'PUT', body: JSON.stringify(req) });
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`, { method: 'PUT', body: policyWireBody(req) });
     }
     async deletePolicy(tenantID, policyName) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`, { method: 'DELETE' });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/policies/{policyName}
+    async getPolicy(tenantID, policyName) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`);
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/policies/validate[?name=]
+    async validatePolicy(tenantID, req, name) {
+        const query = name !== undefined ? `?name=${encodeURIComponent(name)}` : '';
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/validate${query}`, { method: 'POST', body: policyWireBody(req) });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/policies/test
+    async testPolicy(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/test`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/policies/simulate
+    async simulatePolicy(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/simulate`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/policies/effective-permissions
+    async getEffectivePermissions(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/effective-permissions`, { method: 'POST', body: JSON.stringify(req) });
     }
     // THE TENANT IS A PATH SEGMENT, and it is not optional. Invitations live in
     // their tenant's own store, so a token issued for one tenant is simply absent
@@ -2529,6 +2922,53 @@ class RestIAMClient {
     }
     async activatePIV(tenantID, token, certPEM) {
         return this.fetchJSON(`/api/v1/iam/${encodeURIComponent(tenantID)}/invites/${encodeURIComponent(token)}/activate/piv`, { method: 'POST', body: JSON.stringify({ cert_pem: certPEM }) });
+    }
+    // gdprPath is the GDPR route prefix of one user in one tenant.
+    gdprPath(tenantID, userID) {
+        return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/gdpr`;
+    }
+    async grantConsent(tenantID, userID, req) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/consent`, {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    async listUserConsents(tenantID, userID) {
+        const consents = await this.fetchJSON(`${this.gdprPath(tenantID, userID)}/consents`);
+        return consents ?? [];
+    }
+    async getConsent(tenantID, userID, purpose) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/consent/${encodeURIComponent(purpose)}`);
+    }
+    async withdrawConsent(tenantID, userID, purpose, req) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/consent/${encodeURIComponent(purpose)}/withdraw`, { method: 'PUT', body: JSON.stringify(req ?? {}) });
+    }
+    async requestDataExport(tenantID, userID, req) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/export`, {
+            method: 'POST',
+            body: JSON.stringify(req ?? {}),
+        });
+    }
+    async getExportStatus(tenantID, userID, exportID) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/export/${encodeURIComponent(exportID)}`);
+    }
+    // downloadExport reads the export as JSON: DownloadExport always writes
+    // application/json, whatever format the request named.
+    async downloadExport(tenantID, userID, exportID) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/export/${encodeURIComponent(exportID)}/download`);
+    }
+    async requestDeletion(tenantID, userID, req) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/deletion`, {
+            method: 'POST',
+            body: JSON.stringify(req ?? {}),
+        });
+    }
+    async getDeletionStatus(tenantID, userID, deletionID) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/deletion/${encodeURIComponent(deletionID)}`);
+    }
+    async cancelDeletion(tenantID, userID, deletionID, cancelledBy) {
+        const query = cancelledBy ? `?${new URLSearchParams({ cancelled_by: cancelledBy }).toString()}` : '';
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/deletion/${encodeURIComponent(deletionID)}${query}`, { method: 'DELETE' });
     }
 }
 // RestKMSClient implements KMSClient over the QuicBaaS REST KMS endpoints.
@@ -2652,6 +3092,189 @@ class RestKMSClient {
     // setDefaultKey marks the named key as the system default.
     async setDefaultKey(name) {
         return this.fetchJSON(`/api/v1/kms/keys/${encodeURIComponent(name)}/default`, { method: 'PUT' });
+    }
+}
+// ---------------------------------------------------------------------------
+// RestXKMSKeysClient
+// ---------------------------------------------------------------------------
+/** RestXKMSKeysClient implements XKMSKeysClient over /api/v1/xkms/keys/*. */
+export class RestXKMSKeysClient {
+    baseUrl;
+    config;
+    constructor(baseUrl, config = {}) {
+        this.baseUrl = baseUrl.replace(/\/$/, '');
+        this.config = config;
+    }
+    async authHeaders() {
+        const headers = {};
+        const tok = await resolveToken(this.config.token);
+        if (tok)
+            headers['Authorization'] = `Bearer ${tok}`;
+        if (this.config.tenantID)
+            headers['X-Tenant-ID'] = this.config.tenantID;
+        return headers;
+    }
+    async fetchJSON(path, init) {
+        const url = `${this.baseUrl}${path}`;
+        const auth = await this.authHeaders();
+        const resp = await fetch(url, {
+            ...init,
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                ...auth,
+                ...(init?.headers ?? {}),
+            },
+        });
+        if (!resp.ok) {
+            let message = resp.statusText;
+            try {
+                const body = (await resp.json());
+                message = body.error ?? body.message ?? message;
+            }
+            catch {
+                // Use statusText when body is not parseable.
+            }
+            throw new APIError(resp.status, message);
+        }
+        return parseResponseBody(resp);
+    }
+    keyPath(id, suffix = '') {
+        return `/api/v1/xkms/keys/${encodeURIComponent(id)}${suffix}`;
+    }
+    static backendQuery(backend) {
+        return backend ? `?backend=${encodeURIComponent(backend)}` : '';
+    }
+    // Maps to GET /api/v1/xkms/keys[?backend=]
+    async listKeys(backend) {
+        return this.fetchJSON(`/api/v1/xkms/keys${RestXKMSKeysClient.backendQuery(backend)}`);
+    }
+    // Maps to POST /api/v1/xkms/keys (201)
+    async generateKey(req) {
+        return this.fetchJSON('/api/v1/xkms/keys', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to GET /api/v1/xkms/keys/{id}[?backend=]
+    async getKey(id, backend) {
+        return this.fetchJSON(this.keyPath(id, RestXKMSKeysClient.backendQuery(backend)));
+    }
+    // Maps to DELETE /api/v1/xkms/keys/{id}
+    async deleteKey(id) {
+        return this.fetchJSON(this.keyPath(id), { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/xkms/keys/{id}/rotate
+    async rotateKey(id) {
+        return this.fetchJSON(this.keyPath(id, '/rotate'), { method: 'POST' });
+    }
+    // Maps to POST /api/v1/xkms/keys/{id}/encrypt
+    async encrypt(id, req) {
+        return this.fetchJSON(this.keyPath(id, '/encrypt'), {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to POST /api/v1/xkms/keys/{id}/decrypt
+    async decrypt(id, req) {
+        return this.fetchJSON(this.keyPath(id, '/decrypt'), {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to POST /api/v1/xkms/keys/{id}/sign
+    async sign(id, req) {
+        return this.fetchJSON(this.keyPath(id, '/sign'), {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to POST /api/v1/xkms/keys/{id}/verify
+    async verify(id, req) {
+        return this.fetchJSON(this.keyPath(id, '/verify'), {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to GET /api/v1/xkms/keys/{id}/versions
+    async listKeyVersions(id) {
+        return this.fetchJSON(this.keyPath(id, '/versions'));
+    }
+    // Maps to POST /api/v1/xkms/keys/{id}/versions/enable-all
+    async enableAllKeyVersions(id) {
+        return this.fetchJSON(this.keyPath(id, '/versions/enable-all'), { method: 'POST' });
+    }
+    // Maps to POST /api/v1/xkms/keys/{id}/versions/disable-all
+    async disableAllKeyVersions(id) {
+        return this.fetchJSON(this.keyPath(id, '/versions/disable-all'), { method: 'POST' });
+    }
+    // Maps to POST /api/v1/xkms/keys/{id}/versions/{version}/enable
+    async enableKeyVersion(id, version) {
+        return this.fetchJSON(this.keyPath(id, `/versions/${encodeURIComponent(String(version))}/enable`), { method: 'POST' });
+    }
+    // Maps to POST /api/v1/xkms/keys/{id}/versions/{version}/disable
+    async disableKeyVersion(id, version) {
+        return this.fetchJSON(this.keyPath(id, `/versions/${encodeURIComponent(String(version))}/disable`), { method: 'POST' });
+    }
+}
+// RestXKMSClient drives the xkms passthrough routes (/api/v1/xkms/*).
+export class RestXKMSClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    // Maps to GET /api/v1/xkms/backends.
+    async listBackends() {
+        return this.http.fetchJSON('/api/v1/xkms/backends');
+    }
+    // Maps to GET /api/v1/xkms/backends/{id}.
+    async getBackend(id) {
+        return this.http.fetchJSON(`/api/v1/xkms/backends/${encodeURIComponent(id)}`);
+    }
+    // Maps to GET /api/v1/xkms/health.
+    async health() {
+        return this.http.fetchJSON('/api/v1/xkms/health');
+    }
+    // Maps to GET /api/v1/xkms/seal/capability[?backend=].
+    async canSeal(backend) {
+        const q = backend ? `?backend=${encodeURIComponent(backend)}` : '';
+        return this.http.fetchJSON(`/api/v1/xkms/seal/capability${q}`);
+    }
+    // Maps to POST /api/v1/xkms/seal.
+    async seal(req) {
+        return this.http.fetchJSON('/api/v1/xkms/seal', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to POST /api/v1/xkms/unseal.
+    async unseal(req) {
+        return this.http.fetchJSON('/api/v1/xkms/unseal', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to GET /api/v1/xkms/certs[?backend=].
+    async listCertificates(backend) {
+        const q = backend ? `?backend=${encodeURIComponent(backend)}` : '';
+        return this.http.fetchJSON(`/api/v1/xkms/certs${q}`);
+    }
+    // Maps to GET /api/v1/xkms/certs/{id}.
+    async getCertificate(keyID) {
+        return this.http.fetchJSON(`/api/v1/xkms/certs/${encodeURIComponent(keyID)}`);
+    }
+    // Maps to POST /api/v1/xkms/certs?key_id= (200 with an empty body).
+    async saveCertificate(keyID, certificatePEM) {
+        await this.http.fetchVoid(`/api/v1/xkms/certs?key_id=${encodeURIComponent(keyID)}`, {
+            method: 'POST',
+            body: JSON.stringify({ certificate_pem: certificatePEM }),
+        });
+    }
+    // Maps to DELETE /api/v1/xkms/certs/{id} (200 with an empty body).
+    async deleteCertificate(keyID) {
+        await this.http.fetchVoid(`/api/v1/xkms/certs/${encodeURIComponent(keyID)}`, {
+            method: 'DELETE',
+        });
     }
 }
 // RestSecretsClient implements SecretsClient over the QuicBaaS REST secrets endpoints.
@@ -2931,6 +3554,68 @@ export class RestCAClient {
     async isRevoked(serialNumber) {
         return this.http.fetchJSON(`/api/v1/xkms/ca/revoked/${encodeURIComponent(serialNumber)}`);
     }
+    // The xkms CA passthrough routes carry Go []byte fields, so every *_pem
+    // field travels as base64 of the PEM text. xkmsPEM decodes one, falling
+    // back to the raw string (as generateCRL does) when it is not base64.
+    static xkmsPEM(wire) {
+        if (!wire)
+            return wire ?? '';
+        try {
+            return atob(wire);
+        }
+        catch {
+            return wire;
+        }
+    }
+    async xkmsGetCABundle(opts) {
+        const q = [];
+        if (opts?.store_type)
+            q.push(`store_type=${encodeURIComponent(opts.store_type)}`);
+        if (opts?.algorithm)
+            q.push(`algorithm=${encodeURIComponent(opts.algorithm)}`);
+        const path = '/api/v1/xkms/ca/bundle' + (q.length ? `?${q.join('&')}` : '');
+        const wire = await this.http.fetchJSON(path);
+        return { ...wire, bundle_pem: RestCAClient.xkmsPEM(wire.bundle_pem), certificates: wire.certificates ?? [] };
+    }
+    async xkmsGetCACertificate(identity) {
+        const path = '/api/v1/xkms/ca/cert' + (identity ? `?identity=${encodeURIComponent(identity)}` : '');
+        const wire = await this.http.fetchJSON(path);
+        return { ...wire, certificate_pem: RestCAClient.xkmsPEM(wire.certificate_pem) };
+    }
+    async xkmsSignCSR(req) {
+        const wire = await this.http.fetchJSON('/api/v1/xkms/ca/sign', {
+            method: 'POST',
+            body: JSON.stringify({ ...req, csr_pem: btoa(req.csr_pem) }),
+        });
+        return {
+            ...wire,
+            certificate_pem: RestCAClient.xkmsPEM(wire.certificate_pem),
+            chain_pem: RestCAClient.xkmsPEM(wire.chain_pem),
+        };
+    }
+    async xkmsIssueCertificate(req) {
+        const wire = await this.http.fetchJSON('/api/v1/xkms/ca/issue', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+        const out = {
+            ...wire,
+            certificate_pem: RestCAClient.xkmsPEM(wire.certificate_pem),
+            chain_pem: RestCAClient.xkmsPEM(wire.chain_pem),
+        };
+        if (wire.private_key_pem)
+            out.private_key_pem = RestCAClient.xkmsPEM(wire.private_key_pem);
+        return out;
+    }
+    async xkmsRevokeCertificate(serialNumber, reason, tenantId) {
+        const body = { serial_number: serialNumber, reason };
+        if (tenantId)
+            body.tenant_id = tenantId;
+        return this.http.fetchJSON('/api/v1/xkms/ca/revoke', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+    }
 }
 // ---------------------------------------------------------------------------
 // RestTrustClient — /api/v1/trust/* surface.
@@ -3163,6 +3848,638 @@ export class RestDEKClient {
         return this.http.fetchJSON(`/api/v1/kms/deks/${encodeURIComponent(path)}/reencrypt${query ? `?${query}` : ''}`);
     }
 }
+/**
+ * RestAttestationClient manages the attestation verifier's endorsements and
+ * reference values over REST (/api/v1/attestation/*).
+ */
+/** pemTextToBase64 encodes PEM text as the base64 of its UTF-8 bytes (a Go []byte on the wire). */
+export function pemTextToBase64(pem) {
+    return bytesToBase64(new TextEncoder().encode(pem));
+}
+/** base64ToPEMText decodes a Go []byte field back to the PEM text it carries. */
+export function base64ToPEMText(b64) {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++)
+        bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+}
+function endorsementFromWire(wire) {
+    const out = { ...wire };
+    if (wire.certificate_pem)
+        out.certificate_pem = base64ToPEMText(wire.certificate_pem);
+    if (wire.public_key_pem)
+        out.public_key_pem = base64ToPEMText(wire.public_key_pem);
+    return out;
+}
+export class RestAttestationClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    // Maps to PUT /api/v1/attestation/endorsements/{name}
+    //
+    // The handler decodes certificate_pem and public_key_pem into Go []byte, so
+    // on the wire they are base64 of the PEM text; this client takes and returns
+    // the PEM text itself and does that encoding exactly once.
+    async putEndorsement(name, req) {
+        const body = { kind: req.kind };
+        if (req.certificate_pem !== undefined)
+            body.certificate_pem = pemTextToBase64(req.certificate_pem);
+        if (req.public_key_pem !== undefined)
+            body.public_key_pem = pemTextToBase64(req.public_key_pem);
+        const wire = await this.http.fetchJSON(`/api/v1/attestation/endorsements/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(body) });
+        return endorsementFromWire(wire);
+    }
+    // Maps to GET /api/v1/attestation/endorsements[?kind=]
+    async listEndorsements(kind) {
+        const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+        const wire = await this.http.fetchJSON(`/api/v1/attestation/endorsements${query}`);
+        return { ...wire, endorsements: (wire?.endorsements ?? []).map(endorsementFromWire) };
+    }
+    // Maps to DELETE /api/v1/attestation/endorsements/{name}
+    async deleteEndorsement(name) {
+        return this.http.fetchVoid(`/api/v1/attestation/endorsements/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    }
+    // Maps to PUT /api/v1/attestation/reference-values/{name}
+    async putReferenceValues(name, signedCoRIM) {
+        const req = { signed_corim: signedCoRIM };
+        return this.http.fetchJSON(`/api/v1/attestation/reference-values/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(req) });
+    }
+    // Maps to GET /api/v1/attestation/reference-values/{name}
+    async getReferenceValues(name) {
+        return this.http.fetchJSON(`/api/v1/attestation/reference-values/${encodeURIComponent(name)}`);
+    }
+    // Maps to GET /api/v1/attestation/reference-values
+    async listReferenceValues() {
+        const wire = await this.http.fetchJSON('/api/v1/attestation/reference-values');
+        return { ...wire, reference_values: wire?.reference_values ?? [] };
+    }
+    // Maps to DELETE /api/v1/attestation/reference-values/{name}
+    async deleteReferenceValues(name) {
+        return this.http.fetchVoid(`/api/v1/attestation/reference-values/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    }
+}
+/** pivQuery builds a `?k=v&...` suffix from the set values, each encoded. */
+function pivQuery(params) {
+    const parts = [];
+    for (const [k, v] of Object.entries(params)) {
+        if (v !== undefined && v !== '')
+            parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+    }
+    return parts.length ? `?${parts.join('&')}` : '';
+}
+/**
+ * RestPIVClient manages xkms PIV slots over REST
+ * (/api/v1/xkms/piv/slots*, pkg/api/rest/handlers_xkms.go).
+ *
+ * The server's certificate, key, CSR and chain fields are Go []byte, so JSON
+ * carries them as base64. This client base64-encodes PEM text on writes and
+ * decodes the PEM fields of responses; a DER certificate is already base64
+ * and passes through unchanged.
+ */
+export class RestPIVClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    slotPath(slot) {
+        return `/api/v1/xkms/piv/slots/${encodeURIComponent(slot)}`;
+    }
+    // Maps to GET /api/v1/xkms/piv/slots[?backend=]
+    async listSlots(backend) {
+        const wire = await this.http.fetchJSON(`/api/v1/xkms/piv/slots${pivQuery({ backend })}`);
+        return { ...wire, slots: wire?.slots ?? [] };
+    }
+    // Maps to GET /api/v1/xkms/piv/slots/{slot}/cert[?backend=&format=]
+    async getCertificate(slot, opts = {}) {
+        const wire = await this.http.fetchJSON(`${this.slotPath(slot)}/cert${pivQuery({ backend: opts.backend, format: opts.format })}`);
+        return wire.format === 'pem' && wire.certificate
+            ? { ...wire, certificate: base64ToPEMText(wire.certificate) }
+            : wire;
+    }
+    // Maps to PUT /api/v1/xkms/piv/slots/{slot}/cert (200, empty body)
+    async storeCertificate(slot, req) {
+        await this.http.fetchVoid(`${this.slotPath(slot)}/cert`, {
+            method: 'PUT',
+            body: JSON.stringify({
+                ...req,
+                certificate: req.format === 'pem' ? pemTextToBase64(req.certificate) : req.certificate,
+            }),
+        });
+    }
+    // Maps to DELETE /api/v1/xkms/piv/slots/{slot}/cert[?backend=] (200, empty body)
+    async deleteCertificate(slot, backend) {
+        await this.http.fetchVoid(`${this.slotPath(slot)}/cert${pivQuery({ backend })}`, {
+            method: 'DELETE',
+        });
+    }
+    // Maps to POST /api/v1/xkms/piv/slots/{slot}/key (201)
+    async generateKey(slot, req) {
+        const wire = await this.http.fetchJSON(`${this.slotPath(slot)}/key`, {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+        const out = { ...wire };
+        if (wire.certificate)
+            out.certificate = base64ToPEMText(wire.certificate);
+        if (wire.public_key)
+            out.public_key = base64ToPEMText(wire.public_key);
+        if (wire.csr)
+            out.csr = base64ToPEMText(wire.csr);
+        if (wire.chain_pem)
+            out.chain_pem = base64ToPEMText(wire.chain_pem);
+        return out;
+    }
+    // Maps to POST /api/v1/xkms/piv/slots/{slot}/csr (201)
+    async generateCSR(slot, req) {
+        const wire = await this.http.fetchJSON(`${this.slotPath(slot)}/csr`, {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+        return wire.csr ? { ...wire, csr: base64ToPEMText(wire.csr) } : wire;
+    }
+}
+// ---------------------------------------------------------------------------
+// RestBackupsClient
+// ---------------------------------------------------------------------------
+export class RestBackupsClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    // Maps to GET /api/v1/backups[?limit=][&offset=]
+    async list(opts = {}) {
+        const params = {};
+        if (opts.limit !== undefined)
+            params.limit = String(opts.limit);
+        if (opts.offset !== undefined)
+            params.offset = String(opts.offset);
+        const query = new URLSearchParams(params).toString();
+        const wire = await this.http.fetchJSON(`/api/v1/backups${query ? `?${query}` : ''}`, { method: 'GET' });
+        return { ...wire, backups: wire?.backups ?? [], total_count: wire?.total_count ?? 0 };
+    }
+    // Maps to POST /api/v1/backups/{id}/restore
+    async restore(backupID, req = {}) {
+        return this.http.fetchJSON(`/api/v1/backups/${encodeURIComponent(backupID)}/restore`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to DELETE /api/v1/backups/{id}
+    async delete(backupID) {
+        return this.http.fetchJSON(`/api/v1/backups/${encodeURIComponent(backupID)}`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/backups/{id}/verify
+    async verify(backupID) {
+        return this.http.fetchJSON(`/api/v1/backups/${encodeURIComponent(backupID)}/verify`, { method: 'POST' });
+    }
+    // Maps to GET /api/v1/backups/{id}/status
+    async status(backupID) {
+        return this.http.fetchJSON(`/api/v1/backups/${encodeURIComponent(backupID)}/status`, { method: 'GET' });
+    }
+}
+/**
+ * RestClusterNodesClient manages cluster node membership over REST.
+ * Distinct from RestClusterClient (client.cluster).
+ */
+export class RestClusterNodesClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    // Maps to GET /api/v1/cluster/nodes/ (the trailing slash is part of the route).
+    async listNodes() {
+        return this.http.fetchJSON('/api/v1/cluster/nodes/');
+    }
+    // Maps to POST /api/v1/cluster/nodes/ (the trailing slash is part of the route).
+    async addNode(req) {
+        return this.http.fetchJSON('/api/v1/cluster/nodes/', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to GET /api/v1/cluster/nodes/non-leader.
+    async listNonLeaderNodes() {
+        return this.http.fetchJSON('/api/v1/cluster/nodes/non-leader');
+    }
+    // Maps to DELETE /api/v1/cluster/nodes/{nodeId}?shard_id= (shard_id is required).
+    async removeNode(nodeId, shardId) {
+        return this.http.fetchJSON(`/api/v1/cluster/nodes/${encodeURIComponent(String(nodeId))}?shard_id=${encodeURIComponent(String(shardId))}`, { method: 'DELETE' });
+    }
+    // Maps to PUT /api/v1/cluster/nodes/{nodeId}/replace.
+    async replaceNode(nodeId, req) {
+        return this.http.fetchJSON(`/api/v1/cluster/nodes/${encodeURIComponent(String(nodeId))}/replace`, { method: 'PUT', body: JSON.stringify(req) });
+    }
+}
+// entityQuery builds a query string from the parameters that are set.
+function entityQuery(params) {
+    const parts = [];
+    for (const [key, value] of Object.entries(params)) {
+        if (value === undefined || value === '')
+            continue;
+        parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+    }
+    return parts.length > 0 ? `?${parts.join('&')}` : '';
+}
+/** RestEntitiesClient implements EntitiesClient over the generic entity REST routes. */
+export class RestEntitiesClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    // Maps to GET /api/v1/entities/{type}/ (trailing slash).
+    async list(type, opts = {}) {
+        const query = entityQuery({ limit: opts.limit, cursor: opts.cursor, consistency: opts.consistency });
+        const wire = await this.http.fetchJSON(`/api/v1/entities/${encodeURIComponent(type)}/${query}`);
+        return { ...wire, entities: wire.entities ?? [] };
+    }
+    // Maps to POST /api/v1/entities/{type}/ (trailing slash).
+    // Maps to PUT /api/v1/entities/{type}/{id}.
+    async put(type, id, data, opts = {}) {
+        // The ID travels only in the URL, which the handler takes as the entity's
+        // ID. The body's id is a uint64 on the server, so a decimal-string ID
+        // (an exact uint64 beyond 2^53) in the body would be refused with 400.
+        const body = { entity_type: type, data };
+        return this.http.fetchJSON(`/api/v1/entities/${encodeURIComponent(type)}/${encodeURIComponent(String(id))}${entityQuery({ write_mode: opts.write_mode })}`, { method: 'PUT', body: JSON.stringify(body) });
+    }
+    // Maps to GET /api/v1/entities/{type}/{id}.
+    async get(type, id, opts = {}) {
+        const query = entityQuery({ consistency: opts.consistency, timeout_ms: opts.timeout_ms });
+        return this.http.fetchJSON(`/api/v1/entities/${encodeURIComponent(type)}/${encodeURIComponent(String(id))}${query}`);
+    }
+    // Maps to DELETE /api/v1/entities/{type}/{id}.
+    async delete(type, id, opts = {}) {
+        return this.http.fetchJSON(`/api/v1/entities/${encodeURIComponent(type)}/${encodeURIComponent(String(id))}${entityQuery({ write_mode: opts.write_mode })}`, { method: 'DELETE' });
+    }
+}
+/**
+ * RestKMSAdminClient administers named KMS keys over REST: metadata, access
+ * policy and rotation policy under /api/v1/kms/keys/{name}/*.
+ */
+export class RestKMSAdminClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    keyPath(name, suffix) {
+        return `/api/v1/kms/keys/${encodeURIComponent(name)}/${suffix}`;
+    }
+    // Maps to GET /api/v1/kms/keys/{name}/metadata
+    async getKeyMetadata(name) {
+        return this.http.fetchJSON(this.keyPath(name, 'metadata'));
+    }
+    // Maps to PUT /api/v1/kms/keys/{name}/metadata
+    async updateKeyMetadata(name, req) {
+        return this.http.fetchJSON(this.keyPath(name, 'metadata'), {
+            method: 'PUT',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to GET /api/v1/kms/keys/{name}/policy
+    async getKeyPolicy(name) {
+        return this.http.fetchJSON(this.keyPath(name, 'policy'));
+    }
+    // Maps to PUT /api/v1/kms/keys/{name}/policy
+    async setKeyPolicy(name, policy) {
+        return this.http.fetchJSON(this.keyPath(name, 'policy'), {
+            method: 'PUT',
+            body: JSON.stringify({ policy }),
+        });
+    }
+    // Maps to GET /api/v1/kms/keys/{name}/rotation-policy
+    async getKeyRotationPolicy(name) {
+        return this.http.fetchJSON(this.keyPath(name, 'rotation-policy'));
+    }
+    // Maps to PUT /api/v1/kms/keys/{name}/rotation-policy
+    async setKeyRotationPolicy(name, req) {
+        return this.http.fetchJSON(this.keyPath(name, 'rotation-policy'), {
+            method: 'PUT',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to DELETE /api/v1/kms/keys/{name}/rotation-policy
+    async deleteKeyRotationPolicy(name) {
+        return this.http.fetchJSON(this.keyPath(name, 'rotation-policy'), {
+            method: 'DELETE',
+        });
+    }
+}
+// RestObjectStorageAdminClient implements ObjectStorageAdminClient over REST.
+// The replies keep the Go field names (PascalCase); see objectstorage_admin.ts.
+export class RestObjectStorageAdminClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    // Maps to POST /api/v1/admin/object-backends
+    async createBackend(req) {
+        return this.http.fetchJSON('/api/v1/admin/object-backends', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to PUT /api/v1/admin/object-backends/{name}
+    async updateBackend(name, req) {
+        return this.http.fetchJSON(`/api/v1/admin/object-backends/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(req) });
+    }
+    // Maps to DELETE /api/v1/admin/object-backends/{name}
+    async deleteBackend(name, req = {}) {
+        return this.http.fetchJSON(`/api/v1/admin/object-backends/${encodeURIComponent(name)}`, { method: 'DELETE', body: JSON.stringify(req) });
+    }
+    // Maps to PUT /api/v1/admin/object-backends/{name}/status
+    async setBackendStatus(name, enabled) {
+        return this.http.fetchJSON(`/api/v1/admin/object-backends/${encodeURIComponent(name)}/status`, { method: 'PUT', body: JSON.stringify({ enabled }) });
+    }
+    // Maps to POST /api/v1/admin/object-backends/{name}/compact
+    async compactBackend(name, req = {}) {
+        return this.http.fetchJSON(`/api/v1/admin/object-backends/${encodeURIComponent(name)}/compact`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to GET /api/v1/admin/storage/stats[?backends=true][&tenants=true]
+    async storageStats(opts = {}) {
+        const params = {};
+        if (opts.backends)
+            params.backends = 'true';
+        if (opts.tenants)
+            params.tenants = 'true';
+        const query = new URLSearchParams(params).toString();
+        return this.http.fetchJSON(`/api/v1/admin/storage/stats${query ? `?${query}` : ''}`);
+    }
+    // Maps to POST /api/v1/admin/storage/gc
+    async runGarbageCollection(req = {}) {
+        return this.http.fetchJSON('/api/v1/admin/storage/gc', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to GET /api/v1/admin/storage/gc/progress?operation_id=
+    async garbageCollectionProgress(operationID) {
+        return this.http.fetchJSON(`/api/v1/admin/storage/gc/progress?operation_id=${encodeURIComponent(operationID)}`);
+    }
+    // Maps to POST /api/v1/admin/objects/repair
+    async repairObject(req) {
+        return this.http.fetchJSON('/api/v1/admin/objects/repair', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+}
+/**
+ * parameterURL turns a parameter path such as "/app/db/host" into its route,
+ * /api/v1/parameters/app/db/host: the leading '/' dropped and each segment
+ * encodeURIComponent'd.
+ */
+function parameterURL(path) {
+    const segments = path.replace(/^\/+/, '').split('/').map((s) => encodeURIComponent(s));
+    return `/api/v1/parameters/${segments.join('/')}`;
+}
+export class RestParametersClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    // Maps to GET /api/v1/parameters/{path}[?with_decryption=false]
+    async get(path, opts = {}) {
+        const query = opts.withDecryption !== undefined
+            ? `?with_decryption=${String(opts.withDecryption)}`
+            : '';
+        return this.http.fetchJSON(`${parameterURL(path)}${query}`);
+    }
+    // Maps to PUT /api/v1/parameters/{path}
+    async set(path, req) {
+        return this.http.fetchJSON(parameterURL(path), {
+            method: 'PUT',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to DELETE /api/v1/parameters/{path}
+    async delete(path) {
+        return this.http.fetchJSON(parameterURL(path), { method: 'DELETE' });
+    }
+    // Maps to GET /api/v1/parameters/?prefix=&recursive=&with_values=&with_decryption=&cursor=&limit=
+    async list(opts = {}) {
+        const params = {};
+        if (opts.prefix !== undefined)
+            params.prefix = opts.prefix;
+        if (opts.recursive !== undefined)
+            params.recursive = String(opts.recursive);
+        if (opts.withValues !== undefined)
+            params.with_values = String(opts.withValues);
+        if (opts.withDecryption !== undefined)
+            params.with_decryption = String(opts.withDecryption);
+        if (opts.cursor !== undefined)
+            params.cursor = opts.cursor;
+        if (opts.limit !== undefined)
+            params.limit = String(opts.limit);
+        const query = new URLSearchParams(params).toString();
+        const wire = await this.http.fetchJSON(`/api/v1/parameters/${query ? `?${query}` : ''}`);
+        return { ...wire, parameters: wire.parameters ?? [] };
+    }
+    // Maps to POST /api/v1/parameters/batch/get
+    async getBatch(req) {
+        return this.http.fetchJSON('/api/v1/parameters/batch/get', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to POST /api/v1/parameters/batch/set
+    async setBatch(req) {
+        return this.http.fetchJSON('/api/v1/parameters/batch/set', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to POST /api/v1/parameters/batch/delete
+    async deleteBatch(paths) {
+        return this.http.fetchJSON('/api/v1/parameters/batch/delete', {
+            method: 'POST',
+            body: JSON.stringify({ paths }),
+        });
+    }
+    // Maps to POST /api/v1/parameters/search
+    async searchByTags(req) {
+        return this.http.fetchJSON('/api/v1/parameters/search', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+}
+// ---------------------------------------------------------------------------
+// RestVectorAdminClient — /api/v1/vector/admin/* surface.
+// ---------------------------------------------------------------------------
+// RestVectorAdminClient implements VectorAdminClient. Export and import move
+// JSON Lines, which FetchHelper does not parse, so sendText builds the
+// request the way newFetchHelper does but reads and sends text.
+export class RestVectorAdminClient {
+    http;
+    baseUrl;
+    config;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+        this.baseUrl = baseUrl.replace(/\/$/, '');
+        this.config = config;
+    }
+    // Maps to GET /api/v1/vector/admin/stats/global
+    async getGlobalStats() {
+        return this.http.fetchJSON('/api/v1/vector/admin/stats/global');
+    }
+    // Maps to POST /api/v1/vector/admin/compact
+    async compactNamespace(namespace) {
+        return this.http.fetchJSON('/api/v1/vector/admin/compact', {
+            method: 'POST',
+            body: JSON.stringify({ namespace }),
+        });
+    }
+    // Maps to GET /api/v1/vector/admin/compact/progress?operation_id=
+    async getCompactionProgress(operationId) {
+        return this.http.fetchJSON(`/api/v1/vector/admin/compact/progress?operation_id=${encodeURIComponent(operationId)}`);
+    }
+    // Maps to POST /api/v1/vector/admin/export/{namespace}
+    async exportVectors(namespace, req = {}) {
+        const text = await this.sendText(`/api/v1/vector/admin/export/${encodeURIComponent(namespace)}`, {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+        return text
+            .split('\n')
+            .filter((line) => line.trim() !== '')
+            .map((line) => JSON.parse(line));
+    }
+    // Maps to POST /api/v1/vector/admin/import/{namespace}
+    async importVectors(namespace, entries) {
+        const text = await this.sendText(`/api/v1/vector/admin/import/${encodeURIComponent(namespace)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-ndjson' },
+            body: entries.map((e) => JSON.stringify(e)).join('\n'),
+        });
+        return JSON.parse(text);
+    }
+    // sendText sends a request with newFetchHelper's headers and error
+    // handling and returns the response body as text.
+    async sendText(path, init) {
+        const headers = {};
+        const tok = await resolveToken(this.config.token);
+        if (tok)
+            headers['Authorization'] = `Bearer ${tok}`;
+        if (this.config.tenantID)
+            headers['X-Tenant-ID'] = this.config.tenantID;
+        const resp = await fetch(`${this.baseUrl}${path}`, {
+            ...init,
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                ...headers,
+                ...(init.headers ?? {}),
+            },
+        });
+        if (!resp.ok) {
+            let message = resp.statusText;
+            try {
+                const body = (await resp.json());
+                message = body.error ?? body.message ?? message;
+            }
+            catch {
+                // Body not JSON: fall back to statusText.
+            }
+            throw new APIError(resp.status, message);
+        }
+        return resp.text();
+    }
+}
+// xkmsFido2TenantQuery renders the optional ?tenant_id= query; without a
+// tenant the server uses the caller's session tenant.
+function xkmsFido2TenantQuery(tenantId) {
+    return tenantId !== undefined ? `?tenant_id=${encodeURIComponent(tenantId)}` : '';
+}
+// RestXKMSFIDO2Client registers and authenticates FIDO2 passkeys over REST.
+export class RestXKMSFIDO2Client {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    // Maps to POST /api/v1/xkms/fido2/register/begin[?tenant_id=]
+    async beginRegistration(req, tenantId) {
+        return this.http.fetchJSON(`/api/v1/xkms/fido2/register/begin${xkmsFido2TenantQuery(tenantId)}`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/xkms/fido2/register/finish[?tenant_id=]
+    async finishRegistration(req, tenantId) {
+        return this.http.fetchJSON(`/api/v1/xkms/fido2/register/finish${xkmsFido2TenantQuery(tenantId)}`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/xkms/fido2/credentials/begin (the session's tenant)
+    async beginAddCredential() {
+        return this.http.fetchJSON('/api/v1/xkms/fido2/credentials/begin', {
+            method: 'POST',
+        });
+    }
+    // Maps to POST /api/v1/xkms/fido2/authenticate/begin[?tenant_id=]
+    async beginAuthentication(req, tenantId) {
+        return this.http.fetchJSON(`/api/v1/xkms/fido2/authenticate/begin${xkmsFido2TenantQuery(tenantId)}`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/xkms/fido2/authenticate/finish[?tenant_id=]
+    async finishAuthentication(req, tenantId) {
+        return this.http.fetchJSON(`/api/v1/xkms/fido2/authenticate/finish${xkmsFido2TenantQuery(tenantId)}`, { method: 'POST', body: JSON.stringify(req) });
+    }
+}
+// ---------------------------------------------------------------------------
+// RestRegistryClient
+// ---------------------------------------------------------------------------
+export class RestRegistryClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    // Maps to POST /api/v1/registry/instances (201).
+    async register(instance, ttlSeconds) {
+        const req = { instance, ttl_seconds: ttlSeconds };
+        return this.http.fetchJSON('/api/v1/registry/instances', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to POST /api/v1/registry/leases/{lease_id}/renew.
+    async renew(leaseId) {
+        return this.http.fetchJSON(`/api/v1/registry/leases/${encodeURIComponent(leaseId)}/renew`, { method: 'POST' });
+    }
+    // Maps to DELETE /api/v1/registry/leases/{lease_id} (204).
+    async deregister(leaseId) {
+        return this.http.fetchVoid(`/api/v1/registry/leases/${encodeURIComponent(leaseId)}`, {
+            method: 'DELETE',
+        });
+    }
+    // Maps to GET /api/v1/registry/services/{service}.
+    async resolve(service) {
+        const wire = await this.http.fetchJSON(`/api/v1/registry/services/${encodeURIComponent(service)}`);
+        return { ...wire, instances: wire.instances ?? [] };
+    }
+}
+/** RestCacheClient reads and manages the server's cache over REST. */
+export class RestCacheClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    // Maps to GET /api/v1/cache/stats.
+    async stats() {
+        return this.http.fetchJSON('/api/v1/cache/stats');
+    }
+    // Maps to POST /api/v1/cache/clear (no body).
+    async clear() {
+        return this.http.fetchJSON('/api/v1/cache/clear', { method: 'POST' });
+    }
+    // Maps to GET /api/v1/cache/config.
+    async getConfig() {
+        return this.http.fetchJSON('/api/v1/cache/config');
+    }
+    // Maps to PUT /api/v1/cache/config; only the fields given are sent.
+    async updateConfig(req) {
+        const body = {};
+        if (req.l1_size !== undefined)
+            body.l1_size = req.l1_size;
+        if (req.l1_ttl_seconds !== undefined)
+            body.l1_ttl_seconds = req.l1_ttl_seconds;
+        return this.http.fetchJSON('/api/v1/cache/config', {
+            method: 'PUT',
+            body: JSON.stringify(body),
+        });
+    }
+}
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -3379,7 +4696,8 @@ export class RestTenantBarrierClient {
     async tenantBarrierInit(tenantId, req) {
         const { passphrase, ...rest } = req;
         const body = passphrase === undefined ? rest : { ...rest, passphrase: bytesToBase64(passphrase) };
-        // The shamir strategy returns 200 with the minted shares; the none and
+        // The shamir strategy returns 200 with share-free metadata (threshold,
+        // total_shares, share_count: the shares are sealed to officers); the none and
         // passphrase strategies return 204 No Content. fetchJSON yields undefined
         // on a 204, so the union return type already covers both cases.
         return this.http.fetchJSON(`${this.base(tenantId)}/init`, {
@@ -3479,6 +4797,50 @@ export class RestClusterClient {
             method: 'GET',
         });
     }
+    // Maps to GET /api/v1/cluster/leader.
+    async leader() {
+        return this.http.fetchJSON('/api/v1/cluster/leader', {
+            method: 'GET',
+        });
+    }
+    // Maps to GET /api/v1/cluster/leader/{shardID}.
+    async shardLeader(shardID) {
+        return this.http.fetchJSON(`/api/v1/cluster/leader/${encodeURIComponent(String(shardID))}`, { method: 'GET' });
+    }
+    // Maps to POST /api/v1/cluster/rebalance/.
+    async startRebalance(req) {
+        return this.http.fetchJSON('/api/v1/cluster/rebalance/', {
+            method: 'POST',
+            body: JSON.stringify(req ?? {}),
+        });
+    }
+    // Maps to GET /api/v1/cluster/rebalance/status[?operation_id=].
+    async rebalanceStatus(operationID) {
+        const query = operationID ? `?operation_id=${encodeURIComponent(operationID)}` : '';
+        return this.http.fetchJSON(`/api/v1/cluster/rebalance/status${query}`, { method: 'GET' });
+    }
+    // Maps to GET /api/v1/cluster/rebalance/plan.
+    async rebalancePlan() {
+        return this.http.fetchJSON('/api/v1/cluster/rebalance/plan', {
+            method: 'GET',
+        });
+    }
+    // Maps to POST /api/v1/cluster/migrate/.
+    async startMigration(req) {
+        return this.http.fetchJSON('/api/v1/cluster/migrate/', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to GET /api/v1/cluster/migrate/status?operation_id=.
+    async migrationStatus(operationID) {
+        return this.http.fetchJSON(`/api/v1/cluster/migrate/status?operation_id=${encodeURIComponent(operationID)}`, { method: 'GET' });
+    }
+    // Maps to DELETE /api/v1/cluster/migrate/?operation_id=.
+    async cancelMigration(operationID) {
+        return this.http.fetchJSON(`/api/v1/cluster/migrate/?operation_id=${encodeURIComponent(operationID)}`, { method: 'DELETE' });
+    }
+    // Maps to GET /api/v1/cluster/nodes.
     async listNodes() {
         const resp = await this.http.fetchJSON('/api/v1/cluster/nodes', {
             method: 'GET',
@@ -3839,6 +5201,45 @@ export class RestAuthorizedKeysClient {
         });
         return { entry };
     }
+    // add stores an authorized_keys entry under scope/owner/name.
+    // Maps to POST /api/v1/ssh/authorized/keys (201, empty body).
+    async add(req) {
+        await this.fetchSSH('/api/v1/ssh/authorized/keys', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // list returns the stored entries, optionally filtered by scope and owner.
+    // Maps to GET /api/v1/ssh/authorized/keys[?scope=&owner=].
+    async list(req) {
+        const params = [];
+        if (req?.scope)
+            params.push(`scope=${encodeURIComponent(req.scope)}`);
+        if (req?.owner)
+            params.push(`owner=${encodeURIComponent(req.owner)}`);
+        const query = params.length > 0 ? `?${params.join('&')}` : '';
+        const resp = await this.fetchSSH(`/api/v1/ssh/authorized/keys${query}`, { method: 'GET' });
+        return resp?.items ?? [];
+    }
+    // get returns one stored entry.
+    // Maps to GET /api/v1/ssh/authorized/keys/{scope}/{owner}/{name}.
+    async get(scope, owner, name) {
+        return this.fetchSSH(authorizedKeyPath(scope, owner, name), {
+            method: 'GET',
+        });
+    }
+    // remove deletes one stored entry.
+    // Maps to DELETE /api/v1/ssh/authorized/keys/{scope}/{owner}/{name} (204).
+    async remove(scope, owner, name) {
+        await this.fetchSSH(authorizedKeyPath(scope, owner, name), {
+            method: 'DELETE',
+        });
+    }
+}
+// authorizedKeyPath builds /api/v1/ssh/authorized/keys/{scope}/{owner}/{name},
+// encoding each segment.
+function authorizedKeyPath(scope, owner, name) {
+    return `/api/v1/ssh/authorized/keys/${encodeURIComponent(scope)}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
 }
 // =============================================================================
 // RestSSHClient — top-level SSH namespace
@@ -3892,6 +5293,20 @@ export class RestClient {
     trust;
     crypto;
     dek;
+    attestation;
+    xkmsKeys;
+    piv;
+    xkms;
+    backups;
+    clusterNodes;
+    entities;
+    kmsAdmin;
+    objectStorageAdmin;
+    parameters;
+    vectorAdmin;
+    xkmsFido2;
+    registry;
+    cache;
     dynamicSecrets;
     barrier;
     tenantBarrier;
@@ -3934,6 +5349,20 @@ export class RestClient {
         this.trust = new RestTrustClient(baseUrl, config);
         this.crypto = new RestCryptoClient(baseUrl, config);
         this.dek = new RestDEKClient(baseUrl, config);
+        this.attestation = new RestAttestationClient(baseUrl, config);
+        this.xkmsKeys = new RestXKMSKeysClient(baseUrl, config);
+        this.piv = new RestPIVClient(baseUrl, config);
+        this.xkms = new RestXKMSClient(baseUrl, config);
+        this.backups = new RestBackupsClient(baseUrl, config);
+        this.clusterNodes = new RestClusterNodesClient(baseUrl, config);
+        this.entities = new RestEntitiesClient(baseUrl, config);
+        this.kmsAdmin = new RestKMSAdminClient(baseUrl, config);
+        this.objectStorageAdmin = new RestObjectStorageAdminClient(baseUrl, config);
+        this.parameters = new RestParametersClient(baseUrl, config);
+        this.vectorAdmin = new RestVectorAdminClient(baseUrl, config);
+        this.xkmsFido2 = new RestXKMSFIDO2Client(baseUrl, config);
+        this.registry = new RestRegistryClient(baseUrl, config);
+        this.cache = new RestCacheClient(baseUrl, config);
         this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
         this.barrier = new RestBarrierClient(baseUrl, config);
         this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);

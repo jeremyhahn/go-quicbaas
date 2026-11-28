@@ -1,0 +1,3 @@
+### Added
+
+- The web console's Key Store page has a Certificates section for the xkms certificate store, which lists the stored certificates (key id, subject, issuer, serial and expiry) under the page's backend filter, shows a certificate's PEM, saves a PEM certificate for a key id and deletes one after a confirmation; and a Certificate authority section for the xkms CA, which shows the CA certificate (for an optional identity) and the CA bundle (with an optional store type and algorithm), issues a certificate (its private key shown once, in the result), signs a CSR, and revokes a certificate with an RFC 5280 reason after a confirmation. A connection without the xkms or CA client shows that inline in the section (#2371).

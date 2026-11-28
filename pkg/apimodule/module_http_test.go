@@ -186,6 +186,50 @@ func TestRegisterHTTP_LazyBinding(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestRegisterHTTP_ModuleRoutesSendCORSHeaders drives the path the unified
+// listener runs (registration, lazy bind, BindRoute) and pins that the
+// readiness route answers an allow-listed Origin with the CORS header.
+func TestRegisterHTTP_ModuleRoutesSendCORSHeaders(t *testing.T) {
+	mockSvc := testutil.NewMockQuicBaaS()
+	mockSvc.On("Health", mock.Anything, mock.Anything).Return(&service.HealthResponse{
+		Status: service.HealthStatusHealthy,
+		NodeID: 1,
+	}, nil).Maybe()
+	mockSvc.On("Readiness", mock.Anything, mock.Anything).Return(&service.ReadinessResponse{
+		Ready:  true,
+		Reason: "service is ready",
+	}, nil).Maybe()
+	cfg := restapi.DefaultConfig()
+	cfg.CORSOrigins = []string{"https://ui.example.com"}
+	srv, err := restapi.NewServer(mockSvc, cfg, newTestLogger(t))
+	require.NoError(t, err)
+
+	m := newHTTPModule(t, func() *restapi.Server { return srv })
+	reg, recs := newCaptureRegistrar()
+	m.RegisterHTTP(reg)
+
+	var ready http.HandlerFunc
+	for _, rec := range *recs {
+		if rec.method == "GET" && rec.pattern == "/api/v1/health/ready" {
+			require.True(t, rec.public, "GET /api/v1/health/ready must register public")
+			ready = rec.handler
+		}
+	}
+	require.NotNil(t, ready, "GET /api/v1/health/ready must be registered")
+
+	req := httptest.NewRequest("GET", "/api/v1/health/ready", nil)
+	req.Header.Set("Origin", "https://ui.example.com")
+	w := httptest.NewRecorder()
+	ready(w, req)
+	assert.Equal(t, "https://ui.example.com", w.Header().Get("Access-Control-Allow-Origin"))
+
+	req = httptest.NewRequest("GET", "/api/v1/health/ready", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	w = httptest.NewRecorder()
+	ready(w, req)
+	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
+}
+
 // TestRegisterHTTP_DisabledRouteAnswers501 proves a registered route whose
 // backing subsystem is absent on the resolved server answers 501 rather
 // than binding a dead handler. The cluster CA secret-delivery route is the

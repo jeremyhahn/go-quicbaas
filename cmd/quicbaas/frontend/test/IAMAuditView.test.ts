@@ -1,0 +1,330 @@
+/**
+ * Copyright (c) 2026 Jeremy Hahn
+ * Copyright (c) 2026 Automate The Things, LLC
+ *
+ * This file is part of go-quicbaas.
+ *
+ * go-quicbaas is dual-licensed:
+ *
+ * 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+ * 2. Commercial License
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
+import { tick } from 'svelte';
+import type { IAMAuditEvent, IAMTenant } from '@quicbaas/sdk';
+
+// ---------------------------------------------------------------------------
+// Mock data
+// ---------------------------------------------------------------------------
+
+const mockTenants: IAMTenant[] = [
+  { id: 'tenant-a', name: 'Acme', description: '', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+  { id: 'tenant-b', name: 'Beta', description: '', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+];
+
+const loginEvent: IAMAuditEvent = {
+  id: 'evt-1',
+  tenant_id: 'tenant-a',
+  timestamp: '2026-11-01T10:00:00Z',
+  event_type: 'user.login',
+  category: 'authentication',
+  actor: { user_id: 'u-1', username: 'alice' },
+  resource: { type: 'session', id: 's-1' },
+  action: 'login',
+  outcome: 'success',
+};
+
+const impersonatedEvent: IAMAuditEvent = {
+  id: 'evt-2',
+  tenant_id: 'tenant-a',
+  timestamp: '2026-11-02T10:00:00Z',
+  event_type: 'role.assign',
+  category: 'authorization',
+  actor: { user_id: 'u-2', username: 'bob', impersonating_user_id: 'u-9', impersonating_username: 'root-admin' },
+  resource: { type: 'role', id: 'r-1', name: 'editor' },
+  action: 'assign',
+  outcome: 'denied',
+  details: { reason: 'missing permission' },
+  correlation_id: 'corr-42',
+};
+
+const {
+  mockListTenants,
+  mockListAuditEvents,
+  mockGetAuditEvent,
+  mockDeleteAuditEventsBefore,
+  mockGetSDKClient,
+  mockShowToast,
+} = vi.hoisted(() => ({
+  mockListTenants: vi.fn(),
+  mockListAuditEvents: vi.fn(),
+  mockGetAuditEvent: vi.fn(),
+  mockDeleteAuditEventsBefore: vi.fn(),
+  mockGetSDKClient: vi.fn(),
+  mockShowToast: vi.fn(),
+}));
+
+vi.mock('../src/stores/sdkClient.ts', () => ({
+  getSDKClient: mockGetSDKClient,
+}));
+
+vi.mock('../src/stores/toast.svelte.ts', () => ({
+  showToast: mockShowToast,
+}));
+
+import IAMAuditView from '../src/views/security/IAMAuditView.svelte';
+import { setAuthenticated, setUnauthenticated } from '../src/stores/auth.svelte.ts';
+
+function sessionToken(tenantID: string, sid = 'sid_1'): string {
+  const b64url = (o: unknown): string =>
+    btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const claims = {
+    sub: 'usr_1',
+    tenant_id: tenantID,
+    roles: ['operator'],
+    sid,
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  };
+  return `${b64url({ alg: 'none' })}.${b64url(claims)}.sig`;
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+function lastListOptions(): Record<string, unknown> {
+  const calls = mockListAuditEvents.mock.calls;
+  return calls[calls.length - 1]?.[0] ?? {};
+}
+
+describe('IAMAuditView', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockListTenants.mockResolvedValue({ tenants: mockTenants });
+    mockListAuditEvents.mockResolvedValue({
+      events: [loginEvent, impersonatedEvent],
+      total: 120,
+      limit: 50,
+      offset: 0,
+    });
+    mockGetAuditEvent.mockResolvedValue(impersonatedEvent);
+    mockDeleteAuditEventsBefore.mockResolvedValue({ deleted_count: 7, before: '2026-10-01T00:00:00Z' });
+    mockGetSDKClient.mockResolvedValue({
+      iam: {
+        listTenants: mockListTenants,
+        listAuditEvents: mockListAuditEvents,
+        getAuditEvent: mockGetAuditEvent,
+        deleteAuditEventsBefore: mockDeleteAuditEventsBefore,
+      },
+    });
+  });
+
+  describe('own tenant without tenants:list', () => {
+    beforeEach(() => {
+      setAuthenticated({ access_token: sessionToken('acme') });
+      mockListTenants.mockRejectedValue(new Error('403 Forbidden'));
+    });
+
+    afterEach(() => {
+      setUnauthenticated();
+    });
+
+    it('lists the session tenant’s events when listTenants is refused', async () => {
+      render(IAMAuditView);
+      await waitFor(() => {
+        expect(mockListAuditEvents).toHaveBeenCalledWith(expect.objectContaining({ tenantID: 'acme' }));
+      });
+      const select = screen.getByLabelText('Tenant') as HTMLSelectElement;
+      expect(select).toBeEnabled();
+      expect(select.value).toBe('acme');
+      expect(screen.queryByText('403 Forbidden')).toBeNull();
+    });
+  });
+
+  it('lists the selected tenant’s events', async () => {
+    render(IAMAuditView);
+    await waitFor(() => {
+      expect(screen.getByText('user.login')).toBeInTheDocument();
+      expect(screen.getByText('alice')).toBeInTheDocument();
+      expect(screen.getByText('session/s-1')).toBeInTheDocument();
+    });
+    expect(lastListOptions()).toMatchObject({ tenantID: 'tenant-a', limit: 50, offset: 0 });
+  });
+
+  it('reloads when the tenant changes', async () => {
+    render(IAMAuditView);
+    await waitFor(() => screen.getByText('user.login'));
+
+    await fireEvent.change(screen.getByLabelText('Tenant'), { target: { value: 'tenant-b' } });
+    await waitFor(() => {
+      expect(lastListOptions()).toMatchObject({ tenantID: 'tenant-b', offset: 0 });
+    });
+  });
+
+  it('Next sends offset 50 and Apply sends filters from the first page', async () => {
+    render(IAMAuditView);
+    await waitFor(() => screen.getByText('user.login'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(lastListOptions()).toMatchObject({ offset: 50 }));
+    await waitFor(() => screen.getByText('user.login'));
+
+    await fireEvent.input(screen.getByLabelText('Event type'), { target: { value: 'user.login' } });
+    await fireEvent.input(screen.getByLabelText('Category'), { target: { value: 'authentication' } });
+    await fireEvent.change(screen.getByLabelText('Outcome'), { target: { value: 'failure' } });
+    await fireEvent.input(screen.getByLabelText('Actor ID'), { target: { value: 'u-1' } });
+    await fireEvent.input(screen.getByLabelText('Resource ID'), { target: { value: 's-1' } });
+    await fireEvent.input(screen.getByLabelText('From'), { target: { value: '2026-11-01T08:30' } });
+    await fireEvent.input(screen.getByLabelText('To'), { target: { value: '2026-11-02T09:00' } });
+    await fireEvent.submit(screen.getByRole('form', { name: 'Audit filters' }));
+
+    await waitFor(() => {
+      expect(lastListOptions()).toEqual({
+        tenantID: 'tenant-a',
+        limit: 50,
+        offset: 0,
+        eventType: 'user.login',
+        category: 'authentication',
+        outcome: 'failure',
+        actorID: 'u-1',
+        resourceID: 's-1',
+        startTime: new Date('2026-11-01T08:30').toISOString(),
+        endTime: new Date('2026-11-02T09:00').toISOString(),
+      });
+    });
+    expect(String(lastListOptions().startTime)).toMatch(/Z$/);
+  });
+
+  it('a row click shows getAuditEvent’s detail', async () => {
+    render(IAMAuditView);
+    await waitFor(() => screen.getByText('role.assign'));
+
+    await fireEvent.click(screen.getByText('role.assign'));
+    await waitFor(() => {
+      expect(mockGetAuditEvent).toHaveBeenCalledWith('evt-2', 'tenant-a');
+      const dialog = screen.getByRole('dialog', { name: 'Audit event detail' });
+      expect(dialog).toHaveTextContent('Impersonated by root-admin');
+      expect(dialog).toHaveTextContent('corr-42');
+      expect(dialog).toHaveTextContent('editor');
+    });
+    expect(screen.getByLabelText('Event details').textContent).toContain('"reason": "missing permission"');
+  });
+
+  it('delete-before is confirmed, sends the RFC 3339 date and reloads', async () => {
+    render(IAMAuditView);
+    await waitFor(() => screen.getByText('user.login'));
+    const before = mockListAuditEvents.mock.calls.length;
+
+    await fireEvent.input(screen.getByLabelText('Delete before date'), { target: { value: '2026-10-01' } });
+    await fireEvent.submit(screen.getByRole('form', { name: 'Delete events before' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Delete confirmation' });
+    expect(dialog).toHaveTextContent('2026-10-01');
+    expect(dialog).toHaveTextContent('Acme');
+    expect(mockDeleteAuditEventsBefore).not.toHaveBeenCalled();
+
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => {
+      expect(mockDeleteAuditEventsBefore).toHaveBeenCalledWith('2026-10-01T00:00:00Z', 'tenant-a');
+      expect(mockShowToast).toHaveBeenCalledWith('success', 'Deleted 7 audit events');
+      expect(mockListAuditEvents.mock.calls.length).toBeGreaterThan(before);
+    });
+  });
+
+  it('an SDK error shows the error state', async () => {
+    mockListAuditEvents.mockRejectedValue(new Error('Audit store unavailable'));
+    render(IAMAuditView);
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Audit store unavailable');
+    });
+  });
+
+  describe('when the session changes', () => {
+    const emptyPage = { events: [], total: 0, limit: 50, offset: 0 };
+
+    async function flush(): Promise<void> {
+      await new Promise((r) => setTimeout(r, 0));
+      await tick();
+    }
+
+    beforeEach(() => {
+      setAuthenticated({ access_token: sessionToken('tenant-a') });
+    });
+
+    afterEach(() => {
+      setUnauthenticated();
+    });
+
+    it('clears the previous session’s events and open detail and lists the new session tenant', async () => {
+      render(IAMAuditView);
+      await waitFor(() => screen.getByText('role.assign'));
+      await fireEvent.click(screen.getByText('role.assign'));
+      await screen.findByRole('dialog', { name: 'Audit event detail' });
+
+      mockListAuditEvents.mockResolvedValue(emptyPage);
+      setAuthenticated({ access_token: sessionToken('tenant-b', 'sid_2') });
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: 'Audit event detail' })).toBeNull();
+        expect(screen.queryByText('role.assign')).toBeNull();
+        expect(screen.queryByText('session/s-1')).toBeNull();
+        expect(lastListOptions()).toMatchObject({ tenantID: 'tenant-b', offset: 0 });
+        expect((screen.getByLabelText('Tenant') as HTMLSelectElement).value).toBe('tenant-b');
+      });
+    });
+
+    it('reloads when a new login keeps the same tenant', async () => {
+      render(IAMAuditView);
+      await waitFor(() => screen.getByText('user.login'));
+
+      mockListAuditEvents.mockResolvedValue(emptyPage);
+      const before = mockListAuditEvents.mock.calls.length;
+      setAuthenticated({ access_token: sessionToken('tenant-a', 'sid_2') });
+
+      await waitFor(() => {
+        expect(mockListAuditEvents.mock.calls.length).toBeGreaterThan(before);
+        expect(lastListOptions()).toMatchObject({ tenantID: 'tenant-a' });
+        expect(screen.queryByText('user.login')).toBeNull();
+      });
+    });
+
+    it('drops a listAuditEvents response that lands after the session changed', async () => {
+      let resolve!: (v: unknown) => void;
+      mockListAuditEvents
+        .mockImplementationOnce(() => new Promise((r) => { resolve = r; }))
+        .mockResolvedValue(emptyPage);
+      render(IAMAuditView);
+      await waitFor(() => expect(mockListAuditEvents).toHaveBeenCalled());
+
+      setAuthenticated({ access_token: sessionToken('tenant-b', 'sid_2') });
+      await waitFor(() => expect(lastListOptions()).toMatchObject({ tenantID: 'tenant-b' }));
+
+      resolve({ events: [loginEvent], total: 1, limit: 50, offset: 0 });
+      await flush();
+      expect(screen.queryByText('user.login')).toBeNull();
+      expect(screen.queryByText('session/s-1')).toBeNull();
+    });
+
+    it('drops a getAuditEvent response that lands after the session changed', async () => {
+      let resolve!: (v: unknown) => void;
+      mockGetAuditEvent.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+      render(IAMAuditView);
+      await waitFor(() => screen.getByText('role.assign'));
+      await fireEvent.click(screen.getByText('role.assign'));
+      await waitFor(() => expect(mockGetAuditEvent).toHaveBeenCalled());
+
+      mockListAuditEvents.mockResolvedValue(emptyPage);
+      setAuthenticated({ access_token: sessionToken('tenant-b', 'sid_2') });
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: 'Audit event detail' })).toBeNull();
+      });
+
+      resolve(impersonatedEvent);
+      await flush();
+      expect(screen.queryByRole('dialog', { name: 'Audit event detail' })).toBeNull();
+      expect(screen.queryByText('corr-42')).toBeNull();
+    });
+  });
+});

@@ -3,21 +3,21 @@
  *
  * Runs once before the live-daemon Playwright projects and leaves the whole run
  * signed in as one principal. There is no static bootstrap token and no dev
- * bypass, so the session is always earned by a real passkey ceremony; the two
- * supported ways of getting one differ only in how the passkey comes to exist.
+ * bypass, so the session is always earned by a real login ceremony:
  *
  *   FIRST-BOOT ADMIN (default, `make test-e2e`) — a freshly built daemon on a
- *   scratch data dir prints a one-time invite URL. Walk it: activate a passkey
- *   for `admin` through the invite UI, then sign in.
+ *   scratch data dir issues `admin` a client certificate and nothing else.
+ *   Present it over mTLS to POST /api/v1/iam/login/piv, as the integration
+ *   suite does, and hand the returned tokens to the SPA's localStorage.
  *
- *   LIVE TENANT USER (`make test-e2e-live`) — a long-lived node, an account that
- *   already exists, and no invite left to walk. Enrol a passkey for that user
- *   with an admin client certificate (fixtures/live_tenant.ts), then sign in as
- *   them. Selected by QUICBAAS_E2E_TENANT + QUICBAAS_E2E_USER_EMAIL.
+ *   LIVE TENANT USER (`make test-e2e-live`) — a long-lived node and an account
+ *   that already exists. Enrol a passkey for that user with an admin client
+ *   certificate (fixtures/live_tenant.ts) on a CDP virtual authenticator, then
+ *   sign in as them through the unified ceremony (POST
+ *   /api/v1/auth/login/{begin,finish}, type=fido2). Selected by
+ *   QUICBAAS_E2E_TENANT + QUICBAAS_E2E_USER_EMAIL.
  *
- * Both paths attach the same CDP virtual authenticator, finish through the same
- * unified sign-in ceremony (POST /api/v1/auth/login/{begin,finish}, type=fido2),
- * and persist the same two artifacts:
+ * Both paths persist the same two artifacts:
  *   • the browser storageState, so every spec starts signed in;
  *   • the raw tokens, so the REST seeding helpers in fixtures/api.ts can
  *     authenticate their out-of-band calls.
@@ -26,23 +26,35 @@
  * page and produce meaningless red, so we want a loud, early failure instead.
  */
 
-import { chromium, type BrowserContext, type CDPSession, type FullConfig, type Page } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type CDPSession,
+  type FullConfig,
+  type Page,
+} from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   AUTH_DIR,
   ADMIN_STORAGE_STATE,
   ADMIN_TOKEN_FILE,
   ADMIN_EMAIL,
+  FACTORY_STORAGE_STATE,
+  FACTORY_TOKEN_FILE,
+  type FactoryTokens,
   TOKEN_KEY,
   REFRESH_TOKEN_KEY,
-  readAdminInviteToken,
+  readFirstBootAdminConfig,
   readLiveTenantConfig,
   type AdminTokens,
   type LiveTenantConfig,
 } from './fixtures/auth.ts';
 import { chromiumLaunchOptions, trustCA } from './fixtures/browser.ts';
 import { serverBase } from './fixtures/_http.ts';
-import { ensurePasskey } from './fixtures/live_tenant.ts';
+import { ensurePasskey, mtlsRequest } from './fixtures/live_tenant.ts';
 
 /** The shape context.storageState() returns — Playwright does not export it. */
 type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>;
@@ -83,29 +95,184 @@ async function attachVirtualAuthenticator(cdp: CDPSession): Promise<string> {
 }
 
 /**
- * Walk the first-boot invite: activate a passkey for the admin account through
- * the InviteActivateView UI (POST .../activate/fido2/begin+finish behind it).
+ * Log the first-boot admin in with its client certificate (POST
+ * /api/v1/iam/login/piv over mTLS) and leave the SPA holding the tokens.
  */
-async function activateFirstBootAdmin(page: Page, baseURL: string): Promise<Principal> {
-  const inviteToken = readAdminInviteToken();
+async function loginFirstBootAdmin(page: Page, baseURL: string): Promise<Principal> {
+  const cfg = readFirstBootAdminConfig();
 
-  await page.goto(baseURL, { waitUntil: 'networkidle' });
-  await page.evaluate((tok: string) => {
-    window.location.hash = `#/invite/${tok}`;
-  }, inviteToken);
-  await page.waitForLoadState('networkidle');
-
-  const activateFinish = page.waitForResponse(
-    (r) => r.url().includes('/activate/fido2/finish') && r.request().method() === 'POST',
-  );
-  await page.getByRole('button', { name: /Register Security Key/i }).click();
-  const actResp = await activateFinish;
-  if (actResp.status() < 200 || actResp.status() >= 300) {
-    throw new Error(`admin passkey activation failed: HTTP ${actResp.status()}`);
+  // Present the first-boot admin certificate to the PIV login route, exactly as
+  // the integration suite signs the system admin in: no body, the client
+  // certificate is the credential.
+  const url = `${serverBase()}/api/v1/iam/login/piv`;
+  const resp = await mtlsRequest(url, 'POST', cfg, { Accept: 'application/json' });
+  if (resp.status < 200 || resp.status >= 300) {
+    throw new Error(`admin mTLS login at ${url} failed: HTTP ${resp.status}: ${resp.body}`);
   }
-  await page.getByText(/sign in to your account/i).waitFor({ timeout: 15_000 });
+  const body = JSON.parse(resp.body) as { access_token?: string; refresh_token?: string };
+  if (!body.access_token) {
+    throw new Error(`admin mTLS login at ${url} returned no access_token`);
+  }
+
+  // Hand the tokens to the SPA the way its own login does: localStorage.
+  await page.goto(baseURL, { waitUntil: 'networkidle' });
+  await page.evaluate(
+    ([tk, rk, access, refresh]) => {
+      window.localStorage.setItem(tk, access);
+      if (refresh !== '') window.localStorage.setItem(rk, refresh);
+    },
+    [TOKEN_KEY, REFRESH_TOKEN_KEY, body.access_token, body.refresh_token ?? ''],
+  );
+  await page.reload({ waitUntil: 'networkidle' });
 
   return { email: ADMIN_EMAIL };
+}
+
+
+/** Tenant ids tried for the factory principal, in order. */
+const FACTORY_TENANT_CANDIDATES = ['e2e-factory', 'e2efactory'];
+
+interface FactoryPrincipal {
+  tenant: string;
+  email: string;
+  access_token: string;
+  refresh_token: string;
+}
+
+/**
+ * Provision a non-system tenant with a certificate-enrolled admin, then log
+ * that admin in over mTLS. Orchestrator, fleet and scheduler permissions are
+ * tenant-only, so the software-factory specs run as this principal.
+ *
+ * The key and CSR are made here with openssl; the server signs the CSR and
+ * returns the admin certificate, written beside the key under AUTH_DIR.
+ */
+async function provisionFactoryPrincipal(systemAccessToken: string): Promise<FactoryPrincipal> {
+  const admin = readFirstBootAdminConfig();
+  mkdirSync(AUTH_DIR, { recursive: true });
+
+  let lastError = '';
+  for (const tenant of FACTORY_TENANT_CANDIDATES) {
+    const keyPath = resolve(AUTH_DIR, `${tenant}-admin.key`);
+    const csrPath = resolve(AUTH_DIR, `${tenant}-admin.csr`);
+    const certPath = resolve(AUTH_DIR, `${tenant}-admin.crt`);
+
+    // Make the new key beside the saved pair, so a re-run whose tenant already
+    // exists still has the key that matches the saved certificate.
+    const newKeyPath = `${keyPath}.new`;
+    execFileSync('openssl', [
+      'ecparam', '-name', 'prime256v1', '-genkey', '-noout', '-out', newKeyPath,
+    ]);
+    execFileSync('openssl', [
+      'req', '-new', '-key', newKeyPath, '-subj', '/CN=admin', '-out', csrPath,
+    ]);
+    const csrPEM = readFileSync(csrPath, 'utf8');
+
+    const url = `${serverBase()}/api/v1/tenants/${encodeURIComponent(tenant)}/provision`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${systemAccessToken}`,
+      },
+      body: JSON.stringify({
+        isolation_type: 'prefix',
+        admin_enrollment: 'cert',
+        admin_csr_pem: csrPEM,
+      }),
+    });
+    const text = await resp.text().catch(() => '');
+
+    if (resp.ok) {
+      const body = JSON.parse(text) as { admin_cert_pem?: string };
+      if (!body.admin_cert_pem) {
+        throw new Error(`provision ${tenant}: response carries no admin_cert_pem`);
+      }
+      renameSync(newKeyPath, keyPath);
+      writeFileSync(certPath, body.admin_cert_pem);
+    } else if (resp.status === 409 && existsSync(certPath) && existsSync(keyPath)) {
+      // A re-run against the same daemon: the tenant exists and an earlier run
+      // saved its admin certificate and key. Log in with that pair.
+      rmSync(newKeyPath, { force: true });
+    } else if (resp.status === 400 && /tenant[ _]?id|invalid/i.test(text)) {
+      // The id format was refused; try the next candidate.
+      lastError = `provision ${tenant}: HTTP 400: ${text}`;
+      continue;
+    } else {
+      throw new Error(`provision ${tenant} at ${url} failed: HTTP ${resp.status}: ${text}`);
+    }
+
+    const cfg: LiveTenantConfig = {
+      tenant,
+      email: 'admin',
+      adminCert: certPath,
+      adminKey: keyPath,
+      ca: admin.ca,
+    };
+    const loginURL = `${serverBase()}/api/v1/iam/login/piv`;
+    const login = await mtlsRequest(loginURL, 'POST', cfg, { Accept: 'application/json' });
+    if (login.status < 200 || login.status >= 300) {
+      throw new Error(
+        `tenant ${tenant} admin mTLS login at ${loginURL} failed: HTTP ${login.status}: ${login.body}`,
+      );
+    }
+    const tokens = JSON.parse(login.body) as {
+      access_token?: string;
+      refresh_token?: string;
+      email?: string;
+      username?: string;
+    };
+    if (!tokens.access_token) {
+      throw new Error(`tenant ${tenant} admin mTLS login returned no access_token`);
+    }
+    return {
+      tenant,
+      email: tokens.email ?? tokens.username ?? `admin@${tenant}`,
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token ?? '',
+    };
+  }
+  throw new Error(`could not provision a factory tenant: ${lastError}`);
+}
+
+/**
+ * Save the factory principal's browser session: a fresh context whose
+ * localStorage holds its tokens, stripped of the refresh token like the admin
+ * state, plus the raw tokens for REST seeding.
+ */
+async function saveFactoryPrincipal(
+  browser: Browser,
+  contextOptions: Parameters<Browser['newContext']>[0],
+  baseURL: string,
+  principal: FactoryPrincipal,
+): Promise<void> {
+  const context = await browser.newContext(contextOptions);
+  try {
+    const page = await context.newPage();
+    await page.goto(baseURL, { waitUntil: 'networkidle' });
+    await page.evaluate(
+      ([tk, rk, access, refresh]) => {
+        window.localStorage.setItem(tk, access);
+        if (refresh !== '') window.localStorage.setItem(rk, refresh);
+      },
+      [TOKEN_KEY, REFRESH_TOKEN_KEY, principal.access_token, principal.refresh_token],
+    );
+    await page.reload({ waitUntil: 'networkidle' });
+    writeFileSync(
+      FACTORY_STORAGE_STATE,
+      JSON.stringify(withoutRefreshCredential(await context.storageState()), null, 2),
+    );
+  } finally {
+    await context.close();
+  }
+  const out: FactoryTokens = {
+    access_token: principal.access_token,
+    refresh_token: principal.refresh_token,
+    email: principal.email,
+    tenant: principal.tenant,
+  };
+  writeFileSync(FACTORY_TOKEN_FILE, JSON.stringify(out, null, 2));
 }
 
 /**
@@ -213,17 +380,19 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
   });
 
   try {
-    const cdp = await context.newCDPSession(page);
-    const authenticatorId = await attachVirtualAuthenticator(cdp);
-
-    // --- Step 1: make sure the principal has a passkey this browser can use. ---
-    const principal =
-      live === null
-        ? await activateFirstBootAdmin(page, baseURL)
-        : await enrolLiveTenantUser(page, cdp, authenticatorId, live, baseURL);
-
-    // --- Step 2: sign in with it. ---
-    await signInWithPasskey(page, principal);
+    // --- Steps 1-2: sign the principal in. ---
+    // The first-boot admin holds only a client certificate, so it logs in over
+    // mTLS. A live tenant user gets a passkey this browser can use, then signs
+    // in with it.
+    let principal: Principal;
+    if (live === null) {
+      principal = await loginFirstBootAdmin(page, baseURL);
+    } else {
+      const cdp = await context.newCDPSession(page);
+      const authenticatorId = await attachVirtualAuthenticator(cdp);
+      principal = await enrolLiveTenantUser(page, cdp, authenticatorId, live, baseURL);
+      await signInWithPasskey(page, principal);
+    }
 
     // --- Step 3: harvest the tokens the SPA persisted to localStorage. ---
     const tokens = await page.evaluate(
@@ -251,6 +420,25 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
       email: principal.email,
     };
     writeFileSync(ADMIN_TOKEN_FILE, JSON.stringify(out, null, 2));
+
+    // --- Step 5: the software-factory principal. ---
+    // The first-boot admin belongs to the system tenant, which is refused the
+    // tenant-only orchestrator, fleet and scheduler permissions; provision a
+    // tenant and sign its admin in. A live tenant user already is a tenant
+    // principal, so the factory session is a copy of the one just saved.
+    if (live === null) {
+      const factory = await provisionFactoryPrincipal(tokens.access_token);
+      await saveFactoryPrincipal(browser, { ignoreHTTPSErrors: true }, baseURL, factory);
+      // eslint-disable-next-line no-console
+      console.log(`[global-setup] factory session ready for tenant ${factory.tenant}`);
+    } else {
+      writeFileSync(
+        FACTORY_STORAGE_STATE,
+        JSON.stringify(withoutRefreshCredential(await context.storageState()), null, 2),
+      );
+      const factoryOut: FactoryTokens = { ...out, tenant: live.tenant };
+      writeFileSync(FACTORY_TOKEN_FILE, JSON.stringify(factoryOut, null, 2));
+    }
     // eslint-disable-next-line no-console
     console.log(
       `[global-setup] session ready for ${principal.email} (token ${tokens.access_token.slice(0, 12)}…)`,

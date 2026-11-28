@@ -279,6 +279,132 @@ describe('NodesView', () => {
   });
 });
 
+describe('NodesView membership', () => {
+  const clusterNodes = {
+    addNode: vi.fn(),
+    removeNode: vi.fn(),
+    replaceNode: vi.fn(),
+    listNonLeaderNodes: vi.fn(),
+  };
+  const NON_LEADER_NODES = { ...SERVICE_NODES, nodes: [SERVICE_NODES.nodes[1]], total_count: 1 };
+
+  beforeEach(() => {
+    for (const fn of Object.values(clusterNodes)) fn.mockReset();
+    clusterNodes.addNode.mockResolvedValue({ success: true, message: 'added', shard_id: 1, node_id: 3, timestamp: SERVICE_NODES.timestamp });
+    clusterNodes.removeNode.mockResolvedValue({ success: true, message: 'removed', shard_id: 1, node_id: 2, timestamp: SERVICE_NODES.timestamp });
+    clusterNodes.replaceNode.mockResolvedValue({ success: true, message: 'replaced', affected_shards: [1], timestamp: SERVICE_NODES.timestamp });
+    clusterNodes.listNonLeaderNodes.mockResolvedValue(NON_LEADER_NODES);
+    vi.mocked(getSDKClient).mockResolvedValue({ cluster: { listNodes: mockListNodes }, clusterNodes } as never);
+  });
+
+  async function rendered(): Promise<HTMLElement> {
+    const { container } = render(NodesView);
+    await waitFor(() => expect(container.querySelectorAll('tbody tr')).toHaveLength(2));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Add node/ })).not.toBeDisabled());
+    return container;
+  }
+
+  it('adds a node through the dialog and reloads the list', async () => {
+    await rendered();
+    await fireEvent.click(screen.getByRole('button', { name: /Add node/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Add node' });
+    expect(dialog).toBeInTheDocument();
+    await fireEvent.input(screen.getByLabelText('Shard ID'), { target: { value: '1' } });
+    await fireEvent.input(screen.getByLabelText('Node ID'), { target: { value: '3' } });
+    await fireEvent.input(screen.getByLabelText('Address'), { target: { value: '10.0.0.3:7000' } });
+    await fireEvent.input(screen.getByLabelText('Identity'), { target: { value: 'node-3' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(clusterNodes.addNode).toHaveBeenCalledWith({
+      shard_id: 1, node_id: 3, address: '10.0.0.3:7000', identity: 'node-3',
+    }));
+    await waitFor(() => expect(mockListNodes).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('dialog', { name: 'Add node' })).toBeNull();
+  });
+
+  it('checks the add fields before it calls', async () => {
+    await rendered();
+    await fireEvent.click(screen.getByRole('button', { name: /Add node/ }));
+    await fireEvent.input(screen.getByLabelText('Shard ID'), { target: { value: 'one' } });
+    await fireEvent.input(screen.getByLabelText('Node ID'), { target: { value: '3' } });
+    await fireEvent.input(screen.getByLabelText('Address'), { target: { value: '10.0.0.3:7000' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(screen.getByTestId('membership-error')).toHaveTextContent('Shard ID must be a whole number'));
+    expect(clusterNodes.addNode).not.toHaveBeenCalled();
+  });
+
+  it('shows a failed add inline and keeps the dialog open', async () => {
+    clusterNodes.addNode.mockRejectedValue(new Error('node already a member'));
+    await rendered();
+    await fireEvent.click(screen.getByRole('button', { name: /Add node/ }));
+    await fireEvent.input(screen.getByLabelText('Shard ID'), { target: { value: '1' } });
+    await fireEvent.input(screen.getByLabelText('Node ID'), { target: { value: '2' } });
+    await fireEvent.input(screen.getByLabelText('Address'), { target: { value: '10.0.0.2:7000' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(screen.getByTestId('membership-error')).toHaveTextContent('node already a member'));
+    expect(screen.getByRole('dialog', { name: 'Add node' })).toBeInTheDocument();
+    expect(mockListNodes).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes a node from a shard after confirmation and reloads', async () => {
+    await rendered();
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove node 2' }));
+    const dialog = screen.getByRole('dialog', { name: 'Remove node confirmation' });
+    expect(dialog).toHaveTextContent('10.0.0.2:7000');
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(screen.getByTestId('remove-error')).toHaveTextContent('Shard ID is required'));
+    expect(clusterNodes.removeNode).not.toHaveBeenCalled();
+    await fireEvent.input(screen.getByLabelText('Shard ID'), { target: { value: '1' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(clusterNodes.removeNode).toHaveBeenCalledWith(2, 1));
+    await waitFor(() => expect(mockListNodes).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('dialog', { name: 'Remove node confirmation' })).toBeNull();
+  });
+
+  it('makes no remove call when the confirmation is cancelled', async () => {
+    await rendered();
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove node 2' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog', { name: 'Remove node confirmation' })).toBeNull();
+    expect(clusterNodes.removeNode).not.toHaveBeenCalled();
+  });
+
+  it('replaces a node through the dialog and reloads', async () => {
+    await rendered();
+    await fireEvent.click(screen.getByRole('button', { name: 'Replace node 2' }));
+    expect(screen.getByRole('dialog', { name: 'Replace node 2' })).toBeInTheDocument();
+    await fireEvent.input(screen.getByLabelText('Replacement node ID'), { target: { value: '4' } });
+    await fireEvent.input(screen.getByLabelText('Replacement address'), { target: { value: '10.0.0.4:7000' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
+    await waitFor(() => expect(clusterNodes.replaceNode).toHaveBeenCalledWith(2, {
+      replacement_node_id: 4, replacement_address: '10.0.0.4:7000',
+    }));
+    await waitFor(() => expect(mockListNodes).toHaveBeenCalledTimes(2));
+  });
+
+  it('lists through the non-leader route while the filter is on', async () => {
+    const container = await rendered();
+    await fireEvent.click(screen.getByLabelText('Non-leader only'));
+    await waitFor(() => expect(clusterNodes.listNonLeaderNodes).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(container.querySelectorAll('tbody tr')).toHaveLength(1));
+    expect(container.querySelector('tbody tr')!.textContent).toContain('10.0.0.2:7000');
+    await fireEvent.click(screen.getByLabelText('Non-leader only'));
+    await waitFor(() => expect(mockListNodes).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(container.querySelectorAll('tbody tr')).toHaveLength(2));
+    expect(clusterNodes.listNonLeaderNodes).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables the actions and still lists when the client has no clusterNodes', async () => {
+    vi.mocked(getSDKClient).mockResolvedValue({ cluster: { listNodes: mockListNodes } } as never);
+    const { container } = render(NodesView);
+    await waitFor(() => expect(container.querySelectorAll('tbody tr')).toHaveLength(2));
+    expect(screen.getByRole('button', { name: /Add node/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Remove node 1' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Replace node 1' })).toBeDisabled();
+    expect(screen.getByLabelText('Non-leader only')).toBeDisabled();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
 describe('Nodes routing', () => {
   it('navigate("nodes") routes to #/nodes', () => {
     window.location.hash = '#/dashboard';

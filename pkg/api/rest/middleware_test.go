@@ -58,6 +58,27 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestSecurityHeadersMiddleware_ConnectOrigins(t *testing.T) {
+	csp := func(origins ...string) string {
+		handler := SecurityHeadersMiddleware(origins...)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ui/", nil))
+		return w.Header().Get(HeaderContentSecurityPolicy)
+	}
+
+	t.Run("allow-listed origins become connect-src entries", func(t *testing.T) {
+		assert.Equal(t,
+			"default-src 'self'; connect-src 'self' https://remote.example:8443 https://b.example",
+			csp("https://remote.example:8443", "https://b.example"))
+	})
+
+	t.Run("no origins keeps the same-origin policy", func(t *testing.T) {
+		assert.Equal(t, "default-src 'self'", csp())
+	})
+}
+
 // TestSecurityHeadersMiddlewareHSTSOmittedOverPlainHTTP verifies that a
 // request arriving over plain HTTP (r.TLS == nil) does not receive the
 // Strict-Transport-Security header, per RFC 6797 §7.2.

@@ -1,0 +1,3 @@
+### Added
+
+- The web console has a Key Store page for the keys the xkms backends hold: it shows the xkms health and the backends (with a backend's capabilities when one is picked), lists keys with a backend filter, and generates a key with its type and size or curve; a key row's Manage action opens a panel that shows the key's details and public key, lists its versions and enables or disables one version or (after a confirmation) all of them, rotates and deletes the key after a confirmation, and encrypts, decrypts, signs and verifies UTF-8 text with it. The page is web-only on desktop, and a connection without the xkms clients shows that inline (#2371).

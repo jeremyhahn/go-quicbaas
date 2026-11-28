@@ -915,7 +915,7 @@ export class McpBarrierClient implements BarrierClient {
       threshold: req.threshold,
       total: req.total,
     });
-    return { shares: reply.shares ?? [], threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
+    return { share_count: reply.share_count ?? 0, threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
   }
 
   // The recovery tool reports the quorum but never the recovery keys.
@@ -924,7 +924,7 @@ export class McpBarrierClient implements BarrierClient {
       threshold: req.threshold,
       total: req.total,
     });
-    return { keys: reply.keys ?? [], threshold: reply.threshold ?? 0, total: reply.total ?? 0 };
+    return { share_count: reply.share_count ?? 0, threshold: reply.threshold ?? 0, total: reply.total ?? 0 };
   }
 
   async recoverWithKeys(req: BarrierRecoverWithKeysRequest): Promise<void> {
@@ -1399,6 +1399,34 @@ export class McpClient implements Client {
   readonly crypto: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dek: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly entities: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly attestation: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly xkmsKeys: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly piv: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly xkms: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly backups: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly clusterNodes: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly kmsAdmin: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly objectStorageAdmin: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly parameters: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly vectorAdmin: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly xkmsFido2: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly registry: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly cache: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   readonly barrier: BarrierClient;

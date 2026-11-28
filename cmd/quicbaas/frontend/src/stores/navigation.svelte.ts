@@ -42,6 +42,7 @@ export type ViewID =
   | 'scheduler'
   | 'iam'
   | 'kms'
+  | 'xkms-keys'
   | 'secrets'
   | 'certificates'
   | 'trust'
@@ -53,6 +54,13 @@ export type ViewID =
   | 'ceremony'
   | 'bootstrap'
   | 'ssh-keys'
+  | 'my-sessions'
+  | 'attestation'
+  | 'oauth-apps'
+  | 'identity-providers'
+  | 'policy-tester'
+  | 'impersonation'
+  | 'iam-audit'
   | 'cluster'
   | 'nodes'
   | 'backup'
@@ -60,7 +68,9 @@ export type ViewID =
   | 'theme'
   | 'inference'
   | 'projects'
-  | 'accounts';
+  | 'accounts'
+  | 'agents'
+  | 'prompts';
 
 /** Map each sidebar ViewID to its canonical hash path. */
 const viewHashPaths: Partial<Record<ViewID, string>> = {
@@ -87,6 +97,7 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
   // SECURITY
   iam:           '/iam',
   kms:           '/kms',
+  'xkms-keys':   '/xkms-keys',
   secrets:       '/secrets',
   certificates:  '/certificates',
   trust:         '/trust',
@@ -98,15 +109,29 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
   ceremony:      '/ceremony',
   bootstrap:     '/bootstrap',
   'ssh-keys':    '/ssh-keys',
+  'my-sessions': '/my-sessions',
+  attestation:   '/attestation',
+  'oauth-apps':  '/oauth-apps',
+  'identity-providers': '/identity-providers',
+  'policy-tester': '/policy-tester',
+  impersonation: '/impersonation',
+  'iam-audit':   '/iam-audit',
   // ORCHESTRATION — inference
   inference:     '/inference',
   // ORCHESTRATION — projects
   projects:      '/projects',
   // ORCHESTRATION — pooled provider accounts
   accounts:      '/accounts',
+  // ORCHESTRATION — the Agent catalog: Agents and agent pools
+  agents:        '/agents',
+  // ORCHESTRATION — the prompts jobs render from
+  prompts:       '/prompts',
   // CLUSTER
   cluster:       '/cluster',
   nodes:         '/nodes',
+  backup:        '/backup',
+  // SETTINGS
+  connection:    '/connection',
 };
 
 /**
@@ -140,6 +165,7 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   // SECURITY
   iam:              'iam',
   kms:              'kms',
+  'xkms-keys':      'xkms-keys',
   secrets:          'secrets',
   certificates:     'certificates',
   trust:            'trust',
@@ -151,15 +177,29 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   ceremony:         'ceremony',
   bootstrap:        'bootstrap',
   'ssh-keys':       'ssh-keys',
+  'my-sessions':    'my-sessions',
+  attestation:      'attestation',
+  'oauth-apps':     'oauth-apps',
+  'identity-providers': 'identity-providers',
+  'policy-tester':  'policy-tester',
+  impersonation:    'impersonation',
+  'iam-audit':      'iam-audit',
   // ORCHESTRATION — inference
   inference:        'inference',
   // ORCHESTRATION — projects
   projects:         'projects',
   // ORCHESTRATION — pooled provider accounts
   accounts:         'accounts',
+  // ORCHESTRATION — the Agent catalog: Agents and agent pools
+  agents:           'agents',
+  // ORCHESTRATION — the prompts jobs render from
+  prompts:          'prompts',
   // CLUSTER
   cluster:          'cluster',
   nodes:            'nodes',
+  backup:           'backup',
+  // SETTINGS
+  connection:       'connection',
 };
 
 export interface NavState {

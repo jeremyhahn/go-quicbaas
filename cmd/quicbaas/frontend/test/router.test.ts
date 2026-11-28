@@ -182,6 +182,27 @@ describe('router — task detail and query params', () => {
     expect(routerStore.params['project']).toBe('p1');
   });
 
+  it('#/xkms-keys resolves to xkms-keys', async () => {
+    const { routerStore } = await loadRouter();
+    setHashAndFire('#/xkms-keys');
+    expect(routerStore.name).toBe('xkms-keys');
+  });
+
+  it('#/agents resolves to agents', async () => {
+    const { routerStore } = await loadRouter();
+    setHashAndFire('#/agents');
+    expect(routerStore.name).toBe('agents');
+  });
+
+  it('#/prompts?set=sdlc&scope=project&project=p1 resolves to prompts with its query params', async () => {
+    const { routerStore } = await loadRouter();
+    setHashAndFire('#/prompts?set=sdlc&scope=project&project=p1');
+    expect(routerStore.name).toBe('prompts');
+    expect(routerStore.params['set']).toBe('sdlc');
+    expect(routerStore.params['scope']).toBe('project');
+    expect(routerStore.params['project']).toBe('p1');
+  });
+
   it('query params are parsed for every route and decoded', async () => {
     const { routerStore } = await loadRouter();
     setHashAndFire('#/jobs?state=executing&q=a%20b');

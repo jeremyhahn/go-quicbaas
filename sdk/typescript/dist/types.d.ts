@@ -1,5 +1,6 @@
 import type { SpendLimits } from './spend.js';
 import type { AgentRef, AgentRole, AgentAttempt } from './agents.js';
+import type { PromptVersionRef } from './prompts.js';
 export type JobState = 'initializing' | 'decomposing' | 'scheduling' | 'assigning' | 'executing' | 'validating' | 'reviewing' | 're-delegating' | 'completing' | 'cleanup' | 'escalating' | 'completed' | 'failed';
 export interface JobAuditEvent {
     timestamp: number;
@@ -24,14 +25,16 @@ export interface WorkItem {
     title: string;
     description: string;
     priority: number;
-    dependencies: string[];
-    backend: string;
-    required_capabilities: string[];
-    required_role: string;
-    secret_refs: string[];
-    max_retries: number;
-    parallelizable: boolean;
-    fallback_backend: string;
+    dependencies?: string[];
+    backend?: string;
+    required_capabilities?: string[];
+    required_role?: string;
+    secret_refs?: string[];
+    max_retries?: number;
+    parallelizable?: boolean;
+    fallback_backend?: string;
+    host_affinity?: string;
+    host_affinity_strict?: boolean;
 }
 export interface JobConfig {
     tenant_id: string;
@@ -82,6 +85,12 @@ export interface JobStatus {
     runner?: string;
     /** prompt_append is the run-time prompt material the job appended to every session it spawned. */
     prompt_append?: string;
+    /**
+     * prompts is every prompt version the job ran with, resolved once at
+     * launch (set, name, the scope that answered, version and content hash).
+     * Absent for a runner that renders none.
+     */
+    prompts?: PromptVersionRef[];
     /** node names the daemon running the job's control loop. */
     node?: string;
     /** heartbeat_at is the nanosecond Unix instant the loop last proved alive. */
@@ -582,6 +591,8 @@ export interface AgentRoleSpec {
     env: Record<string, string>;
     sandboxed: boolean;
     container_image: string;
+    /** host_affinity optionally pins the role to one daemon hostname; empty lets the orchestrator pick any eligible host. */
+    host_affinity?: string;
     num_ctx: number;
     /** prompt_append is run-time prompt material appended to every session of this role. At most 64 KiB. */
     prompt_append?: string;
@@ -1018,6 +1029,7 @@ export interface CreateTaskRequest {
     team_name: string;
     description?: string;
     metadata?: Record<string, string>;
+    project_id?: string;
     host_affinity?: string;
     host_affinity_strict?: boolean;
     gpu_required?: boolean;
@@ -1036,10 +1048,15 @@ export interface CreateTaskResponse {
 }
 export interface DecomposeTaskRequest {
     tenant_id: string;
-    task_id: string;
+    task: string;
+    backend?: string;
+    model?: string;
+    project_ids?: string[];
+    use_rag?: boolean;
 }
 export interface DecomposeTaskResponse {
-    tasks: Task[];
+    work_items: WorkItem[];
+    timestamp: number;
 }
 export interface ClaimTaskRequest {
     tenant_id: string;
@@ -1282,6 +1299,26 @@ export interface VerifyAuthorizedResponse {
     /** The matching authorized entry. */
     entry: SSHAuthorizedEntry;
 }
+export interface AddAuthorizedKeyRequest {
+    /** Scope that owns the entry. */
+    scope: SSHScope;
+    /** Owner within the scope. */
+    owner: string;
+    /** Entry name, unique within scope/owner. */
+    name: string;
+    /** The authorized_keys line (public key). */
+    line: string;
+    /** Optional authorized_keys options (e.g. "restrict"). */
+    options?: string[];
+    /** Optional comment. */
+    comment?: string;
+}
+export interface ListAuthorizedKeysRequest {
+    /** Restrict the list to this scope. */
+    scope?: SSHScope;
+    /** Restrict the list to this owner. */
+    owner?: string;
+}
 export interface DeployFleetNodeSpec {
     host: string;
     ssh_user: string;
@@ -1420,7 +1457,7 @@ export interface ListPoliciesResponse {
     policies: IAMPolicy[];
     count: number;
 }
-export type KMSKeyStatus = 'active' | 'inactive' | 'pending_deletion' | 'destroyed';
+export type KMSKeyStatus = 'enabled' | 'disabled' | 'pending_deletion' | 'deleted';
 export interface KMSKey {
     id: string;
     name: string;
@@ -1623,8 +1660,8 @@ export interface BarrierRekeyRequest {
     total: number;
 }
 export interface BarrierRekeyResponse {
-    /** New Shamir shares. */
-    shares: string[];
+    /** Number of shares distributed to officers. */
+    share_count: number;
     /** New threshold value. */
     threshold: number;
     /** New total share count. */
@@ -1647,12 +1684,12 @@ export interface TenantBarrierInitResponse {
     tenant_id: string;
     /** Sealing strategy that was provisioned. */
     strategy: TenantBarrierStrategy;
-    /** Shamir shares for distribution — returned exactly once. */
-    shares: string[];
     /** Threshold required for reconstruction. */
     threshold: number;
     /** Total shares generated. */
     total_shares: number;
+    /** Number of shares sealed to Security Officer enclaves; no share is returned. */
+    share_count: number;
 }
 export interface TenantBarrierUnsealShareResponse {
     /** Tenant whose barrier received the share. */
@@ -1689,8 +1726,8 @@ export interface BarrierGenerateRecoveryKeysRequest {
     total: number;
 }
 export interface BarrierRecoveryKeysResponse {
-    /** Recovery key values for distribution. */
-    keys: string[];
+    /** Number of recovery shares distributed to officers. */
+    share_count: number;
     /** Threshold required for recovery. */
     threshold: number;
     /** Total recovery keys generated. */
@@ -1927,7 +1964,11 @@ export interface ClusterStatusResponse {
     healthy: boolean;
     timestamp: string;
 }
-/** ClusterNodeInfo is one cluster member as GET /api/v1/cluster/nodes reports it. */
+/**
+ * ClusterNodeInfo is one cluster member as GET /api/v1/cluster/nodes reports
+ * it, and the leader inside ClusterLeaderResponse. Mirrors the Go REST
+ * rest.ClusterNodeInfo.
+ */
 export interface ClusterNodeInfo {
     node_id: number;
     address: string;
@@ -1937,11 +1978,72 @@ export interface ClusterNodeInfo {
     version: string;
     uptime_seconds: number;
 }
-/** ListClusterNodesResponse is the wire shape returned by GET /api/v1/cluster/nodes. */
-export interface ListClusterNodesResponse {
-    nodes: ClusterNodeInfo[];
-    total_count: number;
+export interface ClusterLeaderResponse {
+    leader: ClusterNodeInfo;
     timestamp: string;
+}
+export interface ShardLeaderResponse {
+    shard_id: number;
+    leader_id: number;
+    leader_address?: string;
+    term?: number;
+    valid: boolean;
+}
+export interface RebalanceRequest {
+    strategy?: string;
+    target_shard_count?: number;
+}
+export interface RebalanceResponse {
+    operation_id: string;
+    started: boolean;
+    status: string;
+    timestamp: string;
+}
+export interface RebalanceStatusResponse {
+    operation_id?: string;
+    status: string;
+    shards_moved?: number;
+    total_shards?: number;
+    percent_complete: number;
+    elapsed_time: number;
+    timestamp: string;
+}
+export interface RebalancePlanResponse {
+    current_shards: number;
+    target_shards: number;
+    strategy: string;
+    estimated_time: number;
+    timestamp: string;
+}
+export interface MigrationRequest {
+    source_shard_id: number;
+    target_shard_id: number;
+    entity_types?: string[];
+}
+export interface MigrationResponse {
+    operation_id: string;
+    status: string;
+    source_shard_id: number;
+    target_shard_id: number;
+    estimated_time: number;
+    timestamp: string;
+}
+export interface MigrationStatusResponse {
+    operation_id: string;
+    status: string;
+    keys_processed: number;
+    bytes_processed: number;
+    estimated_total?: number;
+    percent_complete: number;
+    elapsed_time: number;
+    estimated_remaining?: number;
+    current_rate?: number;
+    timestamp: string;
+}
+export interface CancelMigrationResponse {
+    operation_id: string;
+    cancelled: boolean;
+    message: string;
 }
 /** @deprecated Use BarrierStatusResponse. */
 export type SealStatusResponse = BarrierStatusResponse;

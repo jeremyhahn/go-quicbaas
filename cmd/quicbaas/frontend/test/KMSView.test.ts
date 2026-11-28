@@ -8,6 +8,7 @@
  *   - Opens the Create Key dialog when clicked.
  *   - Calls sdk.kms.createKey with the correct shape.
  *   - Shows an error alert when listKeys fails.
+ *   - Opens the key panel from a row's Manage action.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -49,7 +50,8 @@ const mockKeys: KMSKey[] = [
 // Hoisted mocks (safe to reference inside vi.mock factories)
 // ---------------------------------------------------------------------------
 
-const { mockCreateKey, mockRotateKey, mockDeleteKey, mockGetSDKClient } = vi.hoisted(() => ({
+const { mockCreateKey, mockRotateKey, mockDeleteKey, mockGetSDKClient, mockGetKeyMetadata } = vi.hoisted(() => ({
+  mockGetKeyMetadata: vi.fn(),
   mockCreateKey: vi.fn(),
   mockRotateKey: vi.fn(),
   mockDeleteKey: vi.fn().mockResolvedValue(undefined),
@@ -76,14 +78,36 @@ describe('KMSView', () => {
     vi.clearAllMocks();
     mockCreateKey.mockResolvedValue({ key: mockKeys[0], timestamp: 0 });
     mockRotateKey.mockResolvedValue({ key: mockKeys[0], old_key_id: 'old', timestamp: 0 });
+    mockGetKeyMetadata.mockResolvedValue({
+      metadata: {
+        key_id: 'signing-key', name: 'signing-key', algorithm: 'RSA-2048', status: 'ENABLED',
+        version: 1, exportable: false, deletion_protection: false, created_at: 1746230400, updated_at: 1746230400,
+      },
+      timestamp: 1746230400,
+    });
     mockGetSDKClient.mockResolvedValue({
       kms: {
         listKeys: vi.fn().mockResolvedValue({ keys: mockKeys, count: 2 }),
         createKey: mockCreateKey,
         rotateKey: mockRotateKey,
         deleteKey: mockDeleteKey,
+        encrypt: vi.fn(),
+        decrypt: vi.fn(),
+      },
+      kmsAdmin: {
+        getKeyMetadata: mockGetKeyMetadata,
       },
     });
+  });
+
+  it('opens the key panel from a row\'s Manage action and closes it', async () => {
+    render(KMSView);
+    await waitFor(() => screen.getByText('signing-key'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Manage key signing-key' }));
+    expect(screen.getByRole('dialog', { name: 'Manage key signing-key' })).toBeInTheDocument();
+    await waitFor(() => expect(mockGetKeyMetadata).toHaveBeenCalledWith('signing-key'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Close key panel' }));
+    expect(screen.queryByRole('dialog', { name: /Manage key/ })).not.toBeInTheDocument();
   });
 
   it('renders the "KMS" page heading', async () => {

@@ -26,7 +26,7 @@
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import { Compass } from 'lucide-svelte';
-  import { createBootstrapClient, isWailsRuntime } from '@quicbaas/sdk';
+  import { createBootstrapClient } from '@quicbaas/sdk';
   import type { BootstrapClient as SDKBootstrapClient, BootstrapBundleRequest } from '@quicbaas/sdk';
   import { BootstrapMethodPicker } from '@quicbaas/svelte-security';
   import type {
@@ -48,16 +48,13 @@
   // is folded into the structural BootstrapResponse the view renders.
   // ---------------------------------------------------------------------------
 
-  function resolveTransport(): 'wails' | 'rest' {
-    return isWailsRuntime() ? 'wails' : 'rest';
-  }
-
   let sdkClient: SDKBootstrapClient | null = $state(null);
 
   async function getSdkClient(): Promise<SDKBootstrapClient> {
     if (sdkClient !== null) return sdkClient;
-    const baseURL = typeof window !== 'undefined' ? window.location.origin : '';
-    sdkClient = await createBootstrapClient(resolveTransport(), { baseURL });
+    // createBootstrapClient takes only a ClientConfig and always builds the
+    // REST client; with no baseURL it calls same-origin relative paths.
+    sdkClient = await createBootstrapClient();
     return sdkClient;
   }
 

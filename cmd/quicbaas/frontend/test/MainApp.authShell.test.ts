@@ -60,6 +60,7 @@ function makeMockClient() {
 
 vi.mock('../src/stores/sdkClient.ts', () => ({
   getSDKClient:   vi.fn().mockImplementation(() => Promise.resolve(makeMockClient())),
+  getOriginSDKClient: vi.fn().mockImplementation(() => Promise.resolve(makeMockClient())),
   resetSDKClient: vi.fn(),
 }));
 

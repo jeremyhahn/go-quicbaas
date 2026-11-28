@@ -15,6 +15,7 @@ import { mount } from 'svelte';
 import App from './App.svelte';
 import { showToast } from './stores/toast.svelte.ts';
 import { installAuthFetch } from './stores/authFetch.ts';
+import { installConnectionWatch } from './stores/sdkClient.ts';
 import './app.css';
 
 // ---------------------------------------------------------------------------
@@ -26,6 +27,8 @@ import './app.css';
 // ---------------------------------------------------------------------------
 
 installAuthFetch();
+// Another tab changing the daemon address reloads this tab too.
+installConnectionWatch();
 
 // ---------------------------------------------------------------------------
 // Global error boundary.

@@ -31,8 +31,12 @@
   import { statusBadgeClass } from '../../components/core/statusVariant.ts';
   import type { KMSKey, CreateKeyRequest } from '@quicbaas/sdk';
   import type { KMSKeyVersion } from '@quicbaas/sdk';
-  import { Key, Pencil, Trash2, RotateCw, Eye, ToggleLeft, ToggleRight, Star } from 'lucide-svelte';
+  import { Key, Pencil, Trash2, RotateCw, Eye, ToggleLeft, ToggleRight, Star, Settings2 } from 'lucide-svelte';
   import { formatDateTime } from '../../lib/time.ts';
+  import KMSKeyPanel from '../../components/security/KMSKeyPanel.svelte';
+
+  /** Name of the key whose Manage panel is open, or null. */
+  let managedKey: string | null = $state(null);
 
   // ---------------------------------------------------------------------------
   // Key list state
@@ -142,7 +146,7 @@
   let togglingKey: string | null = $state(null);
 
   async function toggleKeyStatus(key: KMSKey): Promise<void> {
-    const nextStatus = (key.status === 'active' || key.status === 'enabled') ? 'disabled' : 'enabled';
+    const nextStatus = (key.status === 'enabled') ? 'disabled' : 'enabled';
     togglingKey = key.id;
     try {
       const client = await getSDKClient();
@@ -370,6 +374,16 @@
                   <Eye class="h-3 w-3" />
                 </button>
               </div>
+              <div class="tooltip tooltip-left" data-tip="Manage key">
+                <button
+                  class="btn btn-ghost btn-xs"
+                  onclick={() => { managedKey = key.name || key.id; }}
+                  title="Manage key"
+                  aria-label={`Manage key ${key.name || key.id}`}
+                >
+                  <Settings2 class="h-3 w-3" />
+                </button>
+              </div>
               <div class="tooltip tooltip-left" data-tip="Rotate key">
                 <button
                   class="btn btn-ghost btn-xs"
@@ -383,16 +397,16 @@
               </div>
               <div
                 class="tooltip tooltip-left"
-                data-tip={key.status === 'active' || key.status === 'enabled' ? 'Disable key' : 'Enable key'}
+                data-tip={key.status === 'enabled' ? 'Disable key' : 'Enable key'}
               >
                 <button
                   class="btn btn-ghost btn-xs"
                   disabled={togglingKey === key.id}
                   onclick={() => void toggleKeyStatus(key)}
-                  title={key.status === 'active' || key.status === 'enabled' ? 'Disable key' : 'Enable key'}
-                  aria-label={key.status === 'active' || key.status === 'enabled' ? `Disable key ${key.name || key.id}` : `Enable key ${key.name || key.id}`}
+                  title={key.status === 'enabled' ? 'Disable key' : 'Enable key'}
+                  aria-label={key.status === 'enabled' ? `Disable key ${key.name || key.id}` : `Enable key ${key.name || key.id}`}
                 >
-                  {#if key.status === 'active' || key.status === 'enabled'}
+                  {#if key.status === 'enabled'}
                     <ToggleRight class="h-3 w-3 text-success" />
                   {:else}
                     <ToggleLeft class="h-3 w-3 text-warning" />
@@ -556,4 +570,11 @@
     </div>
     <div class="modal-backdrop" role="none" onclick={() => { versionsKey = null; }} onkeydown={() => { versionsKey = null; }}></div>
   </div>
+{/if}
+
+<!-- =========================================================================
+     KEY MANAGE PANEL: metadata, access policy, rotation policy, encrypt
+     ========================================================================= -->
+{#if managedKey}
+  <KMSKeyPanel keyName={managedKey} onclose={() => { managedKey = null; }} />
 {/if}

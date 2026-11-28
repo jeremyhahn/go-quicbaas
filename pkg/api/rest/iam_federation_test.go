@@ -48,6 +48,7 @@ type mockFederationManager struct {
 	getUserLinksErr     error
 	beginLoginRedirect  *iam.LoginRedirect
 	callbackResult      *iam.FederationResult
+	linkAccountToken    string
 }
 
 func newMockFederationManager() *mockFederationManager {
@@ -183,6 +184,7 @@ func (m *mockFederationManager) HandleCallback(ctx context.Context, stateToken, 
 }
 
 func (m *mockFederationManager) LinkAccount(ctx context.Context, userID uint64, tenantID, providerID, externalToken string) error {
+	m.linkAccountToken = externalToken
 	if m.linkAccountErr != nil {
 		return m.linkAccountErr
 	}
@@ -285,6 +287,7 @@ func TestRegisterProvider_Success(t *testing.T) {
 		ClientID:     "google-client-id",
 		ClientSecret: "google-secret",
 		Issuer:       "https://accounts.google.com",
+		JWKSURL:      "https://www.googleapis.com/oauth2/v3/certs",
 		Scopes:       []string{"openid", "email", "profile"},
 	}
 	bodyBytes, _ := json.Marshal(body)
@@ -309,6 +312,14 @@ func TestRegisterProvider_Success(t *testing.T) {
 	assert.Equal(t, string(ProviderTypeOIDC), string(resp.Type))
 	assert.Equal(t, "tenant123", resp.TenantID)
 	assert.Equal(t, "google-client-id", resp.ClientID)
+	assert.Equal(t, "https://www.googleapis.com/oauth2/v3/certs", resp.JWKSURL)
+	var stored *iam.ExternalProvider
+	for _, p := range fedMgr.providers {
+		stored = p
+	}
+	require.NotNil(t, stored)
+	assert.Equal(t, "https://www.googleapis.com/oauth2/v3/certs", stored.JWKSURL,
+		"the stored provider must carry the registered JWKS URL")
 }
 
 // TestRegisterProvider_MissingTenantID tests provider registration with missing tenant ID.
@@ -1985,7 +1996,7 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 	newAuthURL := "https://new-issuer.com/auth"
 	newTokenURL := "https://new-issuer.com/token"
 	newUserInfoURL := "https://new-issuer.com/userinfo"
-	_ = "https://new-issuer.com/.well-known/jwks.json"
+	newJWKSURL := "https://new-issuer.com/.well-known/jwks.json"
 	newScopes := []string{"openid", "email"}
 	newClaimMapping := map[string]string{"email": "e_mail"}
 	_ = map[string]interface{}{"key": "value"}
@@ -1999,8 +2010,8 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 		AuthURL:      &newAuthURL,
 		TokenURL:     &newTokenURL,
 		UserInfoURL:  &newUserInfoURL,
-		// JWKSURL:      &newJWKSURL,
-		Scopes: &newScopes,
+		JWKSURL:      &newJWKSURL,
+		Scopes:       &newScopes,
 		// ClaimMapping: &newClaimMapping,
 		// Metadata:     &newMetadata,
 	}
@@ -2030,6 +2041,8 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 	stored, err := fedMgr.GetProvider(context.Background(), "tenant123", "prov_google")
 	require.NoError(t, err)
 	assert.Equal(t, "new-secret", stored.ClientSecret, "the stored provider must keep the secret")
+	assert.Equal(t, newJWKSURL, stored.JWKSURL, "the stored provider must carry the new JWKS URL")
+	assert.Equal(t, newJWKSURL, resp.JWKSURL)
 	assert.Equal(t, "https://new-issuer.com", resp.IssuerURL)
 	assert.Equal(t, "https://new-issuer.com/auth", resp.AuthURL)
 	assert.Equal(t, "https://new-issuer.com/token", resp.TokenURL)
@@ -2191,6 +2204,35 @@ func TestLinkAccount_WithAccessToken(t *testing.T) {
 	err := json.Unmarshal(rec.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, "google_user_123", resp.ExternalID)
+}
+
+// TestLinkAccount_ForwardsAccessTokenToManager verifies that the handler
+// passes the request's access_token to the federation manager, which needs it
+// to read the provider's claims.
+func TestLinkAccount_ForwardsAccessTokenToManager(t *testing.T) {
+	fedMgr := newMockFederationManager()
+	handler, _ := createFederationTestHandler(fedMgr)
+
+	body := LinkAccountOptions{
+		ProviderID:  "prov_google",
+		ExternalID:  "google_user_123",
+		AccessToken: "provider_access_token",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/users/user123/links", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", "tenant123")
+	rctx.URLParams.Add("user_id", "10123")
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
+
+	rec := httptest.NewRecorder()
+	handler.LinkAccount(rec, req)
+
+	assert.Equal(t, http.StatusCreated, rec.Code)
+	assert.Equal(t, "provider_access_token", fedMgr.linkAccountToken)
 }
 
 // fedErrorReader is a reader that always returns an error.

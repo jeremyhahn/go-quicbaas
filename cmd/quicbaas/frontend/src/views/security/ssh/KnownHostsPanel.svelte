@@ -22,6 +22,8 @@
     - "Add Pin" button opens an inline modal with host + host-key fields; the
       server derives the fingerprint and algorithm from the key
     - Remove pin with a confirmation dialog
+    - Row "Verify" checks a presented fingerprint against the pin
+      (POST /api/v1/ssh/known-hosts/{host}/verify)
 
   Props:
     scope — SSH scope to filter pins by (user | tenant | service).
@@ -31,7 +33,7 @@
   import { getSDKClient } from '../../../stores/sdkClient.ts';
   import { showToast } from '../../../stores/toast.svelte.ts';
   import type { SSHPin, SSHScope } from '@quicbaas/sdk';
-  import { SSHUnavailableError } from '@quicbaas/sdk';
+  import { SSHHostMismatchError, SSHNotFoundError, SSHUnavailableError } from '@quicbaas/sdk';
   import DataTable from '../../../components/core/DataTable.svelte';
   import type { Column } from '../../../lib/dataTable.ts';
 
@@ -77,6 +79,14 @@
   // Delete confirmation
   let pinToRemove: SSHPin | null = $state(null);
   let removing = $state(false);
+
+  // Verify host key
+  type VerifyOutcome = 'match' | 'mismatch' | 'nopin';
+  let pinToVerify: SSHPin | null = $state(null);
+  let verifyFingerprint = $state('');
+  let verifyOutcome: VerifyOutcome | null = $state(null);
+  let verifyError: string | null = $state(null);
+  let verifying = $state(false);
 
   // ---------------------------------------------------------------------------
   // Data loading
@@ -166,6 +176,54 @@
       showToast('error', e instanceof Error ? e.message : 'Remove failed');
     } finally {
       removing = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Verify host key
+  // ---------------------------------------------------------------------------
+
+  function openVerify(pin: SSHPin): void {
+    pinToVerify = pin;
+    verifyFingerprint = '';
+    verifyOutcome = null;
+    verifyError = null;
+  }
+
+  function closeVerify(): void {
+    pinToVerify = null;
+    verifyOutcome = null;
+    verifyError = null;
+  }
+
+  async function submitVerify(): Promise<void> {
+    if (!pinToVerify) return;
+    verifyOutcome = null;
+    verifyError = null;
+    const fingerprint = verifyFingerprint.trim();
+    if (!fingerprint) {
+      verifyError = 'Fingerprint is required';
+      return;
+    }
+    verifying = true;
+    try {
+      const client = await getSDKClient();
+      await client.ssh.knownHosts.verify(pinToVerify.host, {
+        scope,
+        ...(owner ? { owner } : {}),
+        fingerprint,
+      });
+      verifyOutcome = 'match';
+    } catch (e) {
+      if (e instanceof SSHHostMismatchError) {
+        verifyOutcome = 'mismatch';
+      } else if (e instanceof SSHNotFoundError) {
+        verifyOutcome = 'nopin';
+      } else {
+        verifyError = e instanceof Error ? e.message : 'Verify failed';
+      }
+    } finally {
+      verifying = false;
     }
   }
 
@@ -268,13 +326,22 @@
               <td class="text-xs text-base-content/50">{pin.source ?? '—'}</td>
               <td class="text-xs text-base-content/50">{formatDate(pin.added_at)}</td>
               <td>
-                <button
-                  class="btn btn-ghost btn-xs text-error"
-                  onclick={() => { pinToRemove = pin; }}
-                  aria-label={`Remove host pin for ${pin.host}`}
-                >
-                  Remove
-                </button>
+                <div class="flex items-center gap-1">
+                  <button
+                    class="btn btn-ghost btn-xs"
+                    onclick={() => openVerify(pin)}
+                    aria-label={`Verify host key for ${pin.host}`}
+                  >
+                    Verify
+                  </button>
+                  <button
+                    class="btn btn-ghost btn-xs text-error"
+                    onclick={() => { pinToRemove = pin; }}
+                    aria-label={`Remove host pin for ${pin.host}`}
+                  >
+                    Remove
+                  </button>
+                </div>
               </td>
             </tr>
           {/snippet}
@@ -354,6 +421,56 @@
       onclick={() => { showAdd = false; addError = null; }}
       onkeydown={() => { showAdd = false; addError = null; }}
     ></div>
+  </div>
+{/if}
+
+<!-- Verify host key dialog -->
+{#if pinToVerify !== null}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Verify host key dialog">
+    <div class="modal-box max-w-md">
+      <h3 class="text-base font-semibold mb-1">Verify Host Key</h3>
+      <p class="text-sm text-base-content/50 mb-4 font-mono">{pinToVerify.host}</p>
+
+      {#if verifyError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{verifyError}</div>
+      {/if}
+      {#if verifyOutcome === 'match'}
+        <div class="alert alert-success text-sm mb-3" role="status">Fingerprint matches the pin</div>
+      {:else if verifyOutcome === 'mismatch'}
+        <div class="alert alert-error text-sm mb-3" role="alert">Fingerprint does NOT match the pin</div>
+      {:else if verifyOutcome === 'nopin'}
+        <div class="alert alert-warning text-sm mb-3" role="status">No pin for this host</div>
+      {/if}
+
+      <div class="form-control">
+        <label class="label label-text" for="verify-pin-fingerprint">
+          Presented fingerprint <span class="text-error ml-0.5" aria-hidden="true">*</span>
+        </label>
+        <input
+          id="verify-pin-fingerprint"
+          class="input input-bordered input-sm font-mono"
+          type="text"
+          placeholder="SHA256:…"
+          bind:value={verifyFingerprint}
+          aria-required="true"
+        />
+      </div>
+
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeVerify} aria-label="Close verify host key dialog">
+          Close
+        </button>
+        <button
+          class="btn btn-primary btn-sm"
+          disabled={verifying}
+          onclick={submitVerify}
+          aria-label="Check host fingerprint"
+        >
+          {verifying ? 'Checking…' : 'Verify'}
+        </button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeVerify} onkeydown={closeVerify}></div>
   </div>
 {/if}
 

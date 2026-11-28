@@ -31,6 +31,13 @@
  */
 
 /**
+ * GO_ZERO_TIME_PREFIX starts every rendering of Go's zero `time.Time`
+ * ("0001-01-01T00:00:00Z"). A wire timestamp with this prefix names no
+ * instant: the server never set the field.
+ */
+const GO_ZERO_TIME_PREFIX = '0001-01-01';
+
+/**
  * Convert any supported timestamp representation to JS milliseconds.
  *
  * Handles the three on-the-wire forms QuicBaaS surfaces produce:
@@ -38,8 +45,9 @@
  *   • numeric string ("1778019596") — same auto-detection after coercion
  *   • ISO 8601 string ("2026-05-05T22:22:57.000Z") — SDK toISO() wrappers emit this
  *
- * Returns null for null, undefined, empty string, zero, or any value that
- * doesn't parse — the formatter wrappers turn that into an em-dash.
+ * Returns null for null, undefined, empty string, zero, Go's zero time
+ * ("0001-01-01T00:00:00Z", see hasInstant), or any value that doesn't
+ * parse — the formatter wrappers turn that into an em-dash.
  */
 export function toMillis(ts: number | string | null | undefined): number | null {
   if (ts === null || ts === undefined || ts === '') return null;
@@ -50,6 +58,8 @@ export function toMillis(ts: number | string | null | undefined): number | null 
     if (Number.isFinite(asNum)) {
       ts = asNum;
     } else {
+      // Go's zero time.Time is a valid date that names no instant.
+      if (ts.startsWith(GO_ZERO_TIME_PREFIX)) return null;
       const parsed = Date.parse(ts);
       return Number.isFinite(parsed) ? parsed : null;
     }
@@ -82,7 +92,7 @@ export function toMillis(ts: number | string | null | undefined): number | null 
 export function hasInstant(ts: number | string | null | undefined): boolean {
   if (ts === null || ts === undefined || ts === '') return false;
   if (typeof ts === 'number') return Number.isFinite(ts) && ts > 0;
-  return !ts.startsWith('0001-01-01');
+  return !ts.startsWith(GO_ZERO_TIME_PREFIX);
 }
 
 /** Render a timestamp as "5/5/2026, 5:46:49 PM" or em-dash if missing/invalid. */

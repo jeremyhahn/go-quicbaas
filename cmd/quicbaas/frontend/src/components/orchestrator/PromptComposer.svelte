@@ -12,6 +12,7 @@
     requestCloseSession,
   } from '../../stores/sessionStore.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
   import { dispatchSlashCommand, isSlashCommand } from '../../lib/slashCommands.ts';
 
   // ---------------------------------------------------------------------------
@@ -61,7 +62,7 @@
           status: active?.status ?? '',
           backend: active?.backend ?? '',
           model: active?.model,
-          tenantId: active?.tenant_id,
+          tenantId: orchestratorStore.activeTenantID || undefined,
         },
         eventCount: sessionStore.events.length,
         closeSession: () => requestCloseSession(sessionId),

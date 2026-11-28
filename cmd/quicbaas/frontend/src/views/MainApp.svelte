@@ -55,6 +55,8 @@
   import InferenceView from './orchestrator/InferenceView.svelte';
   import ProjectsView from './orchestrator/ProjectsView.svelte';
   import AccountsView from './orchestrator/AccountsView.svelte';
+  import AgentsView from './orchestrator/AgentsView.svelte';
+  import PromptsView from './orchestrator/PromptsView.svelte';
   import ComingSoon from './ComingSoon.svelte';
   import LoginView from './orchestrator/LoginView.svelte';
   import RegisterView from './orchestrator/RegisterView.svelte';
@@ -77,6 +79,7 @@
   import IAMView from './security/IAMView.svelte';
   import InviteActivateView from './security/InviteActivateView.svelte';
   import KMSView from './security/KMSView.svelte';
+  import XKMSKeysView from './security/XKMSKeysView.svelte';
   import SecretsView from './security/SecretsView.svelte';
   import CertificatesView from './security/CertificatesView.svelte';
   import TrustView from './security/TrustView.svelte';
@@ -88,10 +91,18 @@
   import CeremonyView from './security/CeremonyView.svelte';
   import BootstrapView from './security/BootstrapView.svelte';
   import SSHKeysView from './security/SSHKeysView.svelte';
+  import AttestationView from './security/AttestationView.svelte';
+  import OAuthAppsView from './security/OAuthAppsView.svelte';
+  import IdentityProvidersView from './security/IdentityProvidersView.svelte';
+  import PolicyTesterView from './security/PolicyTesterView.svelte';
+  import ImpersonationView from './security/ImpersonationView.svelte';
+  import IAMAuditView from './security/IAMAuditView.svelte';
 
   // CLUSTER views
   import ClusterDashboard from './cluster/ClusterDashboard.svelte';
   import NodesView from './cluster/NodesView.svelte';
+  import BackupView from './cluster/BackupView.svelte';
+  import ConnectionView from './settings/ConnectionView.svelte';
 
   // New session management views
   import SessionList from '../components/orchestrator/SessionList.svelte';
@@ -115,7 +126,7 @@
   import { tenantOptionsOf, withRequiredTenants, type TenantOption } from '../lib/tenantOptions.ts';
   import { fleetStore, refreshFleet } from '../stores/fleetStore.svelte.ts';
   import { isWailsRuntime } from '@quicbaas/sdk';
-  import { getSDKClient } from '../stores/sdkClient.ts';
+  import { getSDKClient, getOriginSDKClient } from '../stores/sdkClient.ts';
 
   // Components
   import StatusBadge from '../components/core/StatusBadge.svelte';
@@ -153,6 +164,8 @@
     KeyRound,
     FolderKanban,
     UserCog,
+    Bot,
+    FileText,
     Users,
     Compass,
     LogIn,
@@ -163,6 +176,11 @@
     KeySquare,
     Timer,
     Inbox,
+    BadgeCheck,
+    AppWindow,
+    Fingerprint,
+    FlaskConical,
+    ScrollText,
   } from 'lucide-svelte';
 
   // ---------------------------------------------------------------------------
@@ -220,6 +238,8 @@
         { id: 'inference',     label: 'Inference',    icon: Sparkles,      implemented: true },
         { id: 'projects',      label: 'Projects',     icon: FolderKanban,  implemented: true },
         { id: 'accounts',      label: 'Accounts',     icon: UserCog,       implemented: true },
+        { id: 'agents',        label: 'Agents',       icon: Bot,           implemented: true },
+        { id: 'prompts',       label: 'Prompts',      icon: FileText,      implemented: true },
       ],
     },
     {
@@ -250,6 +270,7 @@
       items: [
         { id: 'iam',       label: 'IAM',       icon: Shield,   implemented: true },
         { id: 'kms',       label: 'KMS',       icon: Key,      implemented: true },
+        { id: 'xkms-keys', label: 'Key Store', icon: KeySquare, implemented: true },
         { id: 'secrets',   label: 'Secrets',   icon: EyeOff,   implemented: true },
         { id: 'certificates', label: 'Certificates', icon: FileBadge,  implemented: true },
         { id: 'trust',     label: 'Trust',     icon: ShieldCheck, implemented: true },
@@ -261,6 +282,15 @@
         { id: 'ceremony',  label: 'Ceremony',  icon: Users,    implemented: true },
         { id: 'bootstrap', label: 'Bootstrap', icon: Compass,  implemented: true },
         { id: 'ssh-keys',  label: 'SSH Keys',  icon: KeyRound, implemented: true },
+        // Withheld until login and revocation share one session lifecycle:
+        // revoking these records does not end a login's access or refresh tokens.
+        { id: 'my-sessions', label: 'My Sessions', icon: Timer, implemented: false },
+        { id: 'attestation', label: 'Attestation', icon: BadgeCheck, implemented: true },
+        { id: 'oauth-apps', label: 'OAuth Apps', icon: AppWindow, implemented: true },
+        { id: 'identity-providers', label: 'Identity Providers', icon: Fingerprint, implemented: true },
+        { id: 'policy-tester', label: 'Policy Tester', icon: FlaskConical, implemented: true },
+        { id: 'impersonation', label: 'Impersonation', icon: UserCog, implemented: true },
+        { id: 'iam-audit', label: 'IAM Audit', icon: ScrollText, implemented: true },
       ],
     },
     {
@@ -268,16 +298,29 @@
       items: [
         { id: 'cluster', label: 'Cluster',   icon: Server,    implemented: true },
         { id: 'nodes',   label: 'Nodes',     icon: Network,   implemented: true },
-        { id: 'backup',  label: 'Backup',    icon: HardDrive, implemented: false },
+        { id: 'backup',  label: 'Backup',    icon: HardDrive, implemented: true },
       ],
     },
     {
       title: 'Settings',
       items: [
-        { id: 'connection', label: 'Connection', icon: Settings, implemented: false },
+        { id: 'connection', label: 'Connection', icon: Settings, implemented: true },
       ],
     },
   ];
+
+  // These pages call the SDK's iam, attestation or xkms clients, which the
+  // desktop (Wails) transport does not provide. On desktop they are disabled
+  // in the navigation and a direct route shows a notice instead of a broken
+  // page.
+  const WEB_ONLY_VIEWS: ReadonlySet<string> = new Set([
+    'my-sessions', 'attestation', 'oauth-apps', 'identity-providers',
+    'policy-tester', 'impersonation', 'iam-audit', 'xkms-keys',
+  ]);
+  const desktopRuntime = isWailsRuntime();
+  function available(item: NavItem): boolean {
+    return item.implemented && !(desktopRuntime && WEB_ONLY_VIEWS.has(item.id));
+  }
 
   // ---------------------------------------------------------------------------
   // Orchestrator polling — single poller for all orchestrator resources.
@@ -464,7 +507,7 @@
     if (typeof window === 'undefined') return;
     const token = readAuthToken();
     try {
-      const client = await getSDKClient();
+      const client = await getOriginSDKClient();
       await client.auth.logout(token);
     } catch {
       // Server-side revoke errors shouldn't block the UI from clearing local
@@ -734,6 +777,9 @@
             {:else if routerStore.name === 'kms'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">KMS</li>
+            {:else if routerStore.name === 'xkms-keys'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Key Store</li>
             {:else if routerStore.name === 'secrets'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">Secrets</li>
@@ -767,18 +813,51 @@
             {:else if routerStore.name === 'ssh-keys'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">SSH Keys</li>
+            {:else if routerStore.name === 'my-sessions'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">My Sessions</li>
+            {:else if routerStore.name === 'attestation'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Attestation</li>
+            {:else if routerStore.name === 'oauth-apps'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">OAuth Apps</li>
+            {:else if routerStore.name === 'identity-providers'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Identity Providers</li>
+            {:else if routerStore.name === 'policy-tester'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Policy Tester</li>
+            {:else if routerStore.name === 'impersonation'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Impersonation</li>
+            {:else if routerStore.name === 'iam-audit'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">IAM Audit</li>
             {:else if routerStore.name === 'projects'}
               <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Projects</li>
             {:else if routerStore.name === 'accounts'}
               <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Accounts</li>
+            {:else if routerStore.name === 'agents'}
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
+              <li class="font-medium">Agents</li>
+            {:else if routerStore.name === 'prompts'}
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
+              <li class="font-medium">Prompts</li>
             {:else if routerStore.name === 'cluster'}
               <li class="text-base-content/40">Cluster</li>
               <li class="font-medium">Dashboard</li>
             {:else if routerStore.name === 'nodes'}
               <li class="text-base-content/40">Cluster</li>
               <li class="font-medium">Nodes</li>
+            {:else if routerStore.name === 'backup'}
+              <li class="text-base-content/40">Cluster</li>
+              <li class="font-medium">Backup</li>
+            {:else if routerStore.name === 'connection'}
+              <li class="text-base-content/40">Settings</li>
+              <li class="font-medium">Connection</li>
             {:else if activeViewLabel}
               <li class="font-medium">{activeViewLabel}</li>
             {/if}
@@ -898,8 +977,8 @@
               class:bg-base-300={isActive}
               class:text-base-content={true}
               class:font-medium={isActive}
-              class:opacity-40={!item.implemented}
-              onclick={() => { if (item.implemented) { navigate(item.id as ViewID); closeDrawerOnPhone(); } }}
+              class:opacity-40={!available(item)}
+              onclick={() => { if (available(item)) { navigate(item.id as ViewID); closeDrawerOnPhone(); } }}
               title={navStore.sidebarCollapsed ? item.label : undefined}
               aria-current={isActive ? 'page' : undefined}
             >
@@ -909,7 +988,7 @@
               />
               {#if !navStore.sidebarCollapsed}
                 <span class="truncate">{item.label}</span>
-                {#if !item.implemented}
+                {#if !available(item)}
                   <span class="badge badge-xs badge-ghost ml-auto">soon</span>
                 {:else if item.id === 'attention' && attentionStore.total > 0}
                   <span class="badge badge-xs badge-error ml-auto" data-testid="attention-nav-badge">{attentionStore.total}</span>
@@ -935,7 +1014,14 @@
            'login' / 'register' / 'invite-activate' never reach this router: they
            render in the minimal auth shell above (showAppShell is false for
            every PUBLIC_ROUTES entry), so there are no branches for them here. -->
-      {#if routerStore.name === 'dashboard'}
+      {#if desktopRuntime && WEB_ONLY_VIEWS.has(routerStore.name)}
+        <div class="flex-1 overflow-y-auto">
+          <div class="p-6" role="status" data-testid="web-only-notice">
+            <p class="text-sm text-base-content/70">{activeViewLabel || 'This page'} is available in the web console only; the desktop app does not provide it yet.</p>
+          </div>
+        </div>
+
+      {:else if routerStore.name === 'dashboard'}
         <div class="flex-1 overflow-y-auto">
           <SystemDashboard />
         </div>
@@ -1071,6 +1157,10 @@
         <div class="flex-1 overflow-y-auto">
           <KMSView />
         </div>
+      {:else if routerStore.name === 'xkms-keys'}
+        <div class="flex-1 overflow-y-auto">
+          <XKMSKeysView />
+        </div>
 
       {:else if routerStore.name === 'secrets'}
         <div class="flex-1 overflow-y-auto">
@@ -1127,6 +1217,32 @@
           <SSHKeysView />
         </div>
 
+      {:else if routerStore.name === 'attestation'}
+        <div class="flex-1 overflow-y-auto">
+          <AttestationView />
+        </div>
+
+      {:else if routerStore.name === 'oauth-apps'}
+        <div class="flex-1 overflow-y-auto">
+          <OAuthAppsView />
+        </div>
+      {:else if routerStore.name === 'identity-providers'}
+        <div class="flex-1 overflow-y-auto">
+          <IdentityProvidersView />
+        </div>
+      {:else if routerStore.name === 'policy-tester'}
+        <div class="flex-1 overflow-y-auto">
+          <PolicyTesterView />
+        </div>
+      {:else if routerStore.name === 'impersonation'}
+        <div class="flex-1 overflow-y-auto">
+          <ImpersonationView />
+        </div>
+      {:else if routerStore.name === 'iam-audit'}
+        <div class="flex-1 overflow-y-auto">
+          <IAMAuditView />
+        </div>
+
       {:else if routerStore.name === 'projects'}
         <div class="flex-1 overflow-y-auto">
           <ProjectsView />
@@ -1137,6 +1253,16 @@
           <AccountsView />
         </div>
 
+      {:else if routerStore.name === 'agents'}
+        <div class="flex-1 overflow-y-auto">
+          <AgentsView />
+        </div>
+
+      {:else if routerStore.name === 'prompts'}
+        <div class="flex-1 overflow-y-auto">
+          <PromptsView />
+        </div>
+
       {:else if routerStore.name === 'cluster'}
         <div class="flex-1 overflow-y-auto">
           <ClusterDashboard />
@@ -1145,6 +1271,15 @@
       {:else if routerStore.name === 'nodes'}
         <div class="flex-1 overflow-y-auto">
           <NodesView />
+        </div>
+
+      {:else if routerStore.name === 'backup'}
+        <div class="flex-1 overflow-y-auto">
+          <BackupView />
+        </div>
+      {:else if routerStore.name === 'connection'}
+        <div class="flex-1 overflow-y-auto">
+          <ConnectionView />
         </div>
 
       {:else}
@@ -1169,8 +1304,8 @@
     <div class="flex items-center gap-3">
       {#if orchestratorStore.health}
         <StatusBadge
-          text={orchestratorStore.health.status}
-          variant={orchestratorStore.health.status === 'ok' || orchestratorStore.health.status === 'healthy' ? 'success' : 'warning'}
+          text={orchestratorStore.health.unhealthy === 0 ? 'healthy' : `${orchestratorStore.health.unhealthy} unhealthy`}
+          variant={orchestratorStore.health.unhealthy === 0 ? 'success' : 'warning'}
         />
       {/if}
       <span class="text-base-content/60">QuicBaaS v0.1.0</span>
