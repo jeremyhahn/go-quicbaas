@@ -1,33 +1,4 @@
 # systemd unit for the go-quicbaas NPU embedding sidecar.
-#
-# Install on the host that owns the NPU, not on the host running
-# quicbaasd:
-#
-#   sudo cp deploy/npu-embedding.service /etc/systemd/system/
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now npu-embedding
-#
-# Two settings below are the difference between using the NPU and silently
-# serving from the CPU. Both are easy to omit and neither produces an error:
-#
-#   ZE_ENABLE_ALT_DRIVERS  The level-zero loader does not auto-discover the
-#                          Intel NPU. Without this variable
-#                          Core().available_devices omits NPU entirely and the
-#                          sidecar falls back to the CPU while reporting itself
-#                          healthy. Check GET /v1/health -> npu_available.
-#
-#   SupplementaryGroups    /dev/accel/accel0 is owned by group `render`. Without
-#                          membership the device cannot be opened.
-#
-# YOU MUST SET NPU_EMBEDDING_TOKEN BELOW.
-#
-# This unit binds 0.0.0.0 because quicbaasd runs on another host. An embedding
-# endpoint is a compute amplifier -- anyone who can reach it can spend the NPU
-# and the CPU at will, which on this host means contending with the builds and
-# the peer review the accelerator exists to keep clear of. The service therefore
-# REFUSES TO START on a non-loopback address with no token, rather than quietly
-# exposing an open listener. That is deliberate: a loud failure at install time
-# beats an unauthenticated inference endpoint nobody noticed.
 
 [Unit]
 Description=go-quicbaas NPU embedding sidecar (OpenVINO)
@@ -73,8 +44,7 @@ Environment=NPU_EMBEDDING_DEVICE=NPU
 # Adjust to wherever the sidecar's virtualenv lives.
 ExecStart=/opt/quicbaas/npu-embedding/bin/python -m npu_embedding
 
-# Startup precompiles the bucket set, measured at about 7.8s for the default
-# batch {1,8} x length {128,256,512}. Allow room beyond that.
+# Startup precompiles the bucket set in about 8s.
 TimeoutStartSec=120
 
 Restart=on-failure

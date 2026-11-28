@@ -1,23 +1,5 @@
 #!/bin/sh
-# resolve-package.sh maps the stem of a per-package make target to a package
-# directory, so `make test-api-grpc`, `make bench-api-grpc` and
-# `make coverage-api-grpc` all reach pkg/api/grpc.
-#
-# Usage: scripts/resolve-package.sh NAME ROOT...
-#
-# GNU make strips the directory part of a target that contains a slash before
-# it matches a slash-free pattern such as test-%, so `make test-api/grpc` never
-# reaches the rule: nested packages are named with dashes instead. A dash can
-# also be part of a real directory name (cmd/quicbaas-git-sign), so the search
-# is:
-#
-#   1. NAME as given, under each ROOT in order;
-#   2. NAME with every dash either kept or read as a slash, under each ROOT in
-#      order.
-#
-# It prints ROOT/DIR for the first match and exits 0. It exits 1 when nothing
-# matches, and 2 when one ROOT holds more than one step-2 match (pkg/a-b/c and
-# pkg/a/b-c, say), listing them on stderr rather than guessing.
+# resolve-package.sh: map a per-package make target's stem to a package directory (`make test-api-grpc` -> pkg/api/grpc).
 set -eu
 
 if [ $# -lt 2 ]; then

@@ -51,7 +51,7 @@ import (
 func (s *Server) registerQRDBService(grpcServer *ggrpc.Server) {
 	opts := s.buildQRDBRegisterOptions()
 	qrdbsdk.RegisterGRPCService(grpcServer, nil, nil, opts...)
-	s.logger.Info("Registered qrdb.v1.QRDBService on gRPC server (credential/barrier/ceremony/user/user-auth-factor surface)")
+	s.logger.Info("Registered qrdb.v1.QRDBService on gRPC server (credential/barrier/ceremony/user/user-auth-factor/backup surface)")
 }
 
 // buildQRDBRegisterOptions assembles the qrdbsdk.GRPCRegisterOption slice from
@@ -94,6 +94,9 @@ func (s *Server) buildQRDBRegisterOptions() []qrdbsdk.GRPCRegisterOption {
 		// instead of being captured as nil at registration time.
 		qrdbsdk.WithRegisterUserService(newQRDBUserServicerProxy(s)),
 		qrdbsdk.WithRegisterUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s)),
+		// The backup proxy resolves the node's own backup service per call, the one the node's TCP
+		// transports already serve, so the Unix socket and sealed-window servers carry the same backup surface.
+		qrdbgrpc.WithRegisterBackupService(newQRDBBackupServicerProxy(s)),
 		// The time-series registry backs the qrdb.v1 time-series RPCs that
 		// the SDK's Search().QRDBTimeSeries() calls. go-qrdb's handler
 		// resolves each RPC's servicer per (tenant, database) through it, as

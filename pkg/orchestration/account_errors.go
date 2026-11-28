@@ -54,6 +54,9 @@ var (
 	// and it is held out of selection until an operator intervenes.
 	ErrAccountErrored = errors.New("account: credential error")
 
+	// ErrAccountAwaitingCredential indicates the account has no credential set yet.
+	ErrAccountAwaitingCredential = errors.New("account: awaiting credential")
+
 	// ErrAccountProviderMismatch indicates a pinned account does not belong
 	// to the requesting backend's provider.
 	ErrAccountProviderMismatch = errors.New("account: provider mismatch")
@@ -262,6 +265,25 @@ func (e *AccountErroredError) Error() string {
 
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *AccountErroredError) Unwrap() error { return ErrAccountErrored }
+
+// AccountAwaitingCredentialError indicates a resolution attempt targeted an
+// account whose credential has not been set yet.
+type AccountAwaitingCredentialError struct {
+	// AccountID is the account that was refused.
+	AccountID string
+
+	// Provider is the refused account's provider.
+	Provider AccountProvider
+}
+
+// Error implements the error interface.
+func (e *AccountAwaitingCredentialError) Error() string {
+	return ErrAccountAwaitingCredential.Error() + ": id=" + e.AccountID + " provider=" + string(e.Provider) +
+		": set its credential to use it"
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *AccountAwaitingCredentialError) Unwrap() error { return ErrAccountAwaitingCredential }
 
 // AccountCredentialExpiringError reports a pinned NEW session refused because
 // its account's non-renewable credential expires inside

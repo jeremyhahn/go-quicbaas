@@ -1,7 +1,4 @@
-# Claude Code Agent Container
-# Alpine 3.21 + Node.js 20 LTS with @anthropic-ai/claude-code CLI
-# Includes gopls (Go LSP) and Serena (semantic code MCP server)
-# Non-root agent user, workspace at /workspace
+# Claude Code agent container: Alpine, Node.js, the claude-code CLI, gopls and Serena; non-root, workspace at /workspace.
 
 # Build gopls binary in an isolated Go stage
 FROM golang:1.27.4-alpine AS gopls-builder
