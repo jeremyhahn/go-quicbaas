@@ -519,13 +519,17 @@ func (p *ghParser) primary(eval bool) (any, error) {
 				break
 			}
 		}
-		want := map[string]int{"fromjson": 1, "startswith": 2, "always": 0, "cancelled": 0}
+		// format takes a format string and any number of arguments (-1).
+		want := map[string]int{"fromjson": 1, "startswith": 2, "always": 0, "cancelled": 0, "format": -1}
 		name := strings.ToLower(t.text)
 		n, ok := want[name]
 		if !ok {
 			return nil, fmt.Errorf("unsupported function %s", t.text)
 		}
-		if len(args) != n {
+		if n < 0 && len(args) < 1 {
+			return nil, fmt.Errorf("%s: want a format string", t.text)
+		}
+		if n >= 0 && len(args) != n {
 			return nil, fmt.Errorf("%s: want %d arguments, got %d", t.text, n, len(args))
 		}
 		if !eval {
@@ -538,6 +542,8 @@ func (p *ghParser) primary(eval bool) (any, error) {
 			return ghTruthy(p.ctx["__cancelled"]), nil
 		case "startswith":
 			return strings.HasPrefix(strings.ToLower(ghString(args[0])), strings.ToLower(ghString(args[1]))), nil
+		case "format":
+			return ghFormat(ghString(args[0]), args[1:])
 		}
 		s, ok := args[0].(string)
 		if !ok {
@@ -568,6 +574,35 @@ func (p *ghParser) primary(eval bool) (any, error) {
 		return v, nil
 	}
 	return nil, fmt.Errorf("unexpected %q", t.text)
+}
+
+// ghFormat is GitHub's format: {N} is argument N as a string, and {{ and }}
+// are literal braces.
+func ghFormat(f string, args []any) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(f); i++ {
+		switch {
+		case strings.HasPrefix(f[i:], "{{"), strings.HasPrefix(f[i:], "}}"):
+			b.WriteByte(f[i])
+			i++
+		case f[i] == '{':
+			end := strings.IndexByte(f[i:], '}')
+			if end < 0 {
+				return "", fmt.Errorf("format(%q): unclosed {", f)
+			}
+			n, err := strconv.Atoi(f[i+1 : i+end])
+			if err != nil || n < 0 || n >= len(args) {
+				return "", fmt.Errorf("format(%q): bad index %q", f, f[i+1:i+end])
+			}
+			b.WriteString(ghString(args[n]))
+			i += end
+		case f[i] == '}':
+			return "", fmt.Errorf("format(%q): unmatched }", f)
+		default:
+			b.WriteByte(f[i])
+		}
+	}
+	return b.String(), nil
 }
 
 // ghTruthy is GitHub's truthiness: null, false, 0 and ” are falsy.
@@ -663,6 +698,9 @@ func TestGHEval(t *testing.T) {
 		{"${{ !cancelled() }}", "true", nil},
 		{"${{ e && always() || !cancelled() }}", "true", nil},
 		{"${{ !cancelled() }}", "false", map[string]any{"__cancelled": true}},
+		{"${{ format('[\"{0}\",\"{1}\"]', a.b, 'y') }}", `"[\"X\",\"y\"]"`, nil},
+		{"${{ format('{{{0}}}', a.b) }}", `"{X}"`, nil},
+		{"${{ fromJSON(format('[\"{0}\"]', a.b)) }}", `["X"]`, nil},
 	} {
 		cx := ctx
 		if c.ctx != nil {
@@ -682,6 +720,8 @@ func TestGHEval(t *testing.T) {
 		{"${{ startsWith('a') }}", "startsWith"},
 		{"${{ fromJSON('1', '2') }}", "fromJSON"},
 		{"${{ always(1) }}", "always"},
+		{"${{ format() }}", "format"},
+		{"${{ format('{1}', 'a') }}", "bad index"},
 	} {
 		_, err := ghEval(c.expr, ctx)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -751,6 +791,38 @@ func TestCIPreflightRunsOn(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			v, err := ghEval(runsOn.Value, ghContext(c.server, c.event, c.ref, c.head, c.varv))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := json.Marshal(v); string(got) != c.want {
+				t.Errorf("preflight runs on %s, want %s", got, c.want)
+			}
+		})
+	}
+	// v1.63: a push to main with CI_MAIN_RUNNER_LABEL and
+	// CI_MAIN_RUNNER_LABEL_DOCKER both set runs on the main-only label; with
+	// either unset, or on any other event, the rows above hold.
+	mainOnly := `["self-hosted","linux","x64","main-l"]`
+	for _, c := range []struct {
+		name, event, ref, head, ml, mld, want string
+	}{
+		{"push to main, both main labels set", "push", mainRef, "", "main-l", "main-ld", mainOnly},
+		{"push to main, only the main label set", "push", mainRef, "", "main-l", "", bigdiskJSON},
+		{"push to main, only the docker main label set", "push", mainRef, "", "", "main-ld", bigdiskJSON},
+		{"same-repository pull request, both main labels set", "pull_request", prRef, "o/r", "main-l", "main-ld", bigdiskJSON},
+		{"fork pull request, both main labels set", "pull_request", prRef, "fork/r", "main-l", "main-ld", `"ubuntu-latest"`},
+		{"push to another branch, both main labels set", "push", "refs/heads/feature", "", "main-l", "main-ld", `"ubuntu-latest"`},
+	} {
+		t.Run("main label: "+c.name, func(t *testing.T) {
+			ctx := ghContext(githubCom, c.event, c.ref, c.head, "")
+			vars := ctx["vars"].(map[string]any)
+			if c.ml != "" {
+				vars["CI_MAIN_RUNNER_LABEL"] = c.ml
+			}
+			if c.mld != "" {
+				vars["CI_MAIN_RUNNER_LABEL_DOCKER"] = c.mld
+			}
+			v, err := ghEval(runsOn.Value, ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
