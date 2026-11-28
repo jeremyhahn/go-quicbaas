@@ -18,7 +18,6 @@ package cli
 import (
 	"encoding/json"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -78,9 +77,10 @@ func createImpersonationTarget(t *testing.T, runner *TestRunner, prefix string) 
 	return tenantID, createTenantUserID(t, runner, tenantID, prefix+"-target")
 }
 
-// tenantAdminUsernamePrefix starts the username helpers.TenantAdmin gives the
-// admin user it provisions in each test tenant ("tenant-admin-<tenant>").
-const tenantAdminUsernamePrefix = "tenant-admin-"
+// tenantAdminUsername is the username of the admin the server creates when
+// helpers.TenantAdmin provisions a test tenant (POST
+// /api/v1/tenants/{tenant_id}/provision): the tenant's "admin".
+const tenantAdminUsername = "admin"
 
 // tenantAdminUserID returns the numeric user ID of the tenant admin the runner
 // acts as after ActAsTenantAdmin(tenantID), read from `iam user list` by its
@@ -109,7 +109,7 @@ func tenantAdminUserID(t *testing.T, runner *TestRunner, tenantID string) string
 	require.NoError(t, json.Unmarshal([]byte(stdout), &users), "user list JSON output should parse: %s", stdout)
 	for _, user := range users {
 		username, ok := user["username"].(string)
-		if !ok || !strings.HasPrefix(username, tenantAdminUsernamePrefix) {
+		if !ok || username != tenantAdminUsername {
 			continue
 		}
 		id, ok := user["id"].(string)
@@ -118,7 +118,7 @@ func tenantAdminUserID(t *testing.T, runner *TestRunner, tenantID string) string
 		require.NoError(t, err, "tenant admin id %q should be a decimal uint64", id)
 		return id
 	}
-	require.Failf(t, "tenant admin not listed", "no user named %s* in tenant %s: %s",
-		tenantAdminUsernamePrefix, tenantID, stdout)
+	require.Failf(t, "tenant admin not listed", "no user named %s in tenant %s: %s",
+		tenantAdminUsername, tenantID, stdout)
 	return ""
 }
