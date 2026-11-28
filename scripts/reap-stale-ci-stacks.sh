@@ -93,6 +93,23 @@ for project in $(docker ps -a --filter label=com.docker.compose.project \
   reaped=$((reaped + 1))
 done
 
+# Volumes of a compose project with no container left, once at least <min-age-seconds> old.
+docker volume ls --filter label=com.docker.compose.project \
+    --format '{{.Name}} {{.Label "com.docker.compose.project"}}' |
+  while read -r vol project; do
+    case $project in "$prefix"*) ;; *) continue ;; esac
+    if ! users=$(docker ps -aq --filter "label=com.docker.compose.project=$project" 2>/dev/null); then
+      echo "keep  volume $vol (could not list the containers of project $project)"
+      continue
+    fi
+    [ -z "$users" ] || continue
+    created=$(docker volume inspect -f '{{.CreatedAt}}' "$vol" 2>/dev/null) || continue
+    t=$(date -d "$created" +%s 2>/dev/null) || continue
+    [ $((now - t)) -ge "$min_age" ] || continue
+    echo "reap  volume $vol (project $project has no container)"
+    run docker volume rm "$vol" || echo "warn  volume $vol not removed"
+  done
+
 # Containers outside compose.
 docker ps -a --filter "name=^$prefix" \
     --format '{{.ID}} {{.Names}} {{.Label "com.docker.compose.project"}}' |

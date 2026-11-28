@@ -1435,9 +1435,13 @@ check-feature-map: ## Fail if an integration test belongs to no feature or a fea
 # docker and make binaries, so the CI_IMAGE_REGISTRY cache path is proven
 # without a daemon or a registry (#2503); scripts/devcontainer-build_test.sh
 # runs DEVCONTAINER_BUILD's compose and plain docker build paths the same way.
+# scripts/reap-stale-ci-stacks_test.sh proves the reaper removes a cancelled
+# run's orphaned stack volumes and that the Integration job tears its stack
+# down through the integration compose file.
 check-ci-image-cache: ## Prove ci-image-cache.sh's registry cache path against stub docker
 	@bash scripts/ci-image-cache_test.sh
 	@bash scripts/devcontainer-build_test.sh
+	@bash scripts/reap-stale-ci-stacks_test.sh
 
 .PHONY: check-local-keygen
 # go-xkms owns keys and certificates for the whole stack; go-quicbaas composes
