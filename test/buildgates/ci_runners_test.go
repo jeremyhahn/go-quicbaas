@@ -1211,6 +1211,9 @@ func TestRunnerSelect(t *testing.T) {
 		// v1.62: a private repository never overflows to hosted, so the cases
 		// below keep the v1.60 choice.
 		"PRIVATE": "true", "WAIT_LIMIT": "600",
+		// v1.63: with neither main-only label set, a push to main keeps the
+		// v1.62 choice.
+		"ML": "", "MLD": "",
 	}
 	// #2427: the notice of an event the Dells' runner image refuses.
 	const refused = "which the Dells' runner image refuses"
