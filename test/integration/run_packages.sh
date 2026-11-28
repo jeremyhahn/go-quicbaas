@@ -67,8 +67,8 @@ fi
 
 PACKAGE_TIMEOUT=${PACKAGE_TIMEOUT:-10m}
 PACKAGE_KILL_TIMEOUT=${PACKAGE_KILL_TIMEOUT:-11m}
-# IAM_PACKAGE_TIMEOUT is the iam package's own limit; every other package keeps
-# PACKAGE_TIMEOUT. The iam package spends its time creating and deleting
+# IAM_PACKAGE_TIMEOUT is the iam package's own limit; packages without their own limit
+# below keep PACKAGE_TIMEOUT. The iam package spends its time creating and deleting
 # tenants: run 45348624843 measured about 19.5 s per tenant lifecycle (create
 # plus delete) and timed the package out at 10m. After the shared-tenant
 # fixture (test/integration/iam/shared_tenant_test.go) about 95 lifecycles
@@ -87,6 +87,16 @@ IAM_PACKAGE_KILL_TIMEOUT=${IAM_PACKAGE_KILL_TIMEOUT:-31m}
 # The kill limit stays one minute above it.
 CLI_PACKAGE_TIMEOUT=${CLI_PACKAGE_TIMEOUT:-30m}
 CLI_PACKAGE_KILL_TIMEOUT=${CLI_PACKAGE_KILL_TIMEOUT:-31m}
+# CLUSTER_PACKAGE_TIMEOUT is the cluster package's own limit. Its length is
+# legitimate, not a hang: on main e2a3ed26 the 34 top-level tests before
+# TestDataPersistence passed in 588 s (TestClusterConsistency 202 s,
+# TestClusterManagement_Rebalancing 155-182 s, TestClusterShardOperations
+# 82-102 s) before the 10m limit. The unrun leader-election, multiprotocol
+# and four rebalancing tests add about 930 s:
+#   ceil(1.5 x (590 s + 930 s)) = 2280 s (38m), capped at 30m like iam.
+# The kill limit stays one minute above it.
+CLUSTER_PACKAGE_TIMEOUT=${CLUSTER_PACKAGE_TIMEOUT:-30m}
+CLUSTER_PACKAGE_KILL_TIMEOUT=${CLUSTER_PACKAGE_KILL_TIMEOUT:-31m}
 # HEALTH_PROBE_TIMEOUT bounds the cluster probe after a failed package: a node
 # that accepts connections but never answers would otherwise hang the runner.
 HEALTH_PROBE_TIMEOUT=${HEALTH_PROBE_TIMEOUT:-120s}
@@ -110,6 +120,10 @@ for pkg in "$@"; do
 	*/integration/cli | */integration/cli/ | */integration/cli/...)
 		pkg_timeout=$CLI_PACKAGE_TIMEOUT
 		pkg_kill_timeout=$CLI_PACKAGE_KILL_TIMEOUT
+		;;
+	*/integration/cluster | */integration/cluster/ | */integration/cluster/...)
+		pkg_timeout=$CLUSTER_PACKAGE_TIMEOUT
+		pkg_kill_timeout=$CLUSTER_PACKAGE_KILL_TIMEOUT
 		;;
 	esac
 	# shellcheck disable=SC2086 # FLAGS is split into separate go test flags.
