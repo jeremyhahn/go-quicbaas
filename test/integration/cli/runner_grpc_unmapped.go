@@ -22,6 +22,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// grpcUnmappedMethodRefusal is the text of the gRPC method authorizer's
+// refusal of a method with no permission mapping (UnmappedMethodError in
+// pkg/api/grpc/authz_interceptor.go); the method name follows it.
+const grpcUnmappedMethodRefusal = "no qrdb permission mapping for gRPC method"
+
 // expectGRPCUnmappedRefusal runs cmd and asserts the gRPC method authorizer
 // refuses it when the runner's transport goes through that authorizer (gRPC
 // and the Unix socket). The delegated-admin assignment RPCs carry no gRPC
@@ -40,7 +45,7 @@ func expectGRPCUnmappedRefusal(t *testing.T, runner *TestRunner, cmd CommandDef)
 		runner.transport, cmd.Name, stdout, stderr)
 	require.True(t, strings.Contains(combined, "PermissionDenied") || strings.Contains(combined, "FORBIDDEN"),
 		"[%s] %s should be refused with PermissionDenied or FORBIDDEN: %s", runner.transport, cmd.Name, combined)
-	require.Contains(t, combined, "no permission mapping",
-		"[%s] %s should be refused for having no permission mapping", runner.transport, cmd.Name)
+	require.Contains(t, combined, grpcUnmappedMethodRefusal,
+		"[%s] %s should be refused for having no permission mapping: %s", runner.transport, cmd.Name, combined)
 	return true
 }

@@ -22,6 +22,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// grpcUnmappedMethodRefusal is the text of the gRPC method authorizer's
+// refusal of a method with no permission mapping (UnmappedMethodError in
+// pkg/api/grpc/authz_interceptor.go); the method name follows it.
+const grpcUnmappedMethodRefusal = "no qrdb permission mapping for gRPC method"
+
 // expectRoleRefusedOnGRPC runs the iam role command args and asserts the gRPC
 // method authorizer refuses it when the context's transport goes through that
 // authorizer (gRPC and the Unix socket). The role CRUD RPCs carry no gRPC
@@ -37,7 +42,7 @@ func expectRoleRefusedOnGRPC(t *testing.T, c *iamCLITestContext, args ...string)
 	require.Error(t, err, "[%s] %v: an unmapped gRPC method must be refused: %s", c.protocol, args, stderr)
 	require.True(t, strings.Contains(stderr, "PermissionDenied") || strings.Contains(stderr, "FORBIDDEN"),
 		"[%s] %v should be refused with PermissionDenied or FORBIDDEN: %s", c.protocol, args, stderr)
-	require.Contains(t, stderr, "no permission mapping",
-		"[%s] %v should be refused for having no permission mapping", c.protocol, args)
+	require.Contains(t, stderr, grpcUnmappedMethodRefusal,
+		"[%s] %v should be refused for having no permission mapping: %s", c.protocol, args, stderr)
 	return true
 }
