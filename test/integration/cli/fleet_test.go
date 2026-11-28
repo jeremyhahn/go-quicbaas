@@ -568,15 +568,18 @@ func TestAgentListJSON(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify JSON structure
+		// The fleet list JSON carries the agents under "nodes"; older output used "agents".
+		type listedAgent struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			Host     string `json:"host"`
+			NodeType string `json:"node_type"`
+			Status   string `json:"status"`
+		}
 		var listResp struct {
-			Agents []struct {
-				ID       string `json:"id"`
-				Name     string `json:"name"`
-				Host     string `json:"host"`
-				NodeType string `json:"node_type"`
-				Status   string `json:"status"`
-			} `json:"agents"`
-			Count int `json:"count"`
+			Nodes  []listedAgent `json:"nodes"`
+			Agents []listedAgent `json:"agents"`
+			Count  int           `json:"count"`
 		}
 		err = json.Unmarshal([]byte(stdout), &listResp)
 		require.NoError(t, err, "Output should be valid JSON")
@@ -584,7 +587,7 @@ func TestAgentListJSON(t *testing.T) {
 
 		// Verify our agent is in the list
 		found := false
-		for _, agent := range listResp.Agents {
+		for _, agent := range append(listResp.Nodes, listResp.Agents...) {
 			if agent.Name == name {
 				found = true
 				assert.Equal(t, "node01:9090", agent.Host)
@@ -1031,17 +1034,20 @@ func TestAgentLifecycle(t *testing.T) {
 		stdout, _, err = runner.Run(listCmd2)
 		require.NoError(t, err)
 
+		// The fleet list JSON carries the agents under "nodes"; older output used "agents".
+		type listedAgent struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
 		var listResp struct {
-			Agents []struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-			} `json:"agents"`
-			Count int `json:"count"`
+			Nodes  []listedAgent `json:"nodes"`
+			Agents []listedAgent `json:"agents"`
+			Count  int           `json:"count"`
 		}
 		err = json.Unmarshal([]byte(stdout), &listResp)
 		require.NoError(t, err)
 
-		for _, agent := range listResp.Agents {
+		for _, agent := range append(listResp.Nodes, listResp.Agents...) {
 			assert.NotEqual(t, agentID, agent.ID, "Removed agent should not appear in list")
 		}
 		t.Logf("[%s] Step 8 - Verify removed: OK (count=%d)", runner.transport, listResp.Count)
@@ -1154,18 +1160,22 @@ func findAgentID(t *testing.T, runner *TestRunner, tenant, agentName string) str
 		return ""
 	}
 
+	// The fleet list JSON carries the agents under "nodes" (REST and CLI);
+	// older output used "agents". Accept both.
+	type fleetEntry struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
 	var listResp struct {
-		Agents []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"agents"`
+		Nodes  []fleetEntry `json:"nodes"`
+		Agents []fleetEntry `json:"agents"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &listResp); err != nil {
 		return ""
 	}
 
-	for _, agent := range listResp.Agents {
-		if agent.Name == agentName {
+	for _, agent := range append(listResp.Nodes, listResp.Agents...) {
+		if agent.Name == agentName && agent.ID != "" {
 			return agent.ID
 		}
 	}

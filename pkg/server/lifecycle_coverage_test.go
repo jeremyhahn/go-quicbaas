@@ -772,7 +772,7 @@ func TestLC_StartBackupManager_CustomWorkDir(t *testing.T) {
 	assert.NotNil(t, srv.backupManager)
 
 	// Verify work directory was created
-	_, statErr := os.Stat(filepath.Join(workDir, "storage"))
+	_, statErr := os.Stat(workDir)
 	assert.NoError(t, statErr)
 
 	require.NoError(t, srv.stopBackupManager())

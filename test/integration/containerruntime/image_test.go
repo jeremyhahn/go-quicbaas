@@ -55,11 +55,11 @@ func registryHost(t *testing.T) string {
 // pushShellImage builds a one-layer image holding a static busybox as
 // /bin/sh, pushes it to the test registry as repository:latest and returns
 // the reference and the digest of the pushed manifest.
-func pushShellImage(t *testing.T, repository string) (string, digest.Digest) {
+func pushShellImage(t *testing.T, repository string, extra ...layerEntry) (string, digest.Digest) {
 	t.Helper()
 
 	dir := t.TempDir()
-	writeShellLayout(t, dir)
+	writeShellLayout(t, dir, extra...)
 
 	ref := registryHost(t) + "/" + repository + ":latest"
 	source, err := layout.NewReference(dir, "latest")
@@ -85,10 +85,10 @@ func pushShellImage(t *testing.T, repository string) (string, digest.Digest) {
 
 // writeShellLayout writes an OCI image layout to dir whose "latest" image is
 // the busybox shell layer.
-func writeShellLayout(t *testing.T, dir string) {
+func writeShellLayout(t *testing.T, dir string, extra ...layerEntry) {
 	t.Helper()
 
-	layer := writeBlob(t, dir, imgspecv1.MediaTypeImageLayer, shellLayer(t))
+	layer := writeBlob(t, dir, imgspecv1.MediaTypeImageLayer, shellLayer(t, extra...))
 
 	config, err := json.Marshal(imgspecv1.Image{
 		Platform: imgspecv1.Platform{Architecture: runtime.GOARCH, OS: "linux"},
@@ -134,7 +134,13 @@ func writeBlob(t *testing.T, dir, mediaType string, data []byte) imgspecv1.Descr
 
 // shellLayer returns an uncompressed layer tar holding /bin/busybox and a
 // /bin/sh link to it.
-func shellLayer(t *testing.T) []byte {
+// layerEntry is a further entry of the shell layer.
+type layerEntry struct {
+	Header tar.Header
+	Body   []byte
+}
+
+func shellLayer(t *testing.T, extra ...layerEntry) []byte {
 	t.Helper()
 
 	busyboxPath := os.Getenv(busyboxEnv)
@@ -153,6 +159,17 @@ func shellLayer(t *testing.T) []byte {
 	require.NoError(t, archive.WriteHeader(&tar.Header{
 		Name: "bin/sh", Typeflag: tar.TypeSymlink, Linkname: "busybox", Mode: 0o777,
 	}))
+	for _, entry := range extra {
+		header := entry.Header
+		if header.Typeflag == tar.TypeReg {
+			header.Size = int64(len(entry.Body))
+		}
+		require.NoError(t, archive.WriteHeader(&header))
+		if len(entry.Body) > 0 {
+			_, err = archive.Write(entry.Body)
+			require.NoError(t, err)
+		}
+	}
 	require.NoError(t, archive.Close())
 	return layer.Bytes()
 }

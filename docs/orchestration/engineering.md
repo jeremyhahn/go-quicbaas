@@ -3291,7 +3291,7 @@ image); revisit it when that pin moves a major version.
 nothing implements that: `handleDecompose` runs unconditionally and a
 workflow with no `lead` role is refused at validation, so a `canned` workflow
 is decomposed like any other and says nothing about it. Whether it is built
-or removed is an owner decision, tracked as issue #619.
+or removed is open, tracked as issue #619.
 
 #### Constrained
 
