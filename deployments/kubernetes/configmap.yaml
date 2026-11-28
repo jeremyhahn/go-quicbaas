@@ -1,0 +1,73 @@
+# The node configuration every replica shares. What differs per replica
+# (node ID, advertised Raft address) is derived from the pod's ordinal by the
+# StatefulSet's start command, the same QUICBAAS_RAFT_* environment overrides
+# test/integration/docker-compose.cluster.yml sets per container. The
+# replica's own Raft certificate and key are placed at a fixed path by the
+# StatefulSet's raft-key init container.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: quicbaas-config
+data:
+  quicbaas.yaml: |
+    logging:
+      level: info
+      format: json
+
+    server:
+      mode: cluster
+      host: 0.0.0.0
+      rest:
+        enabled: true
+        port: 8080
+      grpc:
+        enabled: true
+        port: 50051
+      # The root filesystem is read-only, so the socket lives on the run
+      # emptyDir, the same path the image's HEALTHCHECK uses.
+      unix:
+        enabled: true
+        socket: /var/run/quicbaas/quicbaas.sock
+      shards:
+        - 1
+
+    # REST and gRPC always serve TLS (the loader refuses to turn it off), here
+    # with the certificate of Secret quicbaas-server-tls.
+    security:
+      tls_cert_file: /etc/quicbaas/server-tls/tls.crt
+      tls_key_file: /etc/quicbaas/server-tls/tls.key
+
+    raft:
+      # Every node of one cluster shares one deployment ID.
+      deployment_id: 1
+      # Raft runs over QUIC with mutual TLS between the nodes. go-quicraft
+      # admits a founding member only by its identity (spki:<sha256 of the
+      # certificate's SubjectPublicKeyInfo>). The identities depend on the
+      # issued certificates, so they are not set here: the start command
+      # exports the other replicas' entries from the member-identities key of
+      # Secret quicbaas-raft-tls as QUICBAAS_RAFT_MEMBER_IDENTITIES. The
+      # replica's own certificate and key are copied to /etc/quicbaas/raft-node
+      # by the raft-key init container, from Secret quicbaas-raft-keys.
+      mutual_tls: true
+      tls_ca_file: /etc/quicbaas/raft-tls/ca.crt
+      tls_cert_file: /etc/quicbaas/raft-node/tls.crt
+      tls_key_file: /etc/quicbaas/raft-node/tls.key
+      election_rtt: 10
+      heartbeat_rtt: 1
+      rtt_millisecond: 200
+
+    storage:
+      backend: pebble
+      data_dir: /data
+
+    seal:
+      enabled: true
+      strategy: passphrase
+
+    auth:
+      enabled: true
+
+    # iam.spiffe_trust_domain is required on first boot and is the operator's
+    # choice. It is stamped into every issued certificate, so it is never
+    # defaulted here: it arrives as QUICBAAS_IAM_SPIFFE_TRUST_DOMAIN from
+    # ConfigMap quicbaas-identity.

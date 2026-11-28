@@ -8,6 +8,10 @@ FROM golang:1.27.4-alpine AS builder
 ARG BUILD_TAGS
 # COVER=1 builds the daemon with coverage instrumentation, written to GOCOVERDIR.
 ARG COVER=""
+# QUICBAAS_VERSION and GIT_COMMIT are compiled into quicbaasd, so every
+# cluster node reports the one build it runs on GET /api/v1/version.
+ARG QUICBAAS_VERSION=dev
+ARG GIT_COMMIT=unknown
 
 # Install build dependencies
 RUN apk add --no-cache \
@@ -35,10 +39,14 @@ RUN if [ "${COVER}" = "1" ]; then \
         CGO_ENABLED=0 GOOS=linux \
         go build -cover -covermode=atomic \
             -coverpkg=github.com/jeremyhahn/go-quicbaas/pkg/server,github.com/jeremyhahn/go-quicbaas/cmd/quicbaasd \
-            -tags "coverage ${BUILD_TAGS}" -o bin/quicbaasd ./cmd/quicbaasd; \
+            -tags "coverage ${BUILD_TAGS}" \
+            -ldflags "-X github.com/jeremyhahn/go-quicbaas/pkg/version.Version=${QUICBAAS_VERSION} -X github.com/jeremyhahn/go-quicbaas/pkg/version.GitCommit=${GIT_COMMIT}" \
+            -o bin/quicbaasd ./cmd/quicbaasd; \
     else \
         CGO_ENABLED=0 GOOS=linux \
-        go build -tags "${BUILD_TAGS}" -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd; \
+        go build -tags "${BUILD_TAGS}" \
+            -ldflags "-w -s -X github.com/jeremyhahn/go-quicbaas/pkg/version.Version=${QUICBAAS_VERSION} -X github.com/jeremyhahn/go-quicbaas/pkg/version.GitCommit=${GIT_COMMIT}" \
+            -o bin/quicbaasd ./cmd/quicbaasd; \
     fi && \
     CGO_ENABLED=0 GOOS=linux \
     go build -tags "${BUILD_TAGS}" -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas

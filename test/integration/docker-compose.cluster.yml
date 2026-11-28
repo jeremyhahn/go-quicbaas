@@ -1,13 +1,18 @@
 # QuicBaaS reusable 3-node Raft cluster, plus an optional fourth joiner.
+# quicbaas-node1 builds the image once and nodes 2-4 run the same tag (QUICBAAS_CLUSTER_IMAGE); run docker compose build before up.
 
 services:
   # Node 1 - Initial leader
   quicbaas-node1:
+    image: ${QUICBAAS_CLUSTER_IMAGE:-quicbaas-cluster-node:local}
     build:
       context: ../..
       additional_contexts:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
+      args:
+        QUICBAAS_VERSION: ${QUICBAAS_VERSION:-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     hostname: quicbaas-node1
     environment:
       - CGO_ENABLED=0
@@ -63,11 +68,8 @@ services:
 
   # Node 2
   quicbaas-node2:
-    build:
-      context: ../..
-      additional_contexts:
-        workspace: ../../..
-      dockerfile: test/integration/Dockerfile.node
+    image: ${QUICBAAS_CLUSTER_IMAGE:-quicbaas-cluster-node:local}
+    pull_policy: never
     hostname: quicbaas-node2
     environment:
       - CGO_ENABLED=0
@@ -120,11 +122,8 @@ services:
 
   # Node 3
   quicbaas-node3:
-    build:
-      context: ../..
-      additional_contexts:
-        workspace: ../../..
-      dockerfile: test/integration/Dockerfile.node
+    image: ${QUICBAAS_CLUSTER_IMAGE:-quicbaas-cluster-node:local}
+    pull_policy: never
     hostname: quicbaas-node3
     environment:
       - CGO_ENABLED=0
@@ -179,11 +178,8 @@ services:
 
   # Node 4: dynamic membership joiner.
   quicbaas-node4:
-    build:
-      context: ../..
-      additional_contexts:
-        workspace: ../../..
-      dockerfile: test/integration/Dockerfile.node
+    image: ${QUICBAAS_CLUSTER_IMAGE:-quicbaas-cluster-node:local}
+    pull_policy: never
     hostname: quicbaas-node4
     environment:
       - CGO_ENABLED=0

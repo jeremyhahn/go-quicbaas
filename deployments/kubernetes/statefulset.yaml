@@ -1,0 +1,300 @@
+# Three QuicBaaS nodes, each embedding one go-qrdb node, forming one Raft
+# group over QUIC. One pod template, so one image tag on every node
+# (kustomization.yaml pins it).
+#
+# Formation: the three replicas start together (podManagementPolicy:
+# Parallel) and bootstrap the group from the same three-member join list, as
+# test/integration/docker-compose.cluster.yml does. OrderedReady would
+# deadlock: quicbaas-0 is not ready until a quorum exists, so quicbaas-1
+# would never start.
+#
+# Failover: the replicas are spread over distinct nodes, the PDB keeps a
+# quorum through voluntary disruptions, and a replaced pod reattaches its own
+# PersistentVolumeClaim under its own name, so it rejoins as the same member.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: quicbaas
+spec:
+  serviceName: quicbaas-raft
+  replicas: 3
+  podManagementPolicy: Parallel
+  # OnDelete: an apply changes no running pod. A RollingUpdate deletes pods
+  # directly, which the PodDisruptionBudget does not gate, and with Parallel
+  # it can replace a pod while another replica is down. rolling-upgrade.sh
+  # replaces the pods one at a time through the Eviction API instead.
+  updateStrategy:
+    type: OnDelete
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: quicbaas
+      app.kubernetes.io/component: node
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: quicbaas
+        app.kubernetes.io/component: node
+    spec:
+      terminationGracePeriodSeconds: 30
+      # The daemon calls no Kubernetes API, so a compromised pod holds no API
+      # credential.
+      automountServiceAccountToken: false
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: quicbaas
+                  app.kubernetes.io/component: node
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # Secret quicbaas-raft-keys holds every replica's certificate and key, so
+      # only this init container mounts it. It hands the daemon its own pair
+      # alone, with the key 0400 and owned by the daemon's uid, on a
+      # memory-backed volume.
+      initContainers:
+        - name: raft-key
+          image: ghcr.io/jeremyhahn/quicbaasd
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              keys=/etc/quicbaas/raft-keys
+              out=/etc/quicbaas/raft-node
+              for f in "$POD_NAME.crt" "$POD_NAME.key"; do
+                if [ ! -s "$keys/$f" ]; then
+                  echo "quicbaas: Secret quicbaas-raft-keys has no $f key" >&2
+                  exit 1
+                fi
+              done
+              umask 077
+              rm -f "$out/tls.crt" "$out/tls.key"
+              cp "$keys/$POD_NAME.crt" "$out/tls.crt"
+              cp "$keys/$POD_NAME.key" "$out/tls.key"
+              chmod 0444 "$out/tls.crt"
+              chmod 0400 "$out/tls.key"
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: raft-keys
+              mountPath: /etc/quicbaas/raft-keys
+              readOnly: true
+            - name: raft-node
+              mountPath: /etc/quicbaas/raft-node
+      containers:
+        - name: quicbaasd
+          image: ghcr.io/jeremyhahn/quicbaasd
+          imagePullPolicy: IfNotPresent
+          # The pod's ordinal names the replica: quicbaas-0 is Raft node 1.
+          # go-quicraft admits a founding member only by its identity, so the
+          # start command also exports the other replicas' identities, read
+          # from the member-identities key of Secret quicbaas-raft-tls
+          # ("1=spki:<hex>,2=spki:<hex>,3=spki:<hex>"; see kustomization.yaml).
+          # That Secret holds public material only: the CA and the identities.
+          # The replica's own certificate and key are placed at
+          # /etc/quicbaas/raft-node by the raft-key init container.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              if [ -z "${QUICBAAS_IAM_SPIFFE_TRUST_DOMAIN:-}" ]; then
+                echo "quicbaas: ConfigMap quicbaas-identity sets no spiffe-trust-domain; first boot needs the operator's SPIFFE trust domain" >&2
+                exit 1
+              fi
+              tls=/etc/quicbaas/raft-tls
+              ordinal="${POD_NAME##*-}"
+              node_id="$((ordinal + 1))"
+              peers=""
+              for i in 0 1 2; do
+                peers="${peers:+$peers,}$((i + 1))=quicbaas-$i.quicbaas-raft.$POD_NAMESPACE.svc.cluster.local:63000"
+              done
+              if [ ! -s "$tls/member-identities" ]; then
+                echo "quicbaas: Secret quicbaas-raft-tls has no member-identities key" >&2
+                exit 1
+              fi
+              identities=""
+              for entry in $(tr ',\n' '  ' < "$tls/member-identities"); do
+                case "$entry" in
+                  "$node_id="*) ;;
+                  [123]=spki:*)
+                    hex="${entry#?=spki:}"
+                    case "$hex" in *[!0-9a-f]*) hex="" ;; esac
+                    if [ "${#hex}" -ne 64 ]; then
+                      echo "quicbaas: member-identities entry '$entry' is not <1-3>=spki:<64 hex digits>" >&2
+                      exit 1
+                    fi
+                    identities="${identities:+$identities,}$entry"
+                    ;;
+                  *) echo "quicbaas: member-identities entry '$entry' is not <1-3>=spki:<64 hex digits>" >&2; exit 1 ;;
+                esac
+              done
+              for i in 1 2 3; do
+                [ "$i" = "$node_id" ] && continue
+                case ",$identities," in
+                  *",$i=spki:"*) ;;
+                  *) echo "quicbaas: member-identities has no identity for Raft node $i" >&2; exit 1 ;;
+                esac
+              done
+              export QUICBAAS_RAFT_NODE_ID="$node_id"
+              export QUICBAAS_RAFT_RAFT_ADDRESS="$POD_NAME.quicbaas-raft.$POD_NAMESPACE.svc.cluster.local:63000"
+              export QUICBAAS_RAFT_LISTEN_HOST="$POD_IP"
+              export QUICBAAS_RAFT_JOIN_ADDRESSES="$peers"
+              export QUICBAAS_RAFT_MEMBER_IDENTITIES="$identities"
+              exec /usr/local/bin/quicbaasd node --config /etc/quicbaas/quicbaas.yaml
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # The operator's SPIFFE trust domain; never defaulted. A missing
+            # ConfigMap holds the pod in CreateContainerConfigError.
+            - name: QUICBAAS_IAM_SPIFFE_TRUST_DOMAIN
+              valueFrom:
+                configMapKeyRef:
+                  name: quicbaas-identity
+                  key: spiffe-trust-domain
+            - name: QUICBAAS_SEAL_PASSPHRASE
+              valueFrom:
+                secretKeyRef:
+                  name: quicbaas-seal
+                  key: passphrase
+          ports:
+            - name: rest
+              containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: raft
+              containerPort: 63000
+              protocol: UDP
+          # Liveness: the process serves. Readiness: the node's shards have a
+          # leader, so the client Service routes only to a formed cluster.
+          startupProbe:
+            httpGet:
+              path: /api/v1/health/live
+              port: rest
+              scheme: HTTPS
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health/live
+              port: rest
+              scheme: HTTPS
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health/ready
+              port: rest
+              scheme: HTTPS
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            # No IPC_LOCK: the node's runtime must give RLIMIT_MEMLOCK of at
+            # least 3 MiB (docs/deployment/kubernetes.md, Prerequisites).
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /etc/quicbaas/quicbaas.yaml
+              subPath: quicbaas.yaml
+              readOnly: true
+            - name: raft-tls
+              mountPath: /etc/quicbaas/raft-tls
+              readOnly: true
+            - name: raft-node
+              mountPath: /etc/quicbaas/raft-node
+              readOnly: true
+            - name: server-tls
+              mountPath: /etc/quicbaas/server-tls
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: run
+              mountPath: /var/run/quicbaas
+            - name: logs
+              mountPath: /var/log/quicbaas
+      volumes:
+        - name: config
+          configMap:
+            name: quicbaas-config
+        - name: raft-tls
+          secret:
+            secretName: quicbaas-raft-tls
+            # CA and member identities, public; group-readable through fsGroup.
+            defaultMode: 0440
+        - name: raft-keys
+          secret:
+            secretName: quicbaas-raft-keys
+            # Mounted by the init container only.
+            defaultMode: 0440
+        - name: raft-node
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: server-tls
+          secret:
+            secretName: quicbaas-server-tls
+            defaultMode: 0440
+        - name: tmp
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 20Gi

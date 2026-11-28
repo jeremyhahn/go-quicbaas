@@ -1,0 +1,51 @@
+# QuicBaaS on Kubernetes: a 3-node Raft cluster, one go-quicbaas tag.
+#
+#   kubectl create namespace quicbaas
+#   spki() { openssl x509 -in "$1" -noout -pubkey |
+#     openssl pkey -pubin -outform DER | sha256sum | cut -d' ' -f1; }
+#   printf '1=spki:%s,2=spki:%s,3=spki:%s\n' "$(spki quicbaas-0.crt)" \
+#     "$(spki quicbaas-1.crt)" "$(spki quicbaas-2.crt)" > member-identities
+#   kubectl -n quicbaas create secret generic quicbaas-raft-tls \
+#     --from-file=ca.crt --from-file=member-identities
+#   kubectl -n quicbaas create secret generic quicbaas-raft-keys \
+#     --from-file=quicbaas-0.crt --from-file=quicbaas-0.key \
+#     --from-file=quicbaas-1.crt --from-file=quicbaas-1.key \
+#     --from-file=quicbaas-2.crt --from-file=quicbaas-2.key
+#   kubectl -n quicbaas create configmap quicbaas-identity \
+#     --from-literal=spiffe-trust-domain=<your trust domain>
+#   kubectl -n quicbaas create secret tls quicbaas-server-tls \
+#     --cert=server.crt --key=server.key
+#   kubectl -n quicbaas create secret generic quicbaas-seal \
+#     --from-literal=passphrase="$(openssl rand -base64 32)"
+#   kubectl apply -k deployments/kubernetes
+#
+# docs/deployment/kubernetes.md is the guide. The image tag below is the ONE
+# tag every node runs, and the operator sets it to a release whose image
+# serves REST; 0.16.0-alpha and 0.16.1-alpha do not.
+# test/buildgates/kubernetes_test.go refuses `latest`, those two releases,
+# and any second pin. An upgrade changes this one line, applies, and runs
+# rolling-upgrade.sh, which evicts one pod at a time through the
+# PodDisruptionBudget.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: quicbaas
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: quicbaas
+      app.kubernetes.io/part-of: quicbaas
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - services.yaml
+  - statefulset.yaml
+  - poddisruptionbudget.yaml
+  - networkpolicy.yaml
+
+images:
+  - name: ghcr.io/jeremyhahn/quicbaasd
+    # Set this before the first apply (docs/deployment/kubernetes.md, "One release tag").
+    newTag: set-a-release-that-serves-rest

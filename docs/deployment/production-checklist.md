@@ -34,6 +34,8 @@ A step-by-step checklist for deploying QuicBaaS in production environments.
 - [ ] File descriptor limits increased (see below)
 - [ ] Docker installed if using container deployment
 
+The container image carries the docker CLI and git. A containerised daemon that runs the SDLC pipeline needs the host's docker socket mounted (`-v /var/run/docker.sock:/var/run/docker.sock`) and runs in a group that may use it (`--group-add` with the socket's group ID). Without the mount, worker and train jobs fail to start.
+
 **System Tuning:**
 
 ```bash
@@ -137,7 +139,7 @@ raft:
 
 - [ ] Certificate Authority (CA) established or external CA selected
 - [ ] Private keys protected with restrictive permissions (`chmod 600`)
-- [ ] Certificate rotation procedure documented
+- [ ] Certificate rotation procedure documented (Raft replica certificates are renewed on their existing key; see [Kubernetes](kubernetes.md#renewing-a-raft-certificate))
 - [ ] Automated certificate renewal configured (Let's Encrypt, cert-manager)
 - [ ] Certificate expiration alerts configured (minimum 30 days before expiry)
 
@@ -328,51 +330,70 @@ raft:
 - [ ] Snapshot entries tuned for write volume
 - [ ] All nodes have consistent Raft configuration
 
-### 3.3 Cluster Discovery Configuration
+### 3.3 Cluster Membership Configuration
 
-**Static Discovery:**
+The three nodes of a cluster bootstrap one Raft group from the same member
+list, in `id=host:port` form; each node names itself with `node_id` and the
+address it advertises with `raft_address`. Raft runs over QUIC (UDP) with
+mutual TLS, so every node carries its own certificate from one cluster CA.
 
-```yaml
-discovery:
-  methods:
-    - type: static
-      peers:
-        - "1:node1.example.com:63000"
-        - "2:node2.example.com:63000"
-        - "3:node3.example.com:63000"
-cluster:
-  min_quorum: 2
+Every founder must also list the other two founders' Raft identities in
+`member_identities`, as `<node_id>=spki:<sha256>`: the SHA-256, in hex, of
+each founder certificate's SubjectPublicKeyInfo. The node derives its own
+identity from its certificate. Without the other founders' identities the
+cluster refuses to bootstrap. Derive them from the certificates; on node 1:
+
+```bash
+spki() { openssl x509 -in "$1" -noout -pubkey |
+  openssl pkey -pubin -outform DER | sha256sum | cut -d' ' -f1; }
+printf '2=spki:%s\n3=spki:%s\n' "$(spki node2.crt)" "$(spki node3.crt)"
 ```
 
-**DNS Discovery:**
-
 ```yaml
-discovery:
-  methods:
-    - type: dns
-      srv_record: "_quicbaas._tcp.example.com"
-      refresh_interval: 30s
+raft:
+  node_id: 1                     # 2 and 3 on the other nodes
+  deployment_id: 1               # the same on every node of the cluster
+  raft_address: "node1.example.com:63000"
+  join_addresses:
+    - "1=node1.example.com:63000"
+    - "2=node2.example.com:63000"
+    - "3=node3.example.com:63000"
+  member_identities:            # the other founders; node 2 lists 1 and 3
+    - "2=spki:<sha256 of node2.crt SubjectPublicKeyInfo>"
+    - "3=spki:<sha256 of node3.crt SubjectPublicKeyInfo>"
+  mutual_tls: true
+  tls_ca_file: /etc/quicbaas/raft-tls/ca.crt
+  tls_cert_file: /etc/quicbaas/raft-tls/node1.crt
+  tls_key_file: /etc/quicbaas/raft-tls/node1.key
 ```
 
-**Kubernetes Discovery:**
+A node added to a running cluster starts with `raft.join: true` and is added
+through the leader; it never bootstraps.
 
-```yaml
-discovery:
-  methods:
-    - type: kubernetes
-      namespace: quicbaas
-      service: quicbaas-headless
-      refresh_interval: 30s
-```
+- [ ] Every node runs the same go-quicbaas release tag
+- [ ] `deployment_id` identical, and `node_id` unique, on every node
+- [ ] `join_addresses` identical on every node and lists all three members
+- [ ] member_identities on every founder lists the other two founders' spki identities
+- [ ] UDP 63000 open between the nodes only
+- [ ] Per-node Raft certificates issued by one cluster CA
 
-- [ ] Discovery method selected and configured
-- [ ] All nodes discoverable via chosen method
-- [ ] Minimum quorum configured correctly
+### 3.3a Kubernetes
+
+`deployments/kubernetes` is the cluster as a kustomization
+([kubernetes.md](kubernetes.md) is the guide):
+
+- [ ] `kustomization.yaml`'s `newTag` is set to a release that serves REST (not `0.16.0-alpha` or `0.16.1-alpha`)
+- [ ] Secrets `quicbaas-raft-tls` (CA and member identities), `quicbaas-raft-keys` (one certificate and key per pod) and `quicbaas-seal`, and ConfigMap `quicbaas-identity` (the SPIFFE trust domain), created first
+- [ ] The three pods land on three distinct nodes (required anti-affinity)
+- [ ] The PodDisruptionBudget (`minAvailable: 2`) is in place before any node drain
+- [ ] Upgrades apply the new `newTag`, then run `deployments/kubernetes/rolling-upgrade.sh`; no pod is deleted by hand
+- [ ] The StorageClass behind the `data` claims is SSD-backed with `reclaimPolicy: Retain`
+- [ ] `kubectl -n quicbaas get pods` shows three ready pods before clients are pointed at the `quicbaas` Service
 
 ### 3.4 Load Balancer Setup
 
-- [ ] Layer 4 (TCP) load balancer configured for gRPC (port 9090)
-- [ ] Layer 7 (HTTP) load balancer configured for REST (port 8080)
+- [ ] Layer 4 (TCP) load balancer configured for gRPC (`server.grpc.port`, 9091 by default)
+- [ ] Layer 7 (HTTP) load balancer configured for REST (`server.rest.port`, 8081 by default)
 - [ ] Health checks configured for each endpoint
 - [ ] Session affinity disabled (stateless protocols)
 - [ ] Connection draining enabled for graceful shutdown
@@ -883,8 +904,13 @@ server:
   # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
   # opt in to "0.0.0.0" only for remote Shamir officer ceremonies.
   sealed_bind_host: "127.0.0.1"
-  port: 8080
-  grpc_port: 9090
+  mode: cluster
+  rest:
+    enabled: true
+    port: 8081
+  grpc:
+    enabled: true
+    port: 9091
   max_connections: 1000
 
 raft:
@@ -892,8 +918,19 @@ raft:
   rtt_millisecond: 200
   election_rtt: 10
   heartbeat_rtt: 1
+  deployment_id: 1  # The same on every node
   raft_address: "node1.example.com:63000"  # Change per node
+  join_addresses:
+    - "1=node1.example.com:63000"
+    - "2=node2.example.com:63000"
+    - "3=node3.example.com:63000"
+  member_identities:  # Change per node: the other two founders
+    - "2=spki:<sha256 of node2.crt SubjectPublicKeyInfo>"
+    - "3=spki:<sha256 of node3.crt SubjectPublicKeyInfo>"
   mutual_tls: true
+  tls_ca_file: /etc/quicbaas/certs/ca.crt
+  tls_cert_file: /etc/quicbaas/certs/node1.crt  # Change per node
+  tls_key_file: /etc/quicbaas/certs/node1.key   # Change per node
 
 storage:
   data_dir: /var/lib/quicbaas/data
@@ -911,14 +948,6 @@ security:
     rbac:
       enabled: true
       allow_anonymous: false
-
-discovery:
-  methods:
-    - type: static
-      peers:
-        - "1:node1.example.com:63000"
-        - "2:node2.example.com:63000"
-        - "3:node3.example.com:63000"
 
 backup:
   enabled: true

@@ -6,7 +6,8 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
 # gms_pure_go is required: the builder is CGO_ENABLED=0 and go-mysql-server's regex needs cgo otherwise.
-ARG BUILD_TAGS=gms_pure_go
+# The rest is the server's feature set: without rest the daemon serves no REST routes, health probes included.
+ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio"
 
 # Stage 1: Build stage
 FROM golang:${GO_VERSION}-alpine AS builder
@@ -51,9 +52,9 @@ RUN file quicbaasd && file quicbaas
 # Stage 2: minimal runtime.
 FROM alpine:3.24.1
 
-# Runtime dependencies, patched.
+# Runtime dependencies, patched; the daemon runs worker and train containers through the docker CLI and needs git.
 RUN apk upgrade --no-cache && \
-    apk --no-cache add ca-certificates tzdata
+    apk --no-cache add ca-certificates tzdata docker-cli git
 
 # Create non-root user
 RUN addgroup -g 1000 quicbaas && \

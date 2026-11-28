@@ -395,6 +395,7 @@ func bindEnvVars() {
 	config.BindSDLCLabelReconcileEnv(viper.GetViper())
 	config.BindSDLCWorkerImageEnv(viper.GetViper())
 	config.BindIAMSelfServiceRegistrationEnv(viper.GetViper())
+	config.BindIAMTrustDomainEnv(viper.GetViper())
 
 	// Server configuration - nested protocol configs. server.host and the
 	// other address keys are bound by bindAddressKeys.
@@ -426,6 +427,11 @@ func bindEnvVars() {
 	_ = viper.BindEnv("raft.deployment_id")
 	config.BindRaftAddressEnv(viper.GetViper())
 	_ = viper.BindEnv("raft.join_addresses")
+	// Per-node Raft mTLS material: a replica's certificate differs from its
+	// peers', so it arrives by environment even when the file omits the keys.
+	_ = viper.BindEnv("raft.tls_cert_file")
+	_ = viper.BindEnv("raft.tls_key_file")
+	_ = viper.BindEnv("raft.tls_ca_file")
 
 	// Storage configuration.
 	_ = viper.BindEnv("storage.backend")
