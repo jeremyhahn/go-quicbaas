@@ -16,7 +16,12 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -65,6 +70,60 @@ func TestSecretsGet(t *testing.T) {
 		// Cleanup
 		cleanup := SecretsDeleteCommand(secretPath, true)
 		runner.Run(cleanup)
+	})
+}
+
+// TestSecretsPutRawFromFile proves #143 end to end on every transport: a
+// file's raw bytes (not KEY=VALUE JSON) stored with `secrets put --from-file`
+// read back verbatim with `secrets get`.
+func TestSecretsPutRawFromFile(t *testing.T) {
+	RunForAllTransports(t, "SecretsPutRawFromFile", func(t *testing.T, runner *TestRunner) {
+		secretPath := UniqueKey("raw-secret")
+		raw := "whsec_raw-webhook-hmac-key:not=json\n"
+		file := filepath.Join(t.TempDir(), "hmac.key")
+		require.NoError(t, os.WriteFile(file, []byte(raw), 0o600))
+
+		put := SecretsPutFromFileCommand(secretPath, file)
+		if runner.IsSkipped(put) {
+			return
+		}
+		runner.RunAndAssert(put)
+
+		stdout, stderr, err := runner.Run(SecretsGetOnEveryTransportCommand(secretPath))
+		require.NoError(t, err, "secrets get: %s", stderr)
+		assert.Equal(t, raw, stdout, "the raw bytes read back verbatim")
+
+		runner.Run(SecretsRoundTripCleanupCommand(runner.transport, secretPath))
+	})
+}
+
+// TestSecretsPutRawFromFileJSONObject round-trips a file whose content is a
+// JSON object (an auth.json): `secrets get` prints it byte for byte, both by
+// default and with --output raw, on every transport.
+func TestSecretsPutRawFromFileJSONObject(t *testing.T) {
+	RunForAllTransports(t, "SecretsPutRawFromFileJSONObject", func(t *testing.T, runner *TestRunner) {
+		secretPath := UniqueKey("raw-json-secret")
+		raw := "{\n  \"token\": \"t0k\",\n  \"nested\": {\"a\": [1, 2]}\n}\n"
+		file := filepath.Join(t.TempDir(), "auth.json")
+		require.NoError(t, os.WriteFile(file, []byte(raw), 0o600))
+
+		put := SecretsPutFromFileCommand(secretPath, file)
+		if runner.IsSkipped(put) {
+			return
+		}
+		runner.RunAndAssert(put)
+
+		get := SecretsGetOnEveryTransportCommand(secretPath)
+		stdout, stderr, err := runner.Run(get)
+		require.NoError(t, err, "secrets get: %s", stderr)
+		assert.Equal(t, raw, stdout, "the JSON file reads back verbatim")
+
+		get.Args = append(get.Args, "--output", "raw")
+		stdout, stderr, err = runner.Run(get)
+		require.NoError(t, err, "secrets get --output raw: %s", stderr)
+		assert.Equal(t, raw, stdout, "--output raw is the file verbatim")
+
+		runner.Run(SecretsRoundTripCleanupCommand(runner.transport, secretPath))
 	})
 }
 

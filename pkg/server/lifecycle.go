@@ -1365,6 +1365,9 @@ func (s *Server) startSecrets() error {
 		Backend: backend,
 		Logger:  logAdapter,
 		Locker:  nil,
+		// Bounds the versions each secret keeps; scheduled rotations
+		// write a version per interval, so without it they grow forever.
+		MaxVersions: secretsMaxVersions(s.config),
 	})
 	if err != nil {
 		return api.NewOperationFailedError("create secrets manager", err)
@@ -1374,6 +1377,17 @@ func (s *Server) startSecrets() error {
 	s.logger.Info("Secrets manager initialized")
 
 	return nil
+}
+
+// secretsMaxVersions is the secrets.versioning.max_versions bound the
+// Manager prunes to; 0 (keep every version) when it is unset or the
+// configuration is absent. The backends version every write whatever
+// versioning.enabled says, so the bound applies either way.
+func secretsMaxVersions(cfg *config.Config) int {
+	if cfg == nil || cfg.Secrets.Versioning.MaxVersions < 0 {
+		return 0
+	}
+	return cfg.Secrets.Versioning.MaxVersions
 }
 
 // startCatalogManager initializes the catalog manager, backend manager, and background workers

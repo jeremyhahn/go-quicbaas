@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`secrets get` reads a raw-byte secret back verbatim (#143).** A value
+  stored with `secrets put --from-stdin` or `--from-file` is not a JSON
+  object; `secrets get` now writes its bytes unchanged instead of failing to
+  unmarshal it (`-o json` carries it as `data`, or `data_base64` when it is
+  not UTF-8). An integration case stores and reads one on every transport.
+- **Secrets rotation policies are performed, not only stored (#726).** The
+  `secrets.rotation` scheduler system job (every 5 minutes by default,
+  `Config.SecretsRotationScanInterval`) writes each secret whose policy's
+  `next_rotation` has passed as a new version (`rotation_reason=scheduled`)
+  and advances `next_rotation` by the interval. Before, `SetRotationPolicy`
+  wrote the policy into metadata and nothing acted on it.
+
 ### Changed
 
 - **Module-credential and live-forge variables use forge-neutral names.**

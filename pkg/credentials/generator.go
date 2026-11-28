@@ -54,6 +54,15 @@ type CredentialGenerator interface {
 	Rotate(ctx context.Context, old *Credential, role *Role) (*Credential, error)
 }
 
+// MaterialKeeper is implemented by a generator that keeps the secret material
+// it generates in its own store. For such a generator the dynamic secrets
+// service hands Credential.Data to the caller once, in the generate response,
+// and never persists it: its stored record carries the IDs and times only.
+type MaterialKeeper interface {
+	// KeepsMaterial reports whether the generator keeps the material itself.
+	KeepsMaterial() bool
+}
+
 // GeneratorRegistry manages registered credential generators.
 // It provides a central registry for looking up generators by type.
 type GeneratorRegistry struct {

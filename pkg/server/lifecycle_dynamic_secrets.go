@@ -87,6 +87,10 @@ func (s *Server) startDynamicSecrets() error {
 	if err != nil {
 		return err
 	}
+	if err := s.registerDynamicSecretGenerators(generators); err != nil {
+		_ = leaseManager.Close()
+		return err
+	}
 
 	// The reaper runs on the SERVER's lifetime, not a request's: it converts
 	// lapsed leases into tombstones and purges tombstones past retention.

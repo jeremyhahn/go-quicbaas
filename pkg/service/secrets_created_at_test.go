@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -217,6 +218,177 @@ func TestSecretsService_GetReportsTheVersionItReturned(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, []byte("two"), latest.Data)
 			require.Equal(t, uint64(2), latest.Version)
+		})
+	}
+}
+
+// prunedVersionGetManager makes the latest-version read lose its version to a
+// concurrent write's retention prune between the pointer read and the
+// version fetch: the first Get writes a new version (pruning the old one
+// under max_versions=1) and then fetches the version it had read the
+// pointer of.
+type prunedVersionGetManager struct {
+	*secrets.Manager
+	pruneOnce func(ctx context.Context, path string) int
+}
+
+func (m *prunedVersionGetManager) Get(ctx context.Context, path string) (map[string][]byte, map[string]string, error) {
+	if hook := m.pruneOnce; hook != nil {
+		m.pruneOnce = nil
+		readVersion := hook(ctx, path)
+		return m.Manager.GetVersion(ctx, path, readVersion)
+	}
+	return m.Manager.Get(ctx, path)
+}
+
+// TestSecretsService_GetSurvivesAConcurrentPrune: with max_versions=1 a
+// write that lands during a latest-version read prunes the version the read
+// was returning. The secret exists throughout, so the read is not an error:
+// it is retried whole and returns the version that replaced it, with that
+// version's write time.
+func TestSecretsService_GetSurvivesAConcurrentPrune(t *testing.T) {
+	seed := func(t *testing.T) (*secrets.Manager, string, context.Context) {
+		t.Helper()
+		base, err := secrets.NewManager(&secrets.ManagerOptions{
+			Backend:     secrets.NewKVBackend(newTenantNamespacedKV()),
+			MaxVersions: 1,
+		})
+		require.NoError(t, err)
+		ctx := tenantctx.WithSystem(context.Background())
+		tenantID, err := secretsScopedTenant(ctx, "", "test")
+		require.NoError(t, err)
+		scopedID := secretsTenantScopedID(tenantID, "db-password")
+		require.NoError(t, base.Store(ctx, scopedID, map[string][]byte{"data": []byte("one")}, nil))
+		return base, scopedID, ctx
+	}
+	requireReplacement := func(t *testing.T, svc SecretsService, ctx context.Context) {
+		t.Helper()
+		got, err := svc.GetSecret(ctx, &GetSecretRequest{SecretID: "db-password"})
+		require.NoError(t, err)
+		require.Equal(t, []byte("two"), got.Data)
+		require.Equal(t, uint64(2), got.Version)
+		history, err := svc.ListSecretVersions(ctx, &ListSecretVersionsRequest{SecretID: "db-password"})
+		require.NoError(t, err)
+		// Version 1 was pruned: at most its timestamp tombstone remains,
+		// and version 2 is the only version with data.
+		var live []*SecretVersion
+		for _, v := range history.Versions {
+			if v.DeletedAt == nil {
+				live = append(live, v)
+			}
+		}
+		require.Len(t, live, 1, "version 1 was pruned")
+		require.Equal(t, uint64(2), live[0].Version)
+		requireSameInstant(t, live[0].CreatedAt, got.CreatedAt, "created_at of the returned version")
+	}
+
+	t.Run("pruned before the write-time read", func(t *testing.T) {
+		base, _, ctx := seed(t)
+		mgr := &writeAfterGetManager{Manager: base}
+		mgr.afterGet = func(ctx context.Context, path string) {
+			require.NoError(t, base.Store(ctx, path, map[string][]byte{"data": []byte("two")}, nil))
+		}
+		requireReplacement(t, newSecretsService(mgr, newMockLogger()), ctx)
+	})
+
+	t.Run("pruned between the pointer and the version read", func(t *testing.T) {
+		base, _, ctx := seed(t)
+		mgr := &prunedVersionGetManager{Manager: base}
+		mgr.pruneOnce = func(ctx context.Context, path string) int {
+			require.NoError(t, base.Store(ctx, path, map[string][]byte{"data": []byte("two")}, nil))
+			return 1
+		}
+		requireReplacement(t, newSecretsService(mgr, newMockLogger()), ctx)
+	})
+
+	t.Run("a requested version that was pruned is not found", func(t *testing.T) {
+		base, scopedID, ctx := seed(t)
+		require.NoError(t, base.Store(ctx, scopedID, map[string][]byte{"data": []byte("two")}, nil))
+		svc := newSecretsService(base, newMockLogger())
+		_, err := svc.GetSecret(ctx, &GetSecretRequest{SecretID: "db-password", Version: 1})
+		require.Error(t, err)
+		require.Equal(t, qberrors.ErrNotFound, qberrors.Code(err))
+	})
+}
+
+// TestSecretsService_CreatedAtSurvivesRetention: with max_versions=1 every
+// write prunes the version before it, the first one included. The secret's
+// created_at is still its first write, on every backend, however many
+// retention-triggering writes follow.
+func TestSecretsService_CreatedAtSurvivesRetention(t *testing.T) {
+	backends := map[string]func() secrets.Backend{
+		"memory": func() secrets.Backend { return secrets.NewMemoryBackend() },
+		"kv":     func() secrets.Backend { return secrets.NewKVBackend(newTenantNamespacedKV()) },
+	}
+	for name, newBackend := range backends {
+		t.Run(name, func(t *testing.T) {
+			mgr, err := secrets.NewManager(&secrets.ManagerOptions{Backend: newBackend(), MaxVersions: 1})
+			require.NoError(t, err)
+			svc := newSecretsService(mgr, newMockLogger())
+			ctx := tenantctx.WithSystem(context.Background())
+
+			_, err = svc.StoreSecret(ctx, &StoreSecretRequest{SecretID: "db-password", Name: "db-password", Data: []byte("one")})
+			require.NoError(t, err)
+			list, err := svc.ListSecrets(ctx, &ListSecretsRequest{})
+			require.NoError(t, err)
+			require.Len(t, list.Secrets, 1)
+			firstWrite := list.Secrets[0].CreatedAt
+
+			for i := 2; i <= 4; i++ {
+				time.Sleep(2 * time.Millisecond) // each write's time is distinct
+				_, err = svc.RotateSecret(ctx, &RotateSecretRequest{SecretID: "db-password", NewData: []byte{byte('0' + i)}})
+				require.NoError(t, err)
+
+				list, err = svc.ListSecrets(ctx, &ListSecretsRequest{})
+				require.NoError(t, err)
+				require.Len(t, list.Secrets, 1)
+				requireSameInstant(t, firstWrite, list.Secrets[0].CreatedAt, "list created_at after a pruning write")
+				require.True(t, list.Secrets[0].UpdatedAt.After(firstWrite), "updated_at moves with the write")
+				require.Equal(t, uint64(i), list.Secrets[0].CurrentVersion)
+
+				got, err := svc.GetSecret(ctx, &GetSecretRequest{SecretID: "db-password"})
+				require.NoError(t, err)
+				require.Equal(t, uint64(i), got.Version)
+				require.Equal(t, []byte{byte('0' + i)}, got.Data)
+			}
+		})
+	}
+}
+
+// TestSecretsService_ListVersionsMarksPrunedVersionsDeleted: versions that
+// retention pruned are listed with a deletion time, not as available.
+func TestSecretsService_ListVersionsMarksPrunedVersionsDeleted(t *testing.T) {
+	backends := map[string]func() secrets.Backend{
+		"memory": func() secrets.Backend { return secrets.NewMemoryBackend() },
+		"kv":     func() secrets.Backend { return secrets.NewKVBackend(newTenantNamespacedKV()) },
+	}
+	for name, newBackend := range backends {
+		t.Run(name, func(t *testing.T) {
+			mgr, err := secrets.NewManager(&secrets.ManagerOptions{Backend: newBackend(), MaxVersions: 1})
+			require.NoError(t, err)
+			svc := newSecretsService(mgr, newMockLogger())
+			ctx := tenantctx.WithSystem(context.Background())
+
+			_, err = svc.StoreSecret(ctx, &StoreSecretRequest{SecretID: "db-password", Name: "db-password", Data: []byte("one")})
+			require.NoError(t, err)
+			for i := 2; i <= 3; i++ {
+				_, err = svc.RotateSecret(ctx, &RotateSecretRequest{SecretID: "db-password", NewData: []byte{byte('0' + i)}})
+				require.NoError(t, err)
+			}
+
+			resp, err := svc.ListSecretVersions(ctx, &ListSecretVersionsRequest{SecretID: "db-password"})
+			require.NoError(t, err)
+			byVersion := make(map[uint64]*SecretVersion, len(resp.Versions))
+			for _, v := range resp.Versions {
+				byVersion[v.Version] = v
+			}
+			require.Contains(t, byVersion, uint64(3))
+			require.Nil(t, byVersion[3].DeletedAt, "the current version is available")
+			for v, sv := range byVersion {
+				if v != 3 {
+					require.NotNil(t, sv.DeletedAt, "pruned version %d is listed as deleted", v)
+				}
+			}
 		})
 	}
 }
