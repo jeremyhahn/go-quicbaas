@@ -265,7 +265,7 @@ func TestIssueSource_ADepartedPullRequestIsNotRead(t *testing.T) {
 	for name, readErr := range cases {
 		t.Run(name, func(t *testing.T) {
 			store := newTestStore(t)
-			if err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
+			if _, err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
 				t.Fatal(err)
 			}
 			fake := newFakeForge()

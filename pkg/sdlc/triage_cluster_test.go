@@ -255,7 +255,7 @@ func clusterRig(t *testing.T) *triageRig {
 	t.Helper()
 	rig := newTriageRig(t)
 	rig.binding.Forge.Labels[LabelClustered] = "factory:clustered"
-	if err := rig.store.PutBinding(context.Background(), testTenant, rig.binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, rig.binding); err != nil {
 		t.Fatal(err)
 	}
 	rig.container.seedFile("pkg/luks2/kdf.go", "package luks2\nfunc DeriveKey() {}")
@@ -305,7 +305,7 @@ func TestTriageClustering_RelatedReadyIssuesBecomeOneTask(t *testing.T) {
 func TestTriageClustering_OffAdmitsEveryReadyIssueAlone(t *testing.T) {
 	rig := clusterRig(t)
 	rig.binding.Clustering.Disabled = true
-	if err := rig.store.PutBinding(context.Background(), testTenant, rig.binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, rig.binding); err != nil {
 		t.Fatal(err)
 	}
 	if err := rig.run(); err != nil {
@@ -390,7 +390,7 @@ func TestTriageClustering_AnUnreadableClusterSkipsTheIssue(t *testing.T) {
 func TestIssueSource_AnAnchorCarriesItsMembersAndAMemberIsNotAdopted(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
-	if err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
 		t.Fatal(err)
 	}
 	forge := newFakeForge()

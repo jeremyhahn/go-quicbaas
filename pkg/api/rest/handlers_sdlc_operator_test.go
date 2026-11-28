@@ -52,7 +52,7 @@ var sdlcRESTAudit *sdlcRESTIssueAuditor
 func TestSDLCFileIssue_FilesOnTheBoundRepository(t *testing.T) {
 	server, svc := setupSDLCServer(t)
 	binding := restBinding("p1")
-	require.NoError(t, svc.Store().PutBinding(context.Background(), "tenant-a", &binding))
+	require.NoError(t, putErr(svc.Store().PutBinding(context.Background(), "tenant-a", &binding)))
 	sdlcRESTForge.PutLabel("task:ready", "00ff00", "")
 	sdlcRESTForge.PutIssue(12, "parent")
 
@@ -70,7 +70,7 @@ func TestSDLCFileIssue_FilesOnTheBoundRepository(t *testing.T) {
 func TestSDLCFileIssue_Refusals(t *testing.T) {
 	server, svc := setupSDLCServer(t)
 	binding := restBinding("p1")
-	require.NoError(t, svc.Store().PutBinding(context.Background(), "tenant-a", &binding))
+	require.NoError(t, putErr(svc.Store().PutBinding(context.Background(), "tenant-a", &binding)))
 
 	cases := []struct {
 		name, tenant, path string
@@ -96,7 +96,7 @@ func TestSDLCFileIssue_Refusals(t *testing.T) {
 func TestSDLCCollaborators_ListsTheOwnerThenCollaborators(t *testing.T) {
 	server, svc := setupSDLCServer(t)
 	binding := restBinding("p1")
-	require.NoError(t, svc.Store().PutBinding(context.Background(), "tenant-a", &binding))
+	require.NoError(t, putErr(svc.Store().PutBinding(context.Background(), "tenant-a", &binding)))
 	sdlcRESTForge.PutCollaborator("lead-agent")
 
 	rec := sdlcCall(t, server, "tenant-a", http.MethodGet, "/api/v1/sdlc/projects/p1/collaborators", nil)

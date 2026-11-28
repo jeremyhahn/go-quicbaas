@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -36,6 +37,13 @@ func TestHandleProjectError_Dispatch(t *testing.T) {
 		{"not_found", &service.ProjectNotFoundError{TenantID: "t", ProjectID: "p"}, http.StatusNotFound},
 		{"already_exists", &service.ProjectAlreadyExistsError{TenantID: "t", Name: "n"}, http.StatusConflict},
 		{"bound", &service.ProjectBoundError{TenantID: "t", ProjectID: "p"}, http.StatusConflict},
+		// Another delete, or another bind or unbind, of the project is in
+		// flight: a conflict the caller retries once it settles.
+		{"delete_in_progress", &sdlc.DeleteInProgressError{TenantID: "t", ProjectID: "p"}, http.StatusConflict},
+		{"bind_in_progress", &sdlc.BindInProgressError{TenantID: "t", ProjectID: "p"}, http.StatusConflict},
+		// The project is deleted but its tombstone was not written: a server
+		// fault, not a conflict.
+		{"delete_unsettled", &service.ProjectDeleteUnsettledError{TenantID: "t", ProjectID: "p", Cause: stderrors.New("kv down")}, http.StatusInternalServerError},
 		{"invalid", &service.ProjectInvalidError{Field: "name", Message: "bad"}, http.StatusBadRequest},
 		{"access_denied", &service.ProjectAccessDeniedError{ProjectID: "p", FleetNodeID: "a"}, http.StatusForbidden},
 		// A project the authorizer could not read is a refusal, not a server

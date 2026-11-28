@@ -67,7 +67,7 @@ func newFloorRig(t *testing.T) *floorRig {
 	binding.Forge.Owner, binding.Forge.Repo = testRepo.Owner, testRepo.Repo
 	binding.Forge.BaseURL = gitea.APIURL()
 	binding.Reviewer = ReviewerConfig{Agent: testReviewerAgent, Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 

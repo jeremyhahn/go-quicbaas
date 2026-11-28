@@ -43,7 +43,7 @@ func newDispatchRig(t *testing.T) *dispatchRig {
 	store := newTestStore(t)
 	binding := testBinding()
 	binding.Reviewer = ReviewerConfig{Agent: testReviewerAgent, Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	forge := newFakeForge()
@@ -101,7 +101,7 @@ func (r *dispatchRig) ungate(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding.Review.RequireGreenChecks = false
-	if err := r.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := r.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -146,7 +146,7 @@ func TestReviewDispatcher_StartsNothingForAProjectThatBindsNoReviewer(t *testing
 		t.Fatal(err)
 	}
 	binding.Reviewer = ReviewerConfig{}
-	if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	started, err := rig.dispatcher.TriggerReview(context.Background(), prRequest(41))
@@ -400,7 +400,7 @@ func TestReviewDispatcher_RefusesAForgeItCannotResolve(t *testing.T) {
 	store := newTestStore(t)
 	binding := testBinding()
 	binding.Reviewer = ReviewerConfig{Agent: testReviewerAgent, Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	// A resolver that registers no adapter for the binding's forge answers

@@ -63,7 +63,7 @@ func (r *boundDeleteRig) bind(t *testing.T) {
 	t.Helper()
 	binding := sdlcTestBinding()
 	binding.ProjectID = r.projectID
-	if err := r.bindings.PutBinding(context.Background(), sdlcTestTenant, binding); err != nil {
+	if _, err := r.bindings.PutBinding(context.Background(), sdlcTestTenant, binding); err != nil {
 		t.Fatalf("PutBinding: %v", err)
 	}
 }

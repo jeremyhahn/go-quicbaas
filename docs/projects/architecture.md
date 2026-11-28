@@ -104,8 +104,53 @@ binding reader is wired on every node with a tenant store resolver, whether
 or not the SDLC module is enabled. A node without a resolver has no binding
 store, so no binding can exist, and the delete goes ahead.
 
-Known gap: the check and the delete are separate writes. A bind that commits
-between them leaves a binding on a deleted project.
+The check and the delete are separate writes, so a delete **fences** the
+project first (go-quicbaas#1303). It writes a delete fence into the tenant's
+SDLC store, beside the bindings, then checks for a binding, then tears down
+and deletes. One delete runs at a time: while another delete's live fence is
+held, a second delete is refused with `sdlc.DeleteInProgressError`, a version
+conflict (`409`). A refused or failed delete clears its own fence; a completed
+delete turns its fence into a **tombstone**, which never goes stale and is
+never cleared (project IDs are uuids and never reused).
+
+Every bind, rebind included, reads the fence after it writes its binding. If
+a fence or tombstone is there, or the fence cannot be read, the bind withdraws
+its own write, matched by the binding's `write_token`: a fresh bind removes
+the binding and its route, a rebind restores the record it replaced. The
+withdrawal runs on a context detached from the request, so a canceled request
+still withdraws. The bind returns `sdlc.ProjectDeletingError`, a version
+conflict (`409`), or the fence read's error; a withdrawal that itself fails is
+logged and returned as `sdlc.BindWithdrawError`. Each side writes its own mark
+and then reads the other's, so at least one of them sees the other: a delete
+and a bind can both refuse, and a retry settles it, but they never both
+succeed. A fence a crashed delete leaves behind stops holding after
+`sdlc.DeleteFenceTTL` (10 minutes) and the next delete replaces it. A fence
+that cannot be written refuses the delete with `ProjectBindingCheckError`.
+No live fence is not proof the project stands: a bind that finds none re-reads
+the project after its write and, if the project is gone, withdraws its write
+and returns `sdlc.ProjectDeletingError` as it would behind a fence. A delete
+whose tombstone cannot be written returns `service.ProjectDeleteUnsettledError`
+(`500`) with the project already deleted; its fence goes stale, and the late
+bind's project re-read still keeps a binding off the deleted project.
+
+A binding write whose response is lost has an unknown outcome: it may have
+landed, or may still land after the bind has returned. The bind settles it
+first (`sdlc.Store.SettleBindingWrite`). If the stored record carries the
+write's token, the write landed and the fence read follows as usual. Otherwise
+the bind moves the binding slot to bytes the pending write did not read: a void
+marker in an empty slot, or the held record with a fresh write token. Every
+binding write is a compare-and-swap on the bytes it read, so the pending write
+can no longer apply. A fresh bind that did not land forgets its route while no
+binding holds the slot, and the bind returns the write's own error. A settle
+that cannot be written returns `sdlc.BindWithdrawError`. A void marker reads as
+no binding, listing skips it, and the next bind of the project replaces it. An
+unbind or a withdrawal also leaves a void marker in place of the binding, never
+an empty slot, so no earlier pending create can apply.
+
+A project delete is guarded on the bytes it read in the same way. A delete that
+fails is settled before its fence clears: the project is re-stamped with a
+guarded swap, so a delete still pending can no longer apply. A store that cannot
+settle leaves the fence held.
 
 ## Identity: id, name and source repository
 

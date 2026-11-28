@@ -135,7 +135,10 @@ Content-Type: application/json
 
 `DELETE /api/v1/projects/{id}?tenant_id=acme` → `200` with
 `{project_id, deleted, timestamp}`. A project with an SDLC binding is
-refused with `409`; the message names `unbind` as the remedy.
+refused with `409`; the message names `unbind` as the remedy. A bind that
+lands while a delete of the same project is in flight is refused with `409`
+and withdrawn, so no binding is left on a deleted project. A second delete
+while one is in flight is refused with `409`; retry it once the first settles.
 
 ### Grant and revoke
 
@@ -187,6 +190,8 @@ There is no get-by-name tool, and the SDK's MCP transport answers
 | `ProjectNotFoundError` | `404` | `NotFound` |
 | `ProjectAlreadyExistsError` (name taken) | `409` | `AlreadyExists` |
 | `ProjectBoundError` (delete of a bound project) | `409` | `FailedPrecondition` |
+| `sdlc.DeleteInProgressError` (another delete of the project is in flight) | `409` | `FailedPrecondition` |
+| `ProjectDeleteUnsettledError` (the project is deleted, but its tombstone could not be written) | `500` | `Internal` |
 | `ProjectInvalidError` | `400` | `InvalidArgument` |
 | `ProjectAccessDeniedError` | `403` | `Internal` (gap) |
 | `ProjectUnresolvedError` | `403` | `Internal` (gap) |

@@ -28,7 +28,7 @@ func newIssueSourceRig(t *testing.T) (*IssueSource, *fakeForge, *Store) {
 	t.Helper()
 	store := newTestStore(t)
 	binding := testBinding()
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	forge := newFakeForge()
@@ -80,7 +80,7 @@ func TestIssueSource_PriorityFollowsTheBinding(t *testing.T) {
 	source, forge, store := newIssueSourceRig(t)
 	binding := testBinding()
 	binding.Ranking = RankingPolicy{DefaultPriority: 7, AnalyzerName: DeclaredAnalyzerName, DeclaredDependents: []string{"web"}}
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	forge.putIssue(1, "x", "task:ready")
@@ -126,7 +126,7 @@ func TestIssueSource_ForgeOutageIsReportedAsUnavailable(t *testing.T) {
 
 func TestIssueSource_ForgeResolutionFailures(t *testing.T) {
 	store := newTestStore(t)
-	if err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
 		t.Fatal(err)
 	}
 	failing, err := NewIssueSource(store, &fakeForges{err: errors.New("no token")}, store, 0)

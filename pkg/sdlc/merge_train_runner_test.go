@@ -245,7 +245,7 @@ func newTrainRig(t *testing.T) *trainRig {
 	binding := testBinding()
 	binding.Reviewer = trainTestReviewer()
 	binding.Forge.Labels[LabelTrainEjected] = "factory:train-ejected"
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	forge := newFakeForge()
@@ -631,7 +631,7 @@ func TestTrain_AReviewThatCannotBeStartedFailsTheJob(t *testing.T) {
 // max_size changes and the rest ride the next train in the same job.
 func TestTrain_TheQueueIsBoundedByThePolicy(t *testing.T) {
 	rig := newTrainRig(t)
-	if err := rig.store.PutBinding(context.Background(), testTenant, func() *ProjectBinding {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, func() *ProjectBinding {
 		b := testBinding()
 		b.Reviewer = trainTestReviewer()
 		b.MergeTrain.MaxSize = 2
@@ -1126,7 +1126,7 @@ func TestTrain_AProjectThatLosesItsCountingReviewerMidTrainIsNotLanded(t *testin
 	binding := testBinding()
 	binding.Reviewer = trainTestReviewer()
 	binding.Reviewer.CountsTowardMerge = &no
-	if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	if err := rig.run(TrainResumeState(orchestration.JobStateValidating)); err != nil {
@@ -1152,7 +1152,7 @@ func TestTrain_AProjectWithNoCountingReviewerIsNeverTrained(t *testing.T) {
 	binding := testBinding()
 	binding.Reviewer = trainTestReviewer()
 	binding.Reviewer.CountsTowardMerge = &no
-	if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	rig.queue(101, "task-a")

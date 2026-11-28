@@ -90,6 +90,26 @@ func TestRespondSDLCError_AdoptionOutcomes(t *testing.T) {
 	}
 }
 
+// A bind that races another bind or unbind, or a delete of its project, is a
+// conflict the caller retries; a bind whose withdrawal failed answers what the
+// withdrawal observed, so a store fault stays a server error.
+func TestRespondSDLCError_BindAndDeleteRaces(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want int
+	}{
+		"bind in progress": {&sdlc.BindInProgressError{TenantID: "t", ProjectID: "p"}, http.StatusConflict},
+		"project deleting": {&sdlc.ProjectDeletingError{TenantID: "t", ProjectID: "p"}, http.StatusConflict},
+		"withdraw failed":  {&sdlc.BindWithdrawError{TenantID: "t", ProjectID: "p", Cause: errors.New("kv down")}, http.StatusInternalServerError},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			respondSDLCError(rec, httptest.NewRequest(http.MethodPost, "/", nil), tc.err)
+			assert.Equal(t, tc.want, rec.Code)
+		})
+	}
+}
+
 // TestRespondSDLCError_OversizedSlotAppendIsBadInput: a binding whose slot
 // appends more than the bound is the caller's to correct.
 func TestRespondSDLCError_OversizedSlotAppendIsBadInput(t *testing.T) {

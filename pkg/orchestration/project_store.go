@@ -49,6 +49,18 @@ type ProjectStore interface {
 	ListByTenant(ctx context.Context, tenantID string) ([]*Project, error)
 }
 
+// ProjectDeleteSettler settles a Delete that returned an error. The
+// delete is guarded on the bytes it read, so moving the record to
+// different bytes means a delete still pending can never apply.
+type ProjectDeleteSettler interface {
+	// SettleDelete reports gone true when the record is absent. Otherwise
+	// it re-stamps the record with a guarded swap and reports gone false:
+	// from then on the pending delete cannot apply.
+	SettleDelete(ctx context.Context, tenantID, projectID string) (gone bool, err error)
+}
+
+var _ ProjectDeleteSettler = (*projectStore)(nil)
+
 // =============================================================================
 // Key-segment errors
 // =============================================================================
@@ -153,6 +165,11 @@ type projectStore struct {
 	creator guardedCreator
 	deleter guardedDeleter
 
+	// swapper is kv's guarded swap, asserted once like the others. A failed
+	// record delete is settled with it (SettleDelete); nil means a failed
+	// delete cannot be settled here.
+	swapper guardedSwapper
+
 	// recordMu serializes the read-modify-write sequence on one project
 	// record. Writes to different projects proceed in parallel.
 	recordMu keyedMutex
@@ -182,6 +199,9 @@ func NewProjectStore(kv interfaces.KVStore, opts ...StoreOption) ProjectStore {
 	}
 	if deleter, ok := kv.(guardedDeleter); ok {
 		store.deleter = deleter
+	}
+	if swapper, ok := kv.(guardedSwapper); ok {
+		store.swapper = swapper
 	}
 	return store
 }
@@ -570,20 +590,27 @@ func (s *projectStore) GetByName(ctx context.Context, tenantID, name string) (*P
 
 // load reads and decodes one project record.
 func (s *projectStore) load(ctx context.Context, recordKey, tenantID, projectID string) (*Project, error) {
+	project, _, err := s.loadRaw(ctx, recordKey, tenantID, projectID)
+	return project, err
+}
+
+// loadRaw is load that also returns the exact bytes read, for a guarded
+// write or delete on them.
+func (s *projectStore) loadRaw(ctx context.Context, recordKey, tenantID, projectID string) (*Project, []byte, error) {
 	data, err := s.kv.Get(ctx, recordKey)
 	if err != nil {
 		if qerrors.IsNotFound(err) {
-			return nil, &ProjectStoreNotFoundError{TenantID: tenantID, ProjectID: projectID}
+			return nil, nil, &ProjectStoreNotFoundError{TenantID: tenantID, ProjectID: projectID}
 		}
-		return nil, &ProjectStoreError{Message: "failed to read project: " + err.Error()}
+		return nil, nil, &ProjectStoreError{Message: "failed to read project: " + err.Error()}
 	}
 	if data == nil {
-		return nil, &ProjectStoreNotFoundError{TenantID: tenantID, ProjectID: projectID}
+		return nil, nil, &ProjectStoreNotFoundError{TenantID: tenantID, ProjectID: projectID}
 	}
 
 	var project Project
 	if err := json.Unmarshal(data, &project); err != nil {
-		return nil, &ProjectStoreError{Message: "failed to unmarshal project: " + err.Error()}
+		return nil, nil, &ProjectStoreError{Message: "failed to unmarshal project: " + err.Error()}
 	}
 
 	// Defence in depth. The key already scopes the read to tenantID, so a
@@ -591,10 +618,10 @@ func (s *projectStore) load(ctx context.Context, recordKey, tenantID, projectID 
 	// corrupted or bypassed. Report it as absent rather than returning another
 	// tenant's data to this caller.
 	if project.TenantID != tenantID {
-		return nil, &ProjectStoreNotFoundError{TenantID: tenantID, ProjectID: projectID}
+		return nil, nil, &ProjectStoreNotFoundError{TenantID: tenantID, ProjectID: projectID}
 	}
 
-	return &project, nil
+	return &project, data, nil
 }
 
 // nameOwner returns the project ID holding a name reservation, or "" if the
@@ -788,13 +815,21 @@ func (s *projectStore) remove(ctx context.Context, tenantID, projectID string) e
 	unlockRecord := s.recordMu.lock(recordKey)
 	defer unlockRecord()
 
-	current, err := s.load(ctx, recordKey, tenantID, projectID)
+	current, raw, err := s.loadRaw(ctx, recordKey, tenantID, projectID)
 	if err != nil {
 		return err
 	}
 
-	if err := s.kv.Delete(ctx, recordKey); err != nil {
+	// GUARDED on the bytes read, so a delete whose outcome is unknown can be
+	// settled: once SettleDelete moves the record to other bytes, the pending
+	// delete can never apply.
+	deleted, err := s.deleter.CompareAndDelete(ctx, recordKey, raw)
+	if err != nil {
 		return &ProjectStoreError{Message: "failed to delete project: " + err.Error()}
+	}
+	if !deleted {
+		// The record changed after the read; the name stays reserved.
+		return &ProjectStoreError{Message: "project changed while it was being deleted; retry the delete"}
 	}
 
 	// A leftover reservation would resolve to a missing record, which reads as
@@ -824,6 +859,59 @@ func (s *projectStore) remove(ctx context.Context, tenantID, projectID string) e
 		return &ProjectStoreError{Message: "failed to release project name: " + err.Error()}
 	}
 	return nil
+}
+
+// settleDeleteRounds bounds how often SettleDelete re-reads a record that
+// moved under its swap.
+const settleDeleteRounds = 8
+
+// SettleDelete implements ProjectDeleteSettler.
+func (s *projectStore) SettleDelete(ctx context.Context, tenantID, projectID string) (bool, error) {
+	ctx = projectTenantContext(ctx, tenantID)
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if err := s.ready(); err != nil {
+		return false, err
+	}
+	if s.swapper == nil || s.deleter == nil {
+		return false, &ProjectStoreError{Message: "settling a failed delete needs a store that can guard a write"}
+	}
+	recordKey, err := projectRecordKey(tenantID, projectID)
+	if err != nil {
+		return false, err
+	}
+
+	unlockRecord := s.recordMu.lock(recordKey)
+	defer unlockRecord()
+
+	for round := 0; round < settleDeleteRounds; round++ {
+		project, raw, err := s.loadRaw(ctx, recordKey, tenantID, projectID)
+		if err != nil {
+			var notFound *ProjectStoreNotFoundError
+			if errors.As(err, &notFound) {
+				return true, nil
+			}
+			return false, err
+		}
+		next := *project
+		next.UpdatedAt = time.Now().UTC()
+		if !next.UpdatedAt.After(project.UpdatedAt) {
+			next.UpdatedAt = project.UpdatedAt.Add(time.Nanosecond)
+		}
+		encoded, perr := marshalProject(&next)
+		if perr != nil {
+			return false, perr
+		}
+		swapped, err := s.swapper.CompareAndSwap(ctx, recordKey, raw, encoded)
+		if err != nil {
+			return false, &ProjectStoreError{Message: "failed to settle project delete: " + err.Error()}
+		}
+		if swapped {
+			return false, nil
+		}
+	}
+	return false, &ProjectStoreError{Message: "project kept changing while its failed delete was settled; retry the delete"}
 }
 
 // =============================================================================

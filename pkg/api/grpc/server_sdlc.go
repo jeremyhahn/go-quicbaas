@@ -390,6 +390,7 @@ func convertSDLCError(err error) error {
 		notRegistered  *sdlc.ForgeNotRegisteredError
 		strategy       *sdlc.StrategyNotRegisteredError
 		projectMissing *service.ProjectNotFoundError
+		bindBusy       *sdlc.BindInProgressError
 	)
 	if isAgentCatalogError(err) {
 		return agentCatalogStatusError(err)
@@ -398,6 +399,9 @@ func convertSDLCError(err error) error {
 	case stderrors.Is(err, sdlc.ErrNotFound), stderrors.As(err, &projectMissing), stderrors.Is(err, orchestration.ErrProjectNotFound),
 		stderrors.Is(err, orchestration.ErrTaskNotFound):
 		return status.Error(codes.NotFound, err.Error())
+	case stderrors.As(err, &bindBusy):
+		// Another bind or unbind of the project is in flight: retry once it settles.
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case stderrors.Is(err, sdlc.ErrAlreadyExists), stderrors.Is(err, sdlc.ErrVersionConflict), stderrors.Is(err, sdlc.ErrWebhookRouteConflict),
 		stderrors.Is(err, orchestration.ErrTaskSourceAlreadyAdopted):
 		return status.Error(codes.AlreadyExists, err.Error())

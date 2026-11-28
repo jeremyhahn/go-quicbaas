@@ -63,7 +63,7 @@ func guardedDeletes() []guardedDelete {
 			refused: true,
 			seed: func(ctx context.Context, store *Store) error {
 				b := testBinding()
-				if err := store.PutBinding(ctx, testTenant, b); err != nil {
+				if _, err := store.PutBinding(ctx, testTenant, b); err != nil {
 					return err
 				}
 				binding = b

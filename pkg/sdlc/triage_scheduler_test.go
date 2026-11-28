@@ -30,7 +30,7 @@ func newTriageScheduler(t *testing.T) (*TriageScheduler, *fakeJobStarter, *Store
 	t.Helper()
 	ctx := context.Background()
 	store := newTestStore(t)
-	if err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
 		t.Fatalf("put binding: %v", err)
 	}
 	starter := &fakeJobStarter{}
@@ -204,7 +204,7 @@ func TestTriageSweep_NudgesEveryBoundProject(t *testing.T) {
 	for _, id := range []string{"proj-1", "proj-2"} {
 		binding := testBinding()
 		binding.ProjectID = id
-		if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+		if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 			t.Fatalf("put binding %s: %v", id, err)
 		}
 	}
@@ -243,7 +243,7 @@ func TestTriageSweep_DiscoveryModeDecidesWhetherTheProjectIsSwept(t *testing.T) 
 			store := newTestStore(t)
 			binding := testBinding()
 			binding.Discovery = tc.mode
-			if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+			if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 				t.Fatalf("put binding: %v", err)
 			}
 			starter := &fakeJobStarter{}
@@ -279,7 +279,7 @@ func TestTriageSweep_SkipsOnlyTheWebhookProject(t *testing.T) {
 		binding := testBinding()
 		binding.ProjectID = id
 		binding.Discovery = mode
-		if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+		if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 			t.Fatalf("put binding %s: %v", id, err)
 		}
 	}
@@ -377,7 +377,7 @@ func TestWebhookIngest_WakesTriageForIssueDeliveries(t *testing.T) {
 			ctx := context.Background()
 			store := newTestStore(t)
 			binding := testBinding()
-			if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+			if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 				t.Fatalf("put binding: %v", err)
 			}
 			forge := newFakeForge()
@@ -416,7 +416,7 @@ func TestWebhookIngest_WithNoTriageNudgerStillFeedsThePoller(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
 	binding := testBinding()
-	if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatalf("put binding: %v", err)
 	}
 	forge := newFakeForge()
@@ -546,7 +546,7 @@ func TestWebhookIngest_ATriageWakeFailureIsCarriedNotFatal(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
 	binding := testBinding()
-	if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatalf("put binding: %v", err)
 	}
 	forge := newFakeForge()
@@ -589,7 +589,7 @@ func TestWebhookIngest_ASuccessfulTriageWakeCarriesNoError(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
 	binding := testBinding()
-	if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatalf("put binding: %v", err)
 	}
 	forge := newFakeForge()
@@ -616,7 +616,7 @@ func TestWebhookIngest_ASuccessfulTriageWakeCarriesNoError(t *testing.T) {
 func TestTriageScheduler_TheJobLeadsWithTheTriageAgent(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
-	if err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
 		t.Fatalf("put binding: %v", err)
 	}
 	starter := &fakeJobStarter{}
@@ -638,7 +638,7 @@ func TestTriageScheduler_TheJobLeadsWithTheTriageAgent(t *testing.T) {
 func TestTriageScheduler_AnUnreadableCatalogStartsNothing(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
-	if err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
 		t.Fatalf("put binding: %v", err)
 	}
 	starter := &fakeJobStarter{}

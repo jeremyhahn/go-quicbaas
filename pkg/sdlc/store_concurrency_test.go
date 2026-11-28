@@ -132,7 +132,7 @@ func guardedWrites() []guardedWrite {
 			name: "UpdateBinding",
 			seed: func(ctx context.Context, store *Store) error {
 				b := testBinding()
-				if err := store.PutBinding(ctx, testTenant, b); err != nil {
+				if _, err := store.PutBinding(ctx, testTenant, b); err != nil {
 					return err
 				}
 				binding = b
@@ -413,7 +413,7 @@ func TestStore_GuardedWriteBackendFailures(t *testing.T) {
 		writes := map[string]error{
 			"PutDelivery":     store.PutDelivery(ctx, testTenant, &Delivery{TaskID: "t2", Attempt: 1, Branch: "b"}),
 			"UpdateDelivery":  store.UpdateDelivery(ctx, testTenant, d),
-			"PutBinding":      store.PutBinding(ctx, testTenant, testBinding()),
+			"PutBinding":      putErr(store.PutBinding(ctx, testTenant, testBinding())),
 			"UpdateBinding":   store.UpdateBinding(ctx, testTenant, binding),
 			"SaveTrainEntry":  store.SaveTrainEntry(ctx, testTenant, &TrainEntry{ProjectID: testProject, TaskID: testTask, PullRequest: 5, HeadSHA: "a", Target: "main", Branch: "b", State: TrainEntryQueued}),
 			"SaveTrainLedger": store.SaveTrainLedger(ctx, testTenant, &TrainLedger{ProjectID: testProject, Next: 1}),

@@ -223,7 +223,7 @@ func TestIssueSource_RefusesAnIssueWithNoAcceptanceCriteria(t *testing.T) {
 	source, forge, store := newIssueSourceRig(t)
 	binding := testBinding()
 	binding.Readiness.RequireAcceptanceCriteria = true
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatalf("PutBinding: %v", err)
 	}
 	bare := forge.putIssue(1, "Make it faster", "task:ready")

@@ -109,7 +109,7 @@ func TestTriageRunner_AnEscalatedIssueIsAHoldToo(t *testing.T) {
 	// The runner reloads the binding from the store, so the store is what
 	// must declare the label.
 	rig.binding.Forge.Labels[LabelEscalated] = "factory:escalated"
-	if err := rig.store.PutBinding(context.Background(), testTenant, rig.binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, rig.binding); err != nil {
 		t.Fatalf("put binding: %v", err)
 	}
 	escalated := rig.binding.Forge.Label(LabelEscalated)

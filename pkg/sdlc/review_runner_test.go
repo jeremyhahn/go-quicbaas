@@ -83,7 +83,7 @@ func newReviewRunnerRig(t *testing.T) *reviewRunnerRig {
 	// The independence rule is on by default in testBinding, so the reviewer
 	// has to be recorded as a family the gate can tell from the worker's.
 	binding.Review.Reviewers[fakeReviewerLogin] = ModelFamilyOpenAI
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 
@@ -147,7 +147,7 @@ func (r *reviewRunnerRig) rebind(edit func(*ProjectBinding)) {
 		r.t.Fatal(err)
 	}
 	edit(binding)
-	if err := r.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := r.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		r.t.Fatal(err)
 	}
 }

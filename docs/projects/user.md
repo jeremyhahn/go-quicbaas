@@ -181,3 +181,6 @@ quicbaas project delete "$PROJECT_ID"
 ```
 
 Deleting releases the name for reuse and removes a managed workspace.
+A delete refused because another delete is in flight, or a bind refused
+because a delete is in flight, answers `409`; retry it. A bind that loses
+this race is withdrawn, so no binding is left on a deleted project.

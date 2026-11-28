@@ -161,6 +161,14 @@ type SDLCService struct {
 	attention     *sdlc.AttentionService
 	auditor       sdlc.IssueAuditor
 	adopter       *sdlc.IssueAdopter
+
+	// bindLeaseTicks is a test seam: the ticks a bind or unbind renews its
+	// lease on. Nil means a ticker every bindLeaseRenewEvery.
+	bindLeaseTicks <-chan time.Time
+
+	// bindLeaseRenewed is a test seam: when set, the heartbeat sends the
+	// result of each tick's renewal on it once that renewal has finished.
+	bindLeaseRenewed chan<- error
 }
 
 type nudgerHolder struct {
@@ -356,6 +364,32 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	if err := s.checkRulers(ctx, tenantID, binding); err != nil {
 		return nil, err
 	}
+	// ONE BIND OF A PROJECT AT A TIME (go-quicbaas#1679). From here on a bind
+	// is a sequence of writes (retire the prior delivery, record the route,
+	// put the binding, read the fence and maybe withdraw), and two binds of
+	// one project interleaving them can leave a route with no binding or a
+	// withdrawal that restores a record the other already replaced. The lease
+	// is renewed while the bind works, and every later step runs under it: a
+	// lease that cannot be renewed cancels the bind. It is released on a
+	// detached context so a canceled request still frees it.
+	leaseCtx, hold, err := s.acquireBindLease(ctx, tenantID, binding.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer hold.release()
+	ctx = leaseCtx
+	// A FENCED PROJECT IS REFUSED BEFORE ANYTHING CHANGES. A rebind that
+	// moves the forge coordinates retires the prior delivery first; behind a
+	// fence the withdrawal would restore the prior binding with its delivery
+	// already gone. The fence read after PutBinding still catches a delete
+	// that fences after this check.
+	fenced, err := s.store.ProjectDeleteFenced(ctx, tenantID, binding.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if fenced {
+		return nil, &sdlc.ProjectDeletingError{TenantID: tenantID, ProjectID: binding.ProjectID}
+	}
 	if err := s.retirePriorDelivery(ctx, tenantID, binding); err != nil {
 		return nil, err
 	}
@@ -367,7 +401,68 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	if err := s.routes.Record(ctx, binding.ProjectID, tenantID); err != nil {
 		return nil, err
 	}
-	if err := s.store.PutBinding(ctx, tenantID, binding); err != nil {
+	// EVERY BIND READS THE DELETE FENCE after its write, fresh bind or rebind
+	// (go-quicbaas#1303). PutBinding reports the record it replaced, decided
+	// in the same compare-and-swap as the write, and stamps the write with a
+	// token, so a withdrawal undoes exactly this write and nothing written
+	// since.
+	//
+	// A caller-supplied binding may carry an older record's token; cleared
+	// here, a token after PutBinding is always the one stamped on this write.
+	binding.WriteToken = ""
+	prior, err := s.store.PutBinding(ctx, tenantID, binding)
+	if err != nil {
+		if binding.WriteToken == "" {
+			// No write was attempted.
+			return nil, err
+		}
+		// A WRITE ERROR IS AN UNKNOWN OUTCOME: the backend can lose the
+		// response of a committed write, and a proposal still pending can
+		// commit after this call has returned. So the bind settles the write
+		// first. A write that landed goes through the fence read like any
+		// other, or a delete that fenced after the pre-check would finish
+		// with this binding and its route in place. A write that did not
+		// land is made unable to land, so neither a delete nor a later read
+		// can be overtaken by it.
+		detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), bindWithdrawTimeout)
+		defer cancel()
+		landed, settleErr := s.store.SettleBindingWrite(detached, tenantID, binding.ProjectID, binding.WriteToken)
+		if settleErr != nil {
+			s.logger.Error("sdlc: a binding write with an unknown outcome could not be settled; it may still land",
+				"tenant_id", tenantID, "project_id", binding.ProjectID, "error", settleErr)
+			return nil, &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: binding.ProjectID, Cause: settleErr}
+		}
+		if !landed {
+			// Nothing was written, and nothing can be now. A fresh bind
+			// recorded the route of a project with no binding: forget it,
+			// but only while no binding holds the slot. A route left for a
+			// binding that may stand is recoverable through Conformance; a
+			// route removed under a standing binding stops webhook delivery.
+			if prior == nil {
+				_, getErr := s.store.GetBinding(detached, tenantID, binding.ProjectID)
+				switch {
+				case getErr == nil:
+					// A binding holds the slot: its route stays.
+				case !errors.Is(getErr, sdlc.ErrNotFound):
+					s.logger.Error("sdlc: a binding write that did not land could not tell whether a binding stands; its route is kept",
+						"tenant_id", tenantID, "project_id", binding.ProjectID, "error", getErr)
+					return nil, &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: binding.ProjectID, Cause: getErr}
+				default:
+					if forgetErr := s.routes.Forget(detached, binding.ProjectID, tenantID); forgetErr != nil {
+						s.logger.Error("sdlc: a binding write that did not land left its route behind",
+							"tenant_id", tenantID, "project_id", binding.ProjectID, "error", forgetErr)
+						return nil, &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: binding.ProjectID, Cause: forgetErr}
+					}
+				}
+			}
+			return nil, err
+		}
+		if withdrawErr := s.withdrawIfDeleting(detached, tenantID, binding, prior); withdrawErr != nil {
+			return nil, withdrawErr
+		}
+		return nil, err
+	}
+	if err := s.withdrawIfDeleting(ctx, tenantID, binding, prior); err != nil {
 		return nil, err
 	}
 	s.warnSystemTenantBind(tenantID, binding.ProjectID)
@@ -381,10 +476,85 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	// exactly what is missing and Onboard puts it right, where the other
 	// order would leave a repository delivering to a node that has no record
 	// of it.
+	//
+	// A bind whose lease went stale may have been overtaken by an unbind or
+	// another bind, so it stops before the forge is told to deliver.
+	if err := hold.confirm(ctx); err != nil {
+		return nil, err
+	}
 	if _, err := s.onboarder.Onboard(ctx, tenantID, binding); err != nil {
+		if ctx.Err() != nil {
+			// The lease was lost mid-onboard: report why, not a bare cancel.
+			return nil, context.Cause(ctx)
+		}
 		return nil, err
 	}
 	return binding, nil
+}
+
+// bindWithdrawTimeout bounds a bind's withdrawal, which runs detached from
+// the request's cancellation.
+const bindWithdrawTimeout = 30 * time.Second
+
+// bindLeaseRenewEvery is how often a bind or unbind in flight renews its
+// lease, and the bound on each renewal.
+const bindLeaseRenewEvery = sdlc.BindLeaseTTL / 3
+
+// withdrawIfDeleting is the bind's half of the delete fence
+// (sdlc.Store.FenceProjectDelete): read only after the binding is written. A
+// fence held, or a tombstone, means a delete may have checked for a binding
+// before this one landed, so this write is withdrawn and the bind is refused
+// with *sdlc.ProjectDeletingError. If the fence cannot be read, the write is
+// withdrawn as well and the read error returned: a bind that cannot rule out
+// the delete must not stand behind it. With no live fence the project is read
+// again, and a project gone since the bind's first read withdraws the write
+// the same way.
+//
+// The withdrawal runs detached from the request's cancellation (a canceled
+// request must not leave the binding standing) and undoes only this write:
+// the record goes back to prior, or is removed when the bind created it. A
+// record another bind wrote since is left alone. The route is forgotten only
+// when this bind created the binding and its withdrawal removed it; a rebind
+// keeps the route the prior binding uses. It is only called for a write known
+// to have landed: a write whose outcome is unknown is settled first.
+func (s *SDLCService) withdrawIfDeleting(ctx context.Context, tenantID string, binding *sdlc.ProjectBinding, prior *sdlc.ProjectBinding) error {
+	projectID := binding.ProjectID
+	fenced, readErr := s.store.ProjectDeleteFenced(ctx, tenantID, projectID)
+	if readErr == nil && !fenced {
+		// NO LIVE FENCE IS NOT PROOF THE PROJECT STANDS. A delete whose
+		// tombstone could not be written leaves a fence that goes stale, so the
+		// project is read again after this write: one gone since the bind's
+		// first read withdraws this write as a fence would.
+		gone, goneErr := s.projectGone(ctx, tenantID, projectID)
+		if goneErr == nil && !gone {
+			return nil
+		}
+		readErr = goneErr
+	}
+	detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), bindWithdrawTimeout)
+	defer cancel()
+	withdrawn, err := s.store.WithdrawBinding(detached, tenantID, projectID, binding.WriteToken, prior)
+	if err == nil && withdrawn && prior == nil {
+		err = s.routes.Forget(detached, projectID, tenantID)
+	}
+	if err != nil {
+		s.logger.Error("sdlc: a bind behind a project delete could not be withdrawn; the binding may stand on a deleted project",
+			"tenant_id", tenantID, "project_id", projectID, "error", err)
+		return &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: projectID, Cause: err}
+	}
+	// A restored prior binding gets its delivery back: this bind may have
+	// retired it (a rebind to new forge coordinates) before the fence read.
+	if withdrawn && prior != nil {
+		if _, err := s.onboarder.Onboard(detached, tenantID, prior); err != nil {
+			s.logger.Error("sdlc: a restored binding behind a project delete could not be onboarded again; run onboard to restore its delivery",
+				"tenant_id", tenantID, "project_id", projectID, "error", err)
+			return &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: projectID, Cause: err}
+		}
+	}
+	if readErr != nil {
+		return readErr
+	}
+	return &sdlc.ProjectDeletingError{TenantID: tenantID, ProjectID: projectID}
 }
 
 // checkReviewerSecrets refuses a binding that names a reviewer profile whose
@@ -473,7 +643,20 @@ func (s *SDLCService) Unbind(ctx context.Context, tenantID, projectID string) er
 	if tenantID == "" {
 		return &sdlc.InvalidInputError{Field: "tenant_id", Message: "bindings are tenant-scoped"}
 	}
+	// An unbind holds the project's bind lease like a bind does, so its
+	// binding and route removal never interleave with a bind's writes.
+	leaseCtx, hold, err := s.acquireBindLease(ctx, tenantID, projectID)
+	if err != nil {
+		return err
+	}
+	defer hold.release()
+	ctx = leaseCtx
 	if err := s.offboard(ctx, tenantID, projectID); err != nil {
+		return err
+	}
+	// An unbind whose lease went stale may have been overtaken by a bind, so
+	// it stops before it removes the binding.
+	if err := hold.confirm(ctx); err != nil {
 		return err
 	}
 	if err := s.store.DeleteBinding(ctx, tenantID, projectID); err != nil {
@@ -485,6 +668,104 @@ func (s *SDLCService) Unbind(ctx context.Context, tenantID, projectID string) er
 		return err
 	}
 	return s.routes.Forget(ctx, projectID, tenantID)
+}
+
+// acquireBindLease takes the project's bind lease and returns a context the
+// holder works under and the hold that confirms and releases the lease. A
+// heartbeat renews the lease every bindLeaseRenewEvery; a renewal that fails
+// cancels the context with its error, so the holder stops. The release runs
+// on a context detached from the request's cancellation, bounded by
+// bindWithdrawTimeout; a release that fails is logged, and the lease goes
+// stale after sdlc.BindLeaseTTL.
+func (s *SDLCService) acquireBindLease(ctx context.Context, tenantID, projectID string) (context.Context, *bindLeaseHold, error) {
+	token, err := s.store.AcquireBindLease(ctx, tenantID, projectID)
+	if err != nil {
+		return nil, nil, err
+	}
+	leaseCtx, cancel := context.WithCancelCause(ctx)
+	hold := &bindLeaseHold{
+		store:     s.store,
+		logger:    s.logger,
+		parent:    ctx,
+		tenantID:  tenantID,
+		projectID: projectID,
+		token:     token,
+		cancel:    cancel,
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
+	}
+	// The heartbeat renews every TTL/3 and bounds each renew by TTL/3, so a
+	// holder that cannot renew is cancelled within 2/3 of the TTL after its
+	// last renewal: before anyone else can take the lease.
+	go func() {
+		defer close(hold.done)
+		ticks := s.bindLeaseTicks
+		renewed := s.bindLeaseRenewed
+		if ticks == nil {
+			ticker := time.NewTicker(bindLeaseRenewEvery)
+			defer ticker.Stop()
+			ticks = ticker.C
+		}
+		for {
+			select {
+			case <-hold.stop:
+				return
+			case <-ticks:
+				renewCtx, renewCancel := context.WithTimeout(leaseCtx, bindLeaseRenewEvery)
+				err := s.store.RenewBindLease(renewCtx, tenantID, projectID, token)
+				renewCancel()
+				if renewed != nil {
+					renewed <- err
+				}
+				if err != nil {
+					cancel(err)
+					s.logger.Warn("sdlc: a bind lease could not be renewed; the holder stops",
+						"tenant_id", tenantID, "project_id", projectID, "error", err)
+					return
+				}
+			}
+		}
+	}()
+	return leaseCtx, hold, nil
+}
+
+// bindLeaseHold is a bind or unbind's hold on its project's bind lease: a
+// heartbeat renews it, confirm checks it is still this holder's, and release
+// stops the heartbeat and frees it.
+type bindLeaseHold struct {
+	store     *sdlc.Store
+	logger    *slog.Logger
+	parent    context.Context
+	tenantID  string
+	projectID string
+	token     string
+	cancel    context.CancelCauseFunc
+	stop      chan struct{}
+	done      chan struct{}
+}
+
+// confirm renews the lease and reports whether it is still this holder's. A
+// lost lease cancels the holder's context with the error.
+func (h *bindLeaseHold) confirm(ctx context.Context) error {
+	if err := h.store.RenewBindLease(ctx, h.tenantID, h.projectID, h.token); err != nil {
+		h.cancel(err)
+		return err
+	}
+	return nil
+}
+
+// release stops the heartbeat and frees the lease on a detached context, so
+// a canceled request still frees it.
+func (h *bindLeaseHold) release() {
+	close(h.stop)
+	<-h.done
+	h.cancel(nil)
+	detached, cancel := context.WithTimeout(context.WithoutCancel(h.parent), bindWithdrawTimeout)
+	defer cancel()
+	if err := h.store.ReleaseBindLease(detached, h.tenantID, h.projectID, h.token); err != nil {
+		h.logger.Warn("sdlc: a bind lease could not be released; it holds until it goes stale",
+			"tenant_id", h.tenantID, "project_id", h.projectID, "error", err)
+	}
 }
 
 // offboard removes the forge webhook the binding provisioned, BEFORE the
@@ -836,6 +1117,21 @@ func (s *SDLCService) project(ctx context.Context, tenantID, projectID string) (
 		return nil, &sdlc.NotFoundError{Entity: "project", TenantID: tenantID, ID: projectID}
 	}
 	return resp.Project, nil
+}
+
+// projectGone reports whether the project a bind targets no longer exists.
+// A read that fails for any other reason is returned: it does not prove the
+// project is there.
+func (s *SDLCService) projectGone(ctx context.Context, tenantID, projectID string) (bool, error) {
+	_, err := s.project(ctx, tenantID, projectID)
+	if err == nil {
+		return false, nil
+	}
+	var notFound *ProjectNotFoundError
+	if errors.As(err, &notFound) || errors.Is(err, sdlc.ErrNotFound) || errors.Is(err, orchestration.ErrProjectNotFound) {
+		return true, nil
+	}
+	return false, err
 }
 
 // checkProject refuses a project the pipeline could not deliver.

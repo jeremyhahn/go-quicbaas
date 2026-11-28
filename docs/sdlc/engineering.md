@@ -62,6 +62,7 @@ the operator has to fix.
 | Error | HTTP | gRPC |
 |---|---|---|
 | `sdlc.ErrNotFound`, an orchestration not-found error, `service.ProjectNotFoundError` | `404` | `NotFound` |
+| `sdlc.BindInProgressError` (another bind or unbind holds the project's bind lease) | `409` | `FailedPrecondition` |
 | `sdlc.ErrAlreadyExists`, `sdlc.ErrVersionConflict`, `sdlc.ErrWebhookRouteConflict`, `orchestration.ErrTaskSourceAlreadyAdopted` | `409` | `AlreadyExists` |
 | `sdlc.ErrAdoptionRefused`, `orchestration.ErrTaskInvalidState` (an attention item another caller already resolved) | `409` | `FailedPrecondition` |
 | `sdlc.ErrInvalidInput`, `sdlc.ForgeNotRegisteredError`, `sdlc.StrategyNotRegisteredError`, `orchestration.ErrWorkflowValidation`, `orchestration.ErrInvalidInput` | `400` | `InvalidArgument` |
@@ -70,6 +71,10 @@ the operator has to fix.
 | `rest.ErrSDLCTenantMismatch` — `tenant_id` is not the caller's own | `403` | `PermissionDenied` |
 | `sdlc.ErrUnavailable`, `rest.ErrSDLCServiceUnavailable` — the module is not running on this node | `503` | `Unavailable` |
 | anything else | `500` | `Internal` |
+
+`sdlc.ProjectDeletingError` wraps `sdlc.ErrVersionConflict`, so it answers
+`409` / `AlreadyExists`; `sdlc.BindWithdrawError` answers what its cause maps
+to, so a store fault during the withdrawal is `500`.
 
 **Fail-closed paths.** `NewForgeBackend` refuses a forge type this build
 carries no adapter for rather than degrading; a webhook whose project,
