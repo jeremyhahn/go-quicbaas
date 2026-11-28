@@ -83,10 +83,11 @@ IAM_PACKAGE_KILL_TIMEOUT=${IAM_PACKAGE_KILL_TIMEOUT:-31m}
 # limit. The 551 tests still to run all use the shared docker cluster (only
 # barrier_test.go spawns per-test daemons), at about 2 s each:
 #   523 s + 15 s (TestBarrierAuthPosture_DefaultDeny) + 551 x 2 s = 1640 s,
-#   ceil(1.5 x 1640 s) = 2460 s (41m), capped at 30m like iam.
+#   ceil(1.5 x 1640 s) = 2460 s (41m). A loaded runner used all of a 30m cap
+#   (TestAgentAccount* 87-164 s each), so the package keeps the measured 41m.
 # The kill limit stays one minute above it.
-CLI_PACKAGE_TIMEOUT=${CLI_PACKAGE_TIMEOUT:-30m}
-CLI_PACKAGE_KILL_TIMEOUT=${CLI_PACKAGE_KILL_TIMEOUT:-31m}
+CLI_PACKAGE_TIMEOUT=${CLI_PACKAGE_TIMEOUT:-41m}
+CLI_PACKAGE_KILL_TIMEOUT=${CLI_PACKAGE_KILL_TIMEOUT:-42m}
 # CLUSTER_PACKAGE_TIMEOUT is the cluster package's own limit. Its length is
 # legitimate, not a hang: on main e2a3ed26 the 34 top-level tests before
 # TestDataPersistence passed in 588 s (TestClusterConsistency 202 s,
