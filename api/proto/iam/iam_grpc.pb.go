@@ -96,11 +96,13 @@ type IAMServiceClient interface {
 	ListTenants(ctx context.Context, in *ListTenantsRequest, opts ...grpc.CallOption) (*ListTenantsResponse, error)
 	ProvisionTenant(ctx context.Context, in *ProvisionTenantRequest, opts ...grpc.CallOption) (*ProvisionTenantResponse, error)
 	// User management
+	// CreateUser takes users:create, the grant QRDBService's CreateUser takes.
 	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*User, error)
 	// GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
 	GetUser(ctx context.Context, in *GetUserRequest, opts ...grpc.CallOption) (*User, error)
 	UpdateUser(ctx context.Context, in *UpdateUserRequest, opts ...grpc.CallOption) (*User, error)
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
+	// ListUsers takes users:list, the grant QRDBService's ListUsers takes.
 	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
 	// GetUserByUsername is the tenant-scoped username lookup. Like GetUser it
 	// takes users:read, the grant QRDBService's user reads take.
@@ -820,11 +822,13 @@ type IAMServiceServer interface {
 	ListTenants(context.Context, *ListTenantsRequest) (*ListTenantsResponse, error)
 	ProvisionTenant(context.Context, *ProvisionTenantRequest) (*ProvisionTenantResponse, error)
 	// User management
+	// CreateUser takes users:create, the grant QRDBService's CreateUser takes.
 	CreateUser(context.Context, *CreateUserRequest) (*User, error)
 	// GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
 	GetUser(context.Context, *GetUserRequest) (*User, error)
 	UpdateUser(context.Context, *UpdateUserRequest) (*User, error)
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
+	// ListUsers takes users:list, the grant QRDBService's ListUsers takes.
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
 	// GetUserByUsername is the tenant-scoped username lookup. Like GetUser it
 	// takes users:read, the grant QRDBService's user reads take.
@@ -2486,7 +2490,10 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Policy Enforcement Point Service
+// # Policy Enforcement Point Service
+//
+// Check and CheckBatch take the grant their REST twins take
+// (permissions:resolve). Subscribe carries none and is default-denied.
 type PEPServiceClient interface {
 	// Single authorization check
 	Check(ctx context.Context, in *CheckRequest, opts ...grpc.CallOption) (*CheckResponse, error)
@@ -2547,7 +2554,10 @@ type PEPService_SubscribeClient = grpc.ServerStreamingClient[PolicyUpdate]
 // All implementations should embed UnimplementedPEPServiceServer
 // for forward compatibility.
 //
-// Policy Enforcement Point Service
+// # Policy Enforcement Point Service
+//
+// Check and CheckBatch take the grant their REST twins take
+// (permissions:resolve). Subscribe carries none and is default-denied.
 type PEPServiceServer interface {
 	// Single authorization check
 	Check(context.Context, *CheckRequest) (*CheckResponse, error)

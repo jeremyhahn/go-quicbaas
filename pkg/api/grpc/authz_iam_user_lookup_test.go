@@ -141,3 +141,43 @@ func TestIAMUserLookupGRPC_ThroughGate(t *testing.T) {
 		svc.AssertNotCalled(t, "GetUserByUsername", mock.Anything, mock.Anything, mock.Anything)
 	})
 }
+
+// TestIAMUserListGRPCAuthorization pins IAMService ListUsers to users:list,
+// the grant QRDBService ListUsers takes: a users:list caller passes the gate
+// and a users:read caller is refused before the handler runs.
+func TestIAMUserListGRPCAuthorization(t *testing.T) {
+	method := iampb.IAMService_ListUsers_FullMethodName
+	resource, action, ok := grpcResourceAndAction(method)
+	require.True(t, ok, "%s must be mapped", method)
+	assert.Equal(t, "users", resource)
+	assert.Equal(t, "list", action)
+	assert.False(t, publicGRPCMethods[method], "%s must not be public", method)
+
+	info := &grpc.UnaryServerInfo{FullMethod: method}
+	for _, tc := range []struct {
+		granted string
+		allowed bool
+	}{
+		{granted: "users:list", allowed: true},
+		{granted: "users:read", allowed: false},
+	} {
+		t.Run(tc.granted, func(t *testing.T) {
+			authorizer := &fakeValidatorAuthorizer{
+				token:       "good",
+				grantedPerm: tc.granted,
+				authzCtx:    &platformtoken.AuthorizedContext{Subject: "u1", TenantID: "t1"},
+			}
+			called := false
+			handler := func(context.Context, interface{}) (interface{}, error) { called = true; return nil, nil }
+
+			_, err := UnaryAuthorizationInterceptor(authorizer)(ctxWithBearer("good"), nil, info, handler)
+			assert.Equal(t, "users:list", authorizer.lastPerm)
+			assert.Equal(t, tc.allowed, called)
+			if tc.allowed {
+				require.NoError(t, err)
+				return
+			}
+			assert.Equal(t, codes.PermissionDenied, status.Code(err))
+		})
+	}
+}
