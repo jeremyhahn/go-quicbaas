@@ -20,21 +20,9 @@ import (
 	"time"
 )
 
-func createTestPebbleStorage(t *testing.T) PebbleStorage {
+func createTestPebbleStorage(t *testing.T) Storage {
 	t.Helper()
-	tmpDir := t.TempDir()
-	cfg := &PebbleStorageConfig{
-		Path:       tmpDir,
-		SyncWrites: false,
-	}
-	storage, err := NewPebbleStorage(cfg)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	t.Cleanup(func() {
-		storage.Close()
-	})
-	return storage
+	return newMemoryStorage(t)
 }
 
 func createPebbleTestEntry(key string) *CatalogEntry {
@@ -65,89 +53,20 @@ func createPebbleTestEntry(key string) *CatalogEntry {
 
 func TestNewPebbleStorage(t *testing.T) {
 	t.Run("with valid config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &PebbleStorageConfig{Path: tmpDir}
-		storage, err := NewPebbleStorage(cfg)
-		if err != nil {
-			t.Fatalf("expected no error, got %v", err)
-		}
-		defer storage.Close()
+		storage := newMemoryStorage(t)
 
-		if storage.DB() == nil {
-			t.Error("expected DB to be non-nil")
-		}
-		if storage.GetPebbleIndexManager() == nil {
+		assertStoreRoundTrip(t, storage)
+		if storage.Indexes() == nil {
 			t.Error("expected IndexManager to be non-nil")
 		}
 	})
 
-	t.Run("with nil config uses defaults", func(t *testing.T) {
-		_, err := NewPebbleStorage(nil)
+	t.Run("with nil KV returns error", func(t *testing.T) {
+		_, err := NewKVStorage(nil)
 		if err == nil {
-			t.Fatal("expected error for nil config path")
+			t.Fatal("expected error for nil KV")
 		}
 	})
-
-	t.Run("with empty path returns error", func(t *testing.T) {
-		cfg := &PebbleStorageConfig{Path: ""}
-		_, err := NewPebbleStorage(cfg)
-		if err == nil {
-			t.Fatal("expected error for empty path")
-		}
-	})
-}
-
-func TestPebbleStorageConfigValidate(t *testing.T) {
-	t.Run("valid config", func(t *testing.T) {
-		cfg := &PebbleStorageConfig{Path: "/tmp/test"}
-		if err := cfg.Validate(); err != nil {
-			t.Fatalf("expected no error, got %v", err)
-		}
-	})
-
-	t.Run("empty path returns error", func(t *testing.T) {
-		cfg := &PebbleStorageConfig{}
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error for empty path")
-		}
-	})
-
-	t.Run("negative cache size returns error", func(t *testing.T) {
-		cfg := &PebbleStorageConfig{Path: "/tmp/test", CacheSize: -1}
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error for negative cache size")
-		}
-	})
-
-	t.Run("negative write buffer size returns error", func(t *testing.T) {
-		cfg := &PebbleStorageConfig{Path: "/tmp/test", WriteBufferSize: -1}
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error for negative write buffer size")
-		}
-	})
-
-	t.Run("negative max open files returns error", func(t *testing.T) {
-		cfg := &PebbleStorageConfig{Path: "/tmp/test", MaxOpenFiles: -1}
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error for negative max open files")
-		}
-	})
-}
-
-func TestPebbleStorageConfigWithDefaults(t *testing.T) {
-	cfg := &PebbleStorageConfig{Path: "/tmp/test"}
-	withDefaults := cfg.WithDefaults()
-
-	defaults := DefaultPebbleStorageConfig()
-	if withDefaults.CacheSize != defaults.CacheSize {
-		t.Errorf("expected CacheSize %d, got %d", defaults.CacheSize, withDefaults.CacheSize)
-	}
-	if withDefaults.WriteBufferSize != defaults.WriteBufferSize {
-		t.Errorf("expected WriteBufferSize %d, got %d", defaults.WriteBufferSize, withDefaults.WriteBufferSize)
-	}
-	if withDefaults.MaxOpenFiles != defaults.MaxOpenFiles {
-		t.Errorf("expected MaxOpenFiles %d, got %d", defaults.MaxOpenFiles, withDefaults.MaxOpenFiles)
-	}
 }
 
 func TestPebbleStoragePutGetEntry(t *testing.T) {
@@ -424,9 +343,7 @@ func TestPebbleStorageSync(t *testing.T) {
 
 func TestPebbleStorageClose(t *testing.T) {
 	t.Run("close storage", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &PebbleStorageConfig{Path: tmpDir}
-		storage, err := NewPebbleStorage(cfg)
+		storage, err := NewKVStorage(NewMemoryKV())
 		if err != nil {
 			t.Fatalf("failed to create storage: %v", err)
 		}
@@ -442,9 +359,7 @@ func TestPebbleStorageClose(t *testing.T) {
 	})
 
 	t.Run("operations fail after close", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &PebbleStorageConfig{Path: tmpDir}
-		storage, err := NewPebbleStorage(cfg)
+		storage, err := NewKVStorage(NewMemoryKV())
 		if err != nil {
 			t.Fatalf("failed to create storage: %v", err)
 		}
@@ -525,7 +440,7 @@ func TestPebbleStorageIndexIntegration(t *testing.T) {
 		}
 
 		// Verify indexes exist via IndexManager
-		indexMgr := storage.GetPebbleIndexManager()
+		indexMgr := storage.Indexes()
 		result, err := indexMgr.ListByTenant(ctx, "test-tenant", nil)
 		if err != nil {
 			t.Fatalf("failed to list by tenant: %v", err)
@@ -536,33 +451,8 @@ func TestPebbleStorageIndexIntegration(t *testing.T) {
 	})
 }
 
-func TestDefaultPebbleStorageConfig(t *testing.T) {
-	cfg := DefaultPebbleStorageConfig()
-
-	if cfg.CacheSize <= 0 {
-		t.Error("expected positive cache size")
-	}
-	if cfg.WriteBufferSize <= 0 {
-		t.Error("expected positive write buffer size")
-	}
-	if cfg.MaxOpenFiles <= 0 {
-		t.Error("expected positive max open files")
-	}
-	if !cfg.Compression {
-		t.Error("expected compression to be enabled by default")
-	}
-	if !cfg.SyncWrites {
-		t.Error("expected sync writes to be enabled by default")
-	}
-}
-
-func BenchmarkPebbleStoragePutEntry(b *testing.B) {
-	tmpDir := b.TempDir()
-	cfg := &PebbleStorageConfig{
-		Path:       tmpDir,
-		SyncWrites: false,
-	}
-	storage, err := NewPebbleStorage(cfg)
+func BenchmarkStoragePutEntry(b *testing.B) {
+	storage, err := NewKVStorage(NewMemoryKV())
 	if err != nil {
 		b.Fatalf("failed to create storage: %v", err)
 	}
@@ -580,13 +470,8 @@ func BenchmarkPebbleStoragePutEntry(b *testing.B) {
 	}
 }
 
-func BenchmarkPebbleStorageGetEntry(b *testing.B) {
-	tmpDir := b.TempDir()
-	cfg := &PebbleStorageConfig{
-		Path:       tmpDir,
-		SyncWrites: false,
-	}
-	storage, err := NewPebbleStorage(cfg)
+func BenchmarkStorageGetEntry(b *testing.B) {
+	storage, err := NewKVStorage(NewMemoryKV())
 	if err != nil {
 		b.Fatalf("failed to create storage: %v", err)
 	}

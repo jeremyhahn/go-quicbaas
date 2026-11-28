@@ -844,6 +844,7 @@ func TestCovPush_StartCatalogManager_Disabled(t *testing.T) {
 
 func TestCovPush_StartCatalogManager_EnabledNoBackends(t *testing.T) {
 	saveAndRestoreSeams(t)
+	useMemoryCatalogKV(t)
 	cfg := createFTConfig(t)
 	cfg.ObjectStorage.Enabled = true
 	cfg.ObjectStorage.Backends = nil
@@ -865,6 +866,7 @@ func TestCovPush_StartCatalogManager_EnabledNoBackends(t *testing.T) {
 
 func TestCovPush_StartCatalogManager_WorkerCreationErrors(t *testing.T) {
 	saveAndRestoreSeams(t)
+	useMemoryCatalogKV(t)
 	cfg := createFTConfig(t)
 	cfg.ObjectStorage.Enabled = true
 	cfg.ObjectStorage.Backends = map[string]*config.StorageBackendConfig{

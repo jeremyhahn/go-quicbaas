@@ -5,6 +5,8 @@ package objectstorage
 
 import (
 	"context"
+	stderrors "errors"
+	"io"
 	"strconv"
 	"testing"
 
@@ -2687,6 +2689,148 @@ func TestStreamGetReader_ReadClosed(t *testing.T) {
 	}
 }
 
+// recvSequence returns a recvFn that yields each step in order and then
+// io.EOF, the way a finished transport stream reports its end.
+func recvSequence(steps ...func() (interface{}, error)) func() (interface{}, error) {
+	i := 0
+	return func() (interface{}, error) {
+		if i >= len(steps) {
+			return nil, io.EOF
+		}
+		step := steps[i]
+		i++
+		return step()
+	}
+}
+
+func chunkStep(data string, isLast bool) func() (interface{}, error) {
+	return func() (interface{}, error) {
+		return &ObjectChunk{Data: []byte(data), IsLast: isLast}, nil
+	}
+}
+
+func eofStep() (interface{}, error) {
+	return nil, io.EOF
+}
+
+func TestStreamGetReader_ReadAll(t *testing.T) {
+	tests := []struct {
+		name  string
+		steps []func() (interface{}, error)
+	}{
+		{
+			name:  "empty last chunk",
+			steps: []func() (interface{}, error){chunkStep("hello ", false), chunkStep("world", false), chunkStep("", true)},
+		},
+		{
+			name:  "last chunk carries data",
+			steps: []func() (interface{}, error){chunkStep("hello ", false), chunkStep("world", true)},
+		},
+		{
+			name:  "recv returns io.EOF",
+			steps: []func() (interface{}, error){chunkStep("hello ", false), chunkStep("world", false), eofStep},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := &streamGetReader{
+				stream: &mockStream{recvFn: recvSequence(tt.steps...)},
+				req:    &GetObjectRequest{Key: "test:key"},
+			}
+
+			got, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatalf("io.ReadAll error = %v, want nil", err)
+			}
+			if string(got) != "hello world" {
+				t.Errorf("io.ReadAll = %q, want %q", got, "hello world")
+			}
+			if reader.BytesRead() != int64(len("hello world")) {
+				t.Errorf("BytesRead = %d, want %d", reader.BytesRead(), len("hello world"))
+			}
+		})
+	}
+}
+
+func TestStreamGetReader_ReadAll_SmallBuffer(t *testing.T) {
+	reader := &streamGetReader{
+		stream: &mockStream{recvFn: recvSequence(chunkStep("abcdef", true))},
+		req:    &GetObjectRequest{Key: "test:key"},
+	}
+
+	var got []byte
+	buf := make([]byte, 4)
+	for {
+		n, err := reader.Read(buf)
+		got = append(got, buf[:n]...)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Read error = %v", err)
+		}
+	}
+	if string(got) != "abcdef" {
+		t.Errorf("read %q, want %q", got, "abcdef")
+	}
+}
+
+func TestStreamGetReader_ReadAfterEOF(t *testing.T) {
+	tests := []struct {
+		name  string
+		steps []func() (interface{}, error)
+	}{
+		{name: "after last chunk", steps: []func() (interface{}, error){chunkStep("data", true)}},
+		{name: "after recv io.EOF", steps: []func() (interface{}, error){chunkStep("data", false), eofStep}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stream := &mockStream{recvFn: recvSequence(tt.steps...)}
+			reader := &streamGetReader{stream: stream, req: &GetObjectRequest{Key: "test:key"}}
+
+			if _, err := io.ReadAll(reader); err != nil {
+				t.Fatalf("io.ReadAll error = %v, want nil", err)
+			}
+			calls := stream.recvIndex
+
+			for i := 0; i < 2; i++ {
+				n, err := reader.Read(make([]byte, 8))
+				if n != 0 || err != io.EOF {
+					t.Errorf("Read after EOF = (%d, %v), want (0, io.EOF)", n, err)
+				}
+			}
+			if stream.recvIndex != calls {
+				t.Errorf("Recv called %d more times after EOF, want 0", stream.recvIndex-calls)
+			}
+		})
+	}
+}
+
+func TestStreamGetReader_ReadMidStreamError(t *testing.T) {
+	failure := errors.NewUnavailable("mockStream.Recv", "connection reset")
+	stream := &mockStream{recvFn: recvSequence(
+		chunkStep("partial", false),
+		func() (interface{}, error) { return nil, failure },
+	)}
+	reader := &streamGetReader{stream: stream, req: &GetObjectRequest{Key: "test:key"}}
+
+	got, err := io.ReadAll(reader)
+	if err == nil {
+		t.Fatal("io.ReadAll error = nil, want a connection error")
+	}
+	if stderrors.Is(err, io.EOF) {
+		t.Errorf("mid-stream error %v must not be io.EOF", err)
+	}
+	if code := errors.Code(err); code != errors.CodeConnection {
+		t.Errorf("error code = %v, want %v", code, errors.CodeConnection)
+	}
+	if string(got) != "partial" {
+		t.Errorf("io.ReadAll = %q, want %q", got, "partial")
+	}
+}
+
 func TestStreamGetReader_ReadFromBuffer(t *testing.T) {
 	reader := &streamGetReader{
 		stream: &mockStream{},
@@ -2763,6 +2907,311 @@ func TestStreamGetReader_BytesRead(t *testing.T) {
 
 	if reader.BytesRead() != 500 {
 		t.Errorf("expected 500, got %d", reader.BytesRead())
+	}
+}
+
+// errStreamBroken is a mid-stream transport failure that is not io.EOF.
+var errStreamBroken = stderrors.New("stream broken")
+
+// chunkStream returns a mock stream that delivers chunks in order and then
+// returns endErr from every further Recv.
+func chunkStream(endErr error, chunks ...*ObjectChunk) *mockStream {
+	next := 0
+	return &mockStream{
+		recvFn: func() (interface{}, error) {
+			if next >= len(chunks) {
+				return nil, endErr
+			}
+			chunk := chunks[next]
+			next++
+			return chunk, nil
+		},
+	}
+}
+
+func newChunkReader(stream transport.Stream) *streamGetReader {
+	return &streamGetReader{
+		stream: stream,
+		req:    &GetObjectRequest{Key: "test:key"},
+	}
+}
+
+func TestStreamGetReader_ReadAll_LastChunkWithoutData(t *testing.T) {
+	stream := chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello "), TotalSize: 11},
+		&ObjectChunk{Data: []byte("world"), Offset: 6},
+		&ObjectChunk{IsLast: true},
+	)
+
+	got, err := io.ReadAll(newChunkReader(stream))
+	if err != nil {
+		t.Fatalf("io.ReadAll: unexpected error: %v", err)
+	}
+	if string(got) != "hello world" {
+		t.Errorf("expected %q, got %q", "hello world", string(got))
+	}
+}
+
+func TestStreamGetReader_ReadAll_LastChunkWithData(t *testing.T) {
+	stream := chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello "), TotalSize: 11},
+		&ObjectChunk{Data: []byte("world"), Offset: 6, IsLast: true},
+	)
+
+	got, err := io.ReadAll(newChunkReader(stream))
+	if err != nil {
+		t.Fatalf("io.ReadAll: unexpected error: %v", err)
+	}
+	if string(got) != "hello world" {
+		t.Errorf("expected %q, got %q", "hello world", string(got))
+	}
+}
+
+func TestStreamGetReader_ReadAll_RecvEOF(t *testing.T) {
+	stream := chunkStream(io.EOF,
+		&ObjectChunk{Data: []byte("hello "), TotalSize: 11},
+		&ObjectChunk{Data: []byte("world"), Offset: 6},
+	)
+
+	got, err := io.ReadAll(newChunkReader(stream))
+	if err != nil {
+		t.Fatalf("io.ReadAll: unexpected error: %v", err)
+	}
+	if string(got) != "hello world" {
+		t.Errorf("expected %q, got %q", "hello world", string(got))
+	}
+}
+
+// TestStreamGetReader_ReadAll_RecvEOFBeforeTotalSize covers a transport
+// io.EOF that arrives before the advertised object size: the download is
+// truncated and must fail with io.ErrUnexpectedEOF, never a clean EOF.
+func TestStreamGetReader_ReadAll_RecvEOFBeforeTotalSize(t *testing.T) {
+	stream := chunkStream(io.EOF,
+		&ObjectChunk{Data: []byte("hello "), TotalSize: 11},
+	)
+
+	got, err := io.ReadAll(newChunkReader(stream))
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("io.ReadAll: expected io.ErrUnexpectedEOF, got %v", err)
+	}
+	if string(got) != "hello " {
+		t.Errorf("expected the %q received before EOF, got %q", "hello ", string(got))
+	}
+}
+
+// TestStreamGetReader_ReadAll_EmptyLastChunkBeforeTotalSize covers an empty
+// last chunk that arrives before the advertised object size: the download is
+// truncated and must fail with io.ErrUnexpectedEOF, never a clean EOF.
+func TestStreamGetReader_ReadAll_EmptyLastChunkBeforeTotalSize(t *testing.T) {
+	stream := chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello"), TotalSize: 11},
+		&ObjectChunk{IsLast: true},
+	)
+
+	got, err := io.ReadAll(newChunkReader(stream))
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("io.ReadAll: expected io.ErrUnexpectedEOF, got %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("expected the %q received before the last chunk, got %q", "hello", string(got))
+	}
+}
+
+// TestStreamGetReader_ReadAll_DataLastChunkBeforeTotalSize covers a
+// data-bearing last chunk that ends short of the advertised object size, read
+// whole and through a 1-byte buffer that drains the chunk before the check.
+func TestStreamGetReader_ReadAll_DataLastChunkBeforeTotalSize(t *testing.T) {
+	newStream := func() StreamGetReader {
+		return newChunkReader(chunkStream(errStreamBroken,
+			&ObjectChunk{Data: []byte("hello "), TotalSize: 11},
+			&ObjectChunk{Data: []byte("wor"), Offset: 6, IsLast: true},
+		))
+	}
+	tests := []struct {
+		name string
+		read func(r StreamGetReader) ([]byte, error)
+	}{
+		{name: "ReadAll", read: func(r StreamGetReader) ([]byte, error) {
+			return io.ReadAll(r)
+		}},
+		{name: "OneByteBuffer", read: func(r StreamGetReader) ([]byte, error) {
+			var got []byte
+			buf := make([]byte, 1)
+			for {
+				n, err := r.Read(buf)
+				got = append(got, buf[:n]...)
+				if err != nil {
+					return got, err
+				}
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.read(newStream())
+			if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("expected io.ErrUnexpectedEOF, got %v", err)
+			}
+			if string(got) != "hello wor" {
+				t.Errorf("expected %q, got %q", "hello wor", string(got))
+			}
+		})
+	}
+}
+
+// TestStreamGetReader_ReadMetadata_RecvEOFBeforeTotalSize covers the same
+// truncation when the size was advertised by the chunk ReadMetadata consumed.
+func TestStreamGetReader_ReadMetadata_RecvEOFBeforeTotalSize(t *testing.T) {
+	reader := newChunkReader(chunkStream(io.EOF,
+		&ObjectChunk{Data: []byte("hello"), TotalSize: 11},
+	))
+	if _, err := reader.ReadMetadata(); err != nil {
+		t.Fatalf("ReadMetadata: %v", err)
+	}
+
+	got, err := io.ReadAll(reader)
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("io.ReadAll: expected io.ErrUnexpectedEOF, got %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("expected %q, got %q", "hello", string(got))
+	}
+}
+
+// TestStreamGetReader_ReadMetadata_SizeInEmptyLastChunk covers a stream where
+// ReadMetadata consumed a size-less first chunk and the size arrives only in
+// an empty last chunk: a stream short of it fails with io.ErrUnexpectedEOF.
+func TestStreamGetReader_ReadMetadata_SizeInEmptyLastChunk(t *testing.T) {
+	reader := newChunkReader(chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello")},
+		&ObjectChunk{IsLast: true, TotalSize: 11},
+	))
+	if _, err := reader.ReadMetadata(); err != nil {
+		t.Fatalf("ReadMetadata: %v", err)
+	}
+
+	got, err := io.ReadAll(reader)
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("io.ReadAll: expected io.ErrUnexpectedEOF, got %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("expected %q, got %q", "hello", string(got))
+	}
+	if reader.TotalSize() != 11 {
+		t.Errorf("expected TotalSize 11, got %d", reader.TotalSize())
+	}
+}
+
+// TestStreamGetReader_ReadMetadata_SizeInDataLastChunk covers the same
+// truncation when the last chunk carrying the size also carries data.
+func TestStreamGetReader_ReadMetadata_SizeInDataLastChunk(t *testing.T) {
+	reader := newChunkReader(chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello")},
+		&ObjectChunk{Data: []byte("wor"), Offset: 5, IsLast: true, TotalSize: 11},
+	))
+	if _, err := reader.ReadMetadata(); err != nil {
+		t.Fatalf("ReadMetadata: %v", err)
+	}
+
+	got, err := io.ReadAll(reader)
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("io.ReadAll: expected io.ErrUnexpectedEOF, got %v", err)
+	}
+	if string(got) != "hellowor" {
+		t.Errorf("expected %q, got %q", "hellowor", string(got))
+	}
+}
+
+// TestStreamGetReader_ReadMetadata_SizeInLastChunkComplete covers a complete
+// download whose size arrives only in the last chunk: it ends cleanly and the
+// metadata picks up the size.
+func TestStreamGetReader_ReadMetadata_SizeInLastChunkComplete(t *testing.T) {
+	reader := newChunkReader(chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello ")},
+		&ObjectChunk{Data: []byte("world"), Offset: 6, IsLast: true, TotalSize: 11},
+	))
+	if _, err := reader.ReadMetadata(); err != nil {
+		t.Fatalf("ReadMetadata: %v", err)
+	}
+
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("io.ReadAll: %v", err)
+	}
+	if string(got) != "hello world" {
+		t.Errorf("expected %q, got %q", "hello world", string(got))
+	}
+	if size := reader.Metadata().Size; size != 11 {
+		t.Errorf("expected metadata Size 11, got %d", size)
+	}
+}
+
+// TestStreamGetReader_ReadAll_SizeOnlyInLastChunk covers a stream read without
+// ReadMetadata: the size in the last chunk alone is honoured.
+func TestStreamGetReader_ReadAll_SizeOnlyInLastChunk(t *testing.T) {
+	reader := newChunkReader(chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello")},
+		&ObjectChunk{IsLast: true, TotalSize: 11},
+	))
+
+	got, err := io.ReadAll(reader)
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("io.ReadAll: expected io.ErrUnexpectedEOF, got %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("expected %q, got %q", "hello", string(got))
+	}
+}
+
+func TestStreamGetReader_ReadAll_RecvFailure(t *testing.T) {
+	stream := chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello "), TotalSize: 11},
+	)
+
+	got, err := io.ReadAll(newChunkReader(stream))
+	if err == nil {
+		t.Fatal("io.ReadAll: expected an error for a mid-stream failure")
+	}
+	if stderrors.Is(err, io.EOF) {
+		t.Errorf("a mid-stream failure must not be io.EOF: %v", err)
+	}
+	if !stderrors.Is(err, errStreamBroken) {
+		t.Errorf("expected the transport error to be wrapped, got %v", err)
+	}
+	var qbErr *errors.QBError
+	if !stderrors.As(err, &qbErr) || qbErr.Code != errors.CodeConnection {
+		t.Errorf("expected a CodeConnection QBError, got %v", err)
+	}
+	if string(got) != "hello " {
+		t.Errorf("expected %q before the failure, got %q", "hello ", string(got))
+	}
+}
+
+func TestStreamGetReader_ReadAfterEOF_BufferedLastChunk(t *testing.T) {
+	stream := chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hi"), TotalSize: 2, IsLast: true},
+	)
+	reader := newChunkReader(stream)
+
+	buf := make([]byte, 1)
+	for _, want := range []string{"h", "i"} {
+		n, err := reader.Read(buf)
+		if err != nil {
+			t.Fatalf("Read: unexpected error: %v", err)
+		}
+		if string(buf[:n]) != want {
+			t.Fatalf("expected %q, got %q", want, string(buf[:n]))
+		}
+	}
+
+	for i := 0; i < 2; i++ {
+		n, err := reader.Read(buf)
+		if n != 0 || err != io.EOF {
+			t.Errorf("Read %d after end: expected 0, io.EOF; got %d, %v", i+1, n, err)
+		}
+	}
+	if stream.recvIndex != 1 {
+		t.Errorf("expected no Recv after the last chunk, got %d receives", stream.recvIndex)
 	}
 }
 

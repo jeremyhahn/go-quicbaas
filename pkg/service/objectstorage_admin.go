@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
 )
@@ -44,15 +45,14 @@ var (
 
 // objectStorageAdminService implements ObjectStorageAdminService.
 type objectStorageAdminService struct {
-	catalogMgr        catalog.CatalogManager
-	backendMgr        catalog.BackendManager
-	configResolver    config.ObjectStoreConfigResolver
-	logger            interfaces.Logger
-	metrics           *objectStorageAdminMetrics
-	closed            atomic.Bool
-	mu                sync.RWMutex
-	gcOperations      map[string]*GCOperation
-	compactOperations map[string]*CompactOperation
+	catalogMgr     catalog.CatalogManager
+	backendMgr     catalog.BackendManager
+	configResolver config.ObjectStoreConfigResolver
+	logger         interfaces.Logger
+	metrics        *objectStorageAdminMetrics
+	closed         atomic.Bool
+	mu             sync.RWMutex
+	gcOperations   map[string]*GCOperation
 }
 
 // objectStorageAdminMetrics holds Prometheus metrics for admin operations.
@@ -86,12 +86,11 @@ func NewObjectStorageAdminService(
 	}
 
 	svc := &objectStorageAdminService{
-		catalogMgr:        catalogMgr,
-		backendMgr:        backendMgr,
-		configResolver:    configResolver,
-		logger:            logger.WithField("component", "objectstorage_admin_service"),
-		gcOperations:      make(map[string]*GCOperation),
-		compactOperations: make(map[string]*CompactOperation),
+		catalogMgr:     catalogMgr,
+		backendMgr:     backendMgr,
+		configResolver: configResolver,
+		logger:         logger.WithField("component", "objectstorage_admin_service"),
+		gcOperations:   make(map[string]*GCOperation),
 	}
 
 	// Initialize metrics (only once across all instances)
@@ -639,8 +638,28 @@ func (s *objectStorageAdminService) RunGarbageCollection(ctx context.Context, re
 		return nil, err
 	}
 
-	if _, err := prepareTenantContext(ctx); err != nil {
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
 		return nil, err
+	}
+
+	// Collection lists and deletes across every tenant's objects on a
+	// backend, so a tenant caller cannot start it.
+	if tenantID != "" {
+		if s.metrics != nil && s.metrics.operationErrors != nil {
+			s.metrics.operationErrors.WithLabelValues("run_gc", "cross_tenant").Inc()
+		}
+		return nil, NewError(dberrors.ErrCrossTenantAccess, "objectstorage_admin.RunGarbageCollection",
+			"garbage collection spans every tenant; only the system scope can run it")
+	}
+
+	// Each node's catalog is local, so a deleting run could remove another
+	// node's live objects on a shared backend. Only dry runs start.
+	if !req.DryRun {
+		if s.metrics != nil && s.metrics.operationErrors != nil {
+			s.metrics.operationErrors.WithLabelValues("run_gc", "unsupported").Inc()
+		}
+		return nil, api.NewGarbageCollectionDeleteUnsupportedError("admin.RunGarbageCollection")
 	}
 
 	s.mu.Lock()
@@ -658,6 +677,7 @@ func (s *objectStorageAdminService) RunGarbageCollection(ctx context.Context, re
 
 	gcOp := &GCOperation{
 		ID:         opID,
+		TenantID:   tenantID,
 		Backends:   backends,
 		DryRun:     req.DryRun,
 		Aggressive: req.Aggressive,
@@ -688,7 +708,20 @@ func (s *objectStorageAdminService) RunGarbageCollection(ctx context.Context, re
 	}, nil
 }
 
-// runGCOperation performs the actual garbage collection.
+// Grace windows for garbage collection. An orphaned backend object is
+// collected only if it was last modified at least this long before the
+// operation started, so a PutObject still between its backend write and its
+// catalog write is never collected.
+const (
+	gcOrphanGrace           = time.Hour
+	gcOrphanGraceAggressive = 5 * time.Minute
+)
+
+// runGCOperation collects orphaned objects on each of op's backends in
+// order: objects no catalog entry references and that are older than the
+// grace window. The first backend or catalog error fails the operation.
+// RunGarbageCollection starts it only as a dry run for now (see
+// api.NewGarbageCollectionDeleteUnsupportedError).
 func (s *objectStorageAdminService) runGCOperation(ctx context.Context, op *GCOperation) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -700,52 +733,151 @@ func (s *objectStorageAdminService) runGCOperation(ctx context.Context, op *GCOp
 		}
 	}()
 
+	fail := func(msg string) {
+		s.mu.Lock()
+		op.Status = GCStatusFailed
+		op.Error = msg
+		op.CompletedAt = time.Now().UnixNano()
+		s.mu.Unlock()
+		s.logger.WithFields(map[string]interface{}{
+			"operation_id": op.ID,
+			"error":        msg,
+		}).Error("garbage collection failed")
+	}
+
+	grace := gcOrphanGrace
+	if op.Aggressive {
+		grace = gcOrphanGraceAggressive
+	}
+	cutoff := time.Unix(0, op.StartedAt).Add(-grace)
+
 	for _, backendName := range op.Backends {
 		select {
 		case <-ctx.Done():
-			s.mu.Lock()
-			op.Status = GCStatusFailed
-			op.Error = ctx.Err().Error()
-			op.CompletedAt = time.Now().UnixNano()
-			s.mu.Unlock()
+			fail(ctx.Err().Error())
 			return
 		default:
 		}
 
-		// Get objects in this backend that might be orphaned
-		storeUsage, err := s.catalogMgr.GetStoreUsage(ctx, backendName)
-		if err != nil {
-			continue
+		if err := s.collectBackendOrphans(ctx, op, backendName, cutoff); err != nil {
+			fail(err.Error())
+			return
 		}
-
-		s.mu.Lock()
-		op.ObjectsScanned += storeUsage.ObjectCount
-		s.mu.Unlock()
-
-		// In a real implementation, this would:
-		// 1. List all objects in the backend
-		// 2. Check each object against the catalog
-		// 3. Delete orphaned objects (objects in backend but not in catalog)
-		// 4. Track statistics
-
-		s.logger.WithFields(map[string]interface{}{
-			"operation_id": op.ID,
-			"backend":      backendName,
-			"scanned":      storeUsage.ObjectCount,
-		}).Debug("processed backend for GC")
 	}
 
 	s.mu.Lock()
 	op.Status = GCStatusCompleted
 	op.CompletedAt = time.Now().UnixNano()
+	scanned, deleted, reclaimed := op.ObjectsScanned, op.ObjectsDeleted, op.BytesReclaimed
 	s.mu.Unlock()
 
 	s.logger.WithFields(map[string]interface{}{
 		"operation_id":    op.ID,
-		"objects_scanned": op.ObjectsScanned,
-		"objects_deleted": op.ObjectsDeleted,
-		"bytes_reclaimed": op.BytesReclaimed,
+		"objects_scanned": scanned,
+		"objects_deleted": deleted,
+		"bytes_reclaimed": reclaimed,
+		"dry_run":         op.DryRun,
 	}).Info("garbage collection completed")
+}
+
+// collectBackendOrphans deletes (or, in a dry run, counts) the objects in one
+// backend that no catalog entry references and that were last modified before
+// cutoff. The backend is listed before the catalog is read: PutObject writes
+// the backend before the catalog, so a ref listed before its entry exists is
+// young and protected by the grace window. An object whose age cannot be read
+// is never deleted.
+func (s *objectStorageAdminService) collectBackendOrphans(ctx context.Context, op *GCOperation, backendName string, cutoff time.Time) error {
+	storage, err := s.backendMgr.GetBackend(backendName)
+	if err != nil {
+		return fmt.Errorf("backend %s: %w", backendName, err)
+	}
+	if storage == nil {
+		return fmt.Errorf("backend %s: no storage", backendName)
+	}
+
+	refs, err := storage.ListWithContext(ctx, "")
+	if err != nil {
+		return fmt.Errorf("backend %s: list objects: %w", backendName, err)
+	}
+
+	referenced, err := s.referencedRefs(ctx, backendName)
+	if err != nil {
+		return fmt.Errorf("backend %s: %w", backendName, err)
+	}
+
+	s.mu.Lock()
+	op.ObjectsScanned += int64(len(refs))
+	s.mu.Unlock()
+
+	var deleted int64
+	for _, ref := range refs {
+		if _, ok := referenced[ref]; ok {
+			continue
+		}
+		meta, err := storage.GetMetadata(ctx, ref)
+		if err != nil || meta == nil || meta.LastModified.IsZero() {
+			continue
+		}
+		if !meta.LastModified.Before(cutoff) {
+			continue
+		}
+		if !op.DryRun {
+			if err := storage.DeleteWithContext(ctx, ref); err != nil {
+				return fmt.Errorf("backend %s: delete orphan %s: %w", backendName, ref, err)
+			}
+		}
+		deleted++
+		s.mu.Lock()
+		op.ObjectsDeleted++
+		op.BytesReclaimed += meta.Size
+		s.mu.Unlock()
+	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"operation_id": op.ID,
+		"backend":      backendName,
+		"scanned":      len(refs),
+		"orphans":      deleted,
+		"dry_run":      op.DryRun,
+	}).Debug("processed backend for GC")
+	return nil
+}
+
+// referencedRefs returns the set of object refs that catalog entries locate
+// on the named backend: primary, replica and archive locations alike. It reads
+// every catalog entry, because the catalog's store index covers only primary
+// stores and would miss a replica or archive copy held on this backend.
+func (s *objectStorageAdminService) referencedRefs(ctx context.Context, backendName string) (map[string]struct{}, error) {
+	referenced := make(map[string]struct{})
+	cursor := ""
+	for {
+		page, err := s.catalogMgr.ListByPrefix(ctx, "", &catalog.ListOptions{Limit: 1000, Cursor: cursor})
+		if err != nil {
+			return nil, fmt.Errorf("list catalog entries: %w", err)
+		}
+		if page == nil {
+			return referenced, nil
+		}
+		for _, key := range page.Keys {
+			entry, err := s.catalogMgr.Get(ctx, key)
+			if err != nil {
+				if catalog.IsNotFound(err) {
+					// Deleted since the listing.
+					continue
+				}
+				return nil, fmt.Errorf("read catalog entry %s: %w", key, err)
+			}
+			for _, loc := range entry.GetAllLocations() {
+				if loc.Store == backendName {
+					referenced[loc.ObjectRef] = struct{}{}
+				}
+			}
+		}
+		if !page.HasMore || page.NextCursor == "" {
+			return referenced, nil
+		}
+		cursor = page.NextCursor
+	}
 }
 
 // GetGarbageCollectionProgress returns GC progress.
@@ -769,12 +901,41 @@ func (s *objectStorageAdminService) GetGarbageCollectionProgress(ctx context.Con
 		return nil, err
 	}
 
-	if _, err := prepareTenantContext(ctx); err != nil {
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
 		return nil, err
 	}
 
+	// runGCOperation updates op's fields under s.mu in its own goroutine, so
+	// the response is built from them while the read lock is held. Another
+	// tenant's operation is not found; the system scope ("") sees every one.
 	s.mu.RLock()
 	op, exists := s.gcOperations[req.OperationID]
+	if exists && tenantID != "" && op.TenantID != tenantID {
+		exists = false
+	}
+	var resp *GetGarbageCollectionProgressResponse
+	if exists {
+		// Calculate percent complete
+		var percentComplete float64
+		if op.ObjectsScanned > 0 {
+			// Simple estimate based on backends processed
+			percentComplete = 100.0
+			if op.Status == GCStatusRunning {
+				percentComplete = 50.0
+			}
+		}
+		resp = &GetGarbageCollectionProgressResponse{
+			OperationID:     op.ID,
+			Status:          op.Status,
+			ObjectsScanned:  op.ObjectsScanned,
+			ObjectsDeleted:  op.ObjectsDeleted,
+			BytesReclaimed:  op.BytesReclaimed,
+			PercentComplete: percentComplete,
+			Error:           op.Error,
+			CompletedAt:     op.CompletedAt,
+		}
+	}
 	s.mu.RUnlock()
 
 	if !exists {
@@ -784,26 +945,7 @@ func (s *objectStorageAdminService) GetGarbageCollectionProgress(ctx context.Con
 		return nil, api.NewGCOperationNotFoundError("admin.GetGarbageCollectionProgress", req.OperationID)
 	}
 
-	// Calculate percent complete
-	var percentComplete float64
-	if op.ObjectsScanned > 0 {
-		// Simple estimate based on backends processed
-		percentComplete = 100.0
-		if op.Status == GCStatusRunning {
-			percentComplete = 50.0 // Placeholder - real implementation would track progress
-		}
-	}
-
-	return &GetGarbageCollectionProgressResponse{
-		OperationID:     op.ID,
-		Status:          op.Status,
-		ObjectsScanned:  op.ObjectsScanned,
-		ObjectsDeleted:  op.ObjectsDeleted,
-		BytesReclaimed:  op.BytesReclaimed,
-		PercentComplete: percentComplete,
-		Error:           op.Error,
-		CompletedAt:     op.CompletedAt,
-	}, nil
+	return resp, nil
 }
 
 // =============================================================================
@@ -994,7 +1136,9 @@ func (s *objectStorageAdminService) RepairObject(ctx context.Context, req *Repai
 // Compaction Operations
 // =============================================================================
 
-// CompactBackend triggers compaction on a backend.
+// CompactBackend validates a compaction request and returns a
+// CompactionUnsupportedError (ErrUnimplemented): no backend has a compaction
+// verb, so nothing is recorded and no operation starts.
 func (s *objectStorageAdminService) CompactBackend(ctx context.Context, req *CompactBackendRequest) (*CompactBackendResponse, error) {
 	start := time.Now()
 	defer func() {
@@ -1019,88 +1163,24 @@ func (s *objectStorageAdminService) CompactBackend(ctx context.Context, req *Com
 		return nil, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.logger.WithFields(map[string]interface{}{
 		"name":       req.Name,
 		"aggressive": req.Aggressive,
-	}).Debug("triggering compaction")
+	}).Debug("compaction requested")
 
 	// Verify backend exists
-	_, err := s.backendMgr.GetBackendConfig(req.Name)
-	if err != nil {
+	if _, err := s.backendMgr.GetBackendConfig(req.Name); err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("compact_backend", "not_found").Inc()
 		}
 		return nil, api.NewNotFoundByNameError("admin.CompactBackend", "backend", req.Name)
 	}
 
-	// Create compaction operation
-	opID := uuid.New().String()
-	now := time.Now().UnixNano()
-
-	compactOp := &CompactOperation{
-		ID:         opID,
-		Backend:    req.Name,
-		Aggressive: req.Aggressive,
-		Status:     "running",
-		StartedAt:  now,
+	// No object-storage backend has a compaction verb (common.Storage has
+	// none), so the request is refused before anything is recorded, rather
+	// than reported as a compaction that never ran.
+	if s.metrics != nil && s.metrics.operationErrors != nil {
+		s.metrics.operationErrors.WithLabelValues("compact_backend", "unsupported").Inc()
 	}
-
-	s.compactOperations[opID] = compactOp
-
-	// Update metrics
-	if s.metrics != nil && s.metrics.compactionsTotal != nil {
-		s.metrics.compactionsTotal.Inc()
-	}
-
-	// Start compaction in background
-	go s.runCompaction(context.WithoutCancel(ctx), compactOp)
-
-	s.logger.WithFields(map[string]interface{}{
-		"operation_id": opID,
-		"backend":      req.Name,
-		"aggressive":   req.Aggressive,
-	}).Info("compaction initiated")
-
-	return &CompactBackendResponse{
-		Name:        req.Name,
-		OperationID: opID,
-		StartedAt:   now,
-	}, nil
-}
-
-// runCompaction performs the actual compaction operation.
-func (s *objectStorageAdminService) runCompaction(ctx context.Context, op *CompactOperation) {
-	defer func() {
-		if r := recover(); r != nil {
-			s.mu.Lock()
-			op.Status = "failed"
-			op.Error = fmt.Sprintf("panic: %v", r)
-			op.CompletedAt = time.Now().UnixNano()
-			s.mu.Unlock()
-		}
-	}()
-
-	// Get the backend - for backends that support compaction, trigger it
-	// Most object storage backends don't need explicit compaction
-	// This is mainly relevant for local/embedded storage engines
-
-	s.logger.WithFields(map[string]interface{}{
-		"operation_id": op.ID,
-		"backend":      op.Backend,
-	}).Debug("running compaction")
-
-	// Simulated compaction completion
-	// In a real implementation, this would interact with the storage backend
-	s.mu.Lock()
-	op.Status = "completed"
-	op.CompletedAt = time.Now().UnixNano()
-	s.mu.Unlock()
-
-	s.logger.WithFields(map[string]interface{}{
-		"operation_id": op.ID,
-		"backend":      op.Backend,
-	}).Info("compaction completed")
+	return nil, api.NewCompactionUnsupportedError("admin.CompactBackend", req.Name)
 }

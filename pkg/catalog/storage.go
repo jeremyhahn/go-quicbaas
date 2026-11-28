@@ -15,14 +15,12 @@ package catalog
 
 import (
 	"context"
-	"errors"
-
-	"github.com/cockroachdb/pebble"
 )
 
-// PebbleStorage provides low-level catalog storage operations backed by PebbleDB.
-// This is a direct PebbleDB storage layer for high-performance catalog operations.
-type PebbleStorage interface {
+// Storage provides low-level catalog storage operations: entries, their
+// secondary indexes and iteration, over a KV. Every write commits an entry
+// together with its index keys in one atomic KV batch.
+type Storage interface {
 	// Entry operations
 	GetEntry(ctx context.Context, key string) (*CatalogEntry, error)
 	PutEntry(ctx context.Context, entry *CatalogEntry) error
@@ -38,134 +36,48 @@ type PebbleStorage interface {
 	IterateKeys(ctx context.Context, prefix string, fn func(string) bool) error
 
 	// Index operations
-	GetPebbleIndexManager() IndexManager
+	Indexes() IndexManager
 
 	// Lifecycle
 	Close() error
 	Sync() error
-
-	// PebbleDB access for advanced operations
-	DB() *pebble.DB
 }
 
-// PebbleStorageConfig configures the PebbleDB storage layer.
-type PebbleStorageConfig struct {
-	Path            string
-	CacheSize       int64
-	WriteBufferSize int
-	MaxOpenFiles    int
-	Compression     bool
-	SyncWrites      bool
-}
-
-// DefaultPebbleStorageConfig returns sensible defaults for PebbleDB storage configuration.
-func DefaultPebbleStorageConfig() *PebbleStorageConfig {
-	return &PebbleStorageConfig{
-		CacheSize:       64 * 1024 * 1024,
-		WriteBufferSize: 16 * 1024 * 1024,
-		MaxOpenFiles:    1000,
-		Compression:     true,
-		SyncWrites:      true,
-	}
-}
-
-// Validate validates the PebbleDB storage configuration.
-func (c *PebbleStorageConfig) Validate() error {
-	if c.Path == "" {
-		return NewStorageError("validate", &pebbleConfigError{field: "Path", msg: "path is required"})
-	}
-	if c.CacheSize < 0 {
-		return NewStorageError("validate", &pebbleConfigError{field: "CacheSize", msg: "must be non-negative"})
-	}
-	if c.WriteBufferSize < 0 {
-		return NewStorageError("validate", &pebbleConfigError{field: "WriteBufferSize", msg: "must be non-negative"})
-	}
-	if c.MaxOpenFiles < 0 {
-		return NewStorageError("validate", &pebbleConfigError{field: "MaxOpenFiles", msg: "must be non-negative"})
-	}
-	return nil
-}
-
-// WithDefaults returns a config with defaults applied for zero values.
-func (c *PebbleStorageConfig) WithDefaults() *PebbleStorageConfig {
-	cfg := *c
-	defaults := DefaultPebbleStorageConfig()
-	if cfg.CacheSize == 0 {
-		cfg.CacheSize = defaults.CacheSize
-	}
-	if cfg.WriteBufferSize == 0 {
-		cfg.WriteBufferSize = defaults.WriteBufferSize
-	}
-	if cfg.MaxOpenFiles == 0 {
-		cfg.MaxOpenFiles = defaults.MaxOpenFiles
-	}
-	return &cfg
-}
-
-type pebbleConfigError struct {
+// storageInputError describes an argument the storage layer refuses.
+type storageInputError struct {
 	field string
 	msg   string
 }
 
-func (e *pebbleConfigError) Error() string {
+func (e *storageInputError) Error() string {
 	return e.field + ": " + e.msg
 }
 
-type pebbleStorage struct {
-	db           *pebble.DB
-	config       *PebbleStorageConfig
+// kvStorage implements Storage over a KV.
+type kvStorage struct {
+	kv           KV
 	indexManager IndexManager
 
-	// gate keeps the database open for the operations running against it and
-	// makes Close wait for them, so no call is ever issued on a closed
-	// PebbleDB instance (which panics instead of returning an error).
+	// gate keeps the KV open for the operations running against it and makes
+	// Close wait for them, so no call is ever issued on a closed KV.
 	gate *storeGate
 }
 
-// NewPebbleStorage creates a new PebbleDB-backed storage.
-func NewPebbleStorage(config *PebbleStorageConfig) (PebbleStorage, error) {
-	return OpenPebbleStorage(config)
-}
-
-// OpenPebbleStorage opens an existing PebbleDB storage or creates a new one.
-func OpenPebbleStorage(config *PebbleStorageConfig) (PebbleStorage, error) {
-	if config == nil {
-		config = DefaultPebbleStorageConfig()
+// NewKVStorage returns a Storage over kv. The storage owns kv: Close closes it.
+func NewKVStorage(kv KV) (Storage, error) {
+	if kv == nil {
+		return nil, NewInvalidEntryError("kv", "KV store is required")
 	}
-	if err := config.Validate(); err != nil {
-		return nil, err
-	}
-	cfg := config.WithDefaults()
-
-	opts := &pebble.Options{
-		Cache:        pebble.NewCache(cfg.CacheSize),
-		MaxOpenFiles: cfg.MaxOpenFiles,
-	}
-	if cfg.WriteBufferSize > 0 {
-		opts.MemTableSize = uint64(cfg.WriteBufferSize)
-	}
-	if cfg.Compression {
-		opts.Levels = []pebble.LevelOptions{{Compression: pebble.SnappyCompression}}
-	}
-
-	db, err := pebble.Open(cfg.Path, opts)
-	if err != nil {
-		return nil, NewStorageError("open", err)
-	}
-
 	// The index manager shares the storage's gate so that index reads observe
 	// the close of the store exactly as entry reads do.
-	// db and gate are both set here, so the index manager is built directly
+	// kv and gate are both set here, so the index manager is built directly
 	// rather than through newGatedIndexManager's nil checks.
 	gate := newStoreGate()
-	indexMgr := &indexManager{db: db, gate: gate}
-
-	return &pebbleStorage{db: db, config: cfg, indexManager: indexMgr, gate: gate}, nil
+	indexMgr := &indexManager{kv: kv, gate: gate}
+	return &kvStorage{kv: kv, indexManager: indexMgr, gate: gate}, nil
 }
 
-func (s *pebbleStorage) DB() *pebble.DB { return s.db }
-
-func (s *pebbleStorage) GetEntry(ctx context.Context, key string) (*CatalogEntry, error) {
+func (s *kvStorage) GetEntry(ctx context.Context, key string) (*CatalogEntry, error) {
 	if err := s.gate.enter(); err != nil {
 		return nil, err
 	}
@@ -179,26 +91,22 @@ func (s *pebbleStorage) GetEntry(ctx context.Context, key string) (*CatalogEntry
 		return nil, err
 	}
 
-	data, closer, err := s.db.Get(objKey.CatalogKey())
+	data, err := s.kv.Get(ctx, objKey.CatalogKey())
 	if err != nil {
-		if errors.Is(err, pebble.ErrNotFound) {
+		if isKVKeyNotFound(err) {
 			return nil, NewEntryNotFoundError(key)
 		}
 		return nil, NewStorageError("get", err)
 	}
-	defer closer.Close()
 
-	dataCopy := make([]byte, len(data))
-	copy(dataCopy, data)
-
-	entry, err := DecodeCatalogEntry(dataCopy)
+	entry, err := DecodeCatalogEntry(data)
 	if err != nil {
 		return nil, NewDecodingError(key, err)
 	}
 	return entry, nil
 }
 
-func (s *pebbleStorage) PutEntry(ctx context.Context, entry *CatalogEntry) error {
+func (s *kvStorage) PutEntry(ctx context.Context, entry *CatalogEntry) error {
 	if err := s.gate.enter(); err != nil {
 		return err
 	}
@@ -207,7 +115,7 @@ func (s *pebbleStorage) PutEntry(ctx context.Context, entry *CatalogEntry) error
 		return NewStorageError("put", err)
 	}
 	if entry == nil {
-		return NewStorageError("put", &pebbleConfigError{field: "entry", msg: "entry cannot be nil"})
+		return NewStorageError("put", &storageInputError{field: "entry", msg: "entry cannot be nil"})
 	}
 	if entry.Key == "" {
 		return NewKeyEmptyError()
@@ -223,27 +131,18 @@ func (s *pebbleStorage) PutEntry(ctx context.Context, entry *CatalogEntry) error
 		return NewEncodingError(entry.Key, err)
 	}
 
-	batch := s.db.NewBatch()
-	defer batch.Close()
-
-	if err := batch.Set(objKey.CatalogKey(), data, nil); err != nil {
-		return NewStorageError("put", err)
-	}
+	batch := &KVBatch{}
+	batch.Set(objKey.CatalogKey(), data)
 	if err := s.indexManager.WriteIndexes(batch, entry); err != nil {
 		return err
 	}
-
-	writeOpts := pebble.NoSync
-	if s.config.SyncWrites {
-		writeOpts = pebble.Sync
-	}
-	if err := batch.Commit(writeOpts); err != nil {
+	if err := s.kv.Apply(ctx, batch); err != nil {
 		return NewStorageError("put", err)
 	}
 	return nil
 }
 
-func (s *pebbleStorage) DeleteEntry(ctx context.Context, key string) error {
+func (s *kvStorage) DeleteEntry(ctx context.Context, key string) error {
 	if err := s.gate.enter(); err != nil {
 		return err
 	}
@@ -265,27 +164,18 @@ func (s *pebbleStorage) DeleteEntry(ctx context.Context, key string) error {
 		return err
 	}
 
-	batch := s.db.NewBatch()
-	defer batch.Close()
-
-	if err := batch.Delete(objKey.CatalogKey(), nil); err != nil {
-		return NewStorageError("delete", err)
-	}
+	batch := &KVBatch{}
+	batch.Delete(objKey.CatalogKey())
 	if err := s.indexManager.DeleteIndexes(batch, existing); err != nil {
 		return err
 	}
-
-	writeOpts := pebble.NoSync
-	if s.config.SyncWrites {
-		writeOpts = pebble.Sync
-	}
-	if err := batch.Commit(writeOpts); err != nil {
+	if err := s.kv.Apply(ctx, batch); err != nil {
 		return NewStorageError("delete", err)
 	}
 	return nil
 }
 
-func (s *pebbleStorage) GetEntries(ctx context.Context, keys []string) ([]*CatalogEntry, error) {
+func (s *kvStorage) GetEntries(ctx context.Context, keys []string) ([]*CatalogEntry, error) {
 	if err := s.gate.enter(); err != nil {
 		return nil, err
 	}
@@ -308,7 +198,7 @@ func (s *pebbleStorage) GetEntries(ctx context.Context, keys []string) ([]*Catal
 	return entries, nil
 }
 
-func (s *pebbleStorage) PutEntries(ctx context.Context, entries []*CatalogEntry) error {
+func (s *kvStorage) PutEntries(ctx context.Context, entries []*CatalogEntry) error {
 	if err := s.gate.enter(); err != nil {
 		return err
 	}
@@ -320,9 +210,7 @@ func (s *pebbleStorage) PutEntries(ctx context.Context, entries []*CatalogEntry)
 		return nil
 	}
 
-	batch := s.db.NewBatch()
-	defer batch.Close()
-
+	batch := &KVBatch{}
 	for _, entry := range entries {
 		if entry == nil {
 			continue
@@ -339,25 +227,19 @@ func (s *pebbleStorage) PutEntries(ctx context.Context, entries []*CatalogEntry)
 		if err != nil {
 			return NewEncodingError(entry.Key, err)
 		}
-		if err := batch.Set(objKey.CatalogKey(), data, nil); err != nil {
-			return NewStorageError("put_entries", err)
-		}
+		batch.Set(objKey.CatalogKey(), data)
 		if err := s.indexManager.WriteIndexes(batch, entry); err != nil {
 			return err
 		}
 	}
 
-	writeOpts := pebble.NoSync
-	if s.config.SyncWrites {
-		writeOpts = pebble.Sync
-	}
-	if err := batch.Commit(writeOpts); err != nil {
+	if err := s.kv.Apply(ctx, batch); err != nil {
 		return NewStorageError("put_entries", err)
 	}
 	return nil
 }
 
-func (s *pebbleStorage) DeleteEntries(ctx context.Context, keys []string) error {
+func (s *kvStorage) DeleteEntries(ctx context.Context, keys []string) error {
 	if err := s.gate.enter(); err != nil {
 		return err
 	}
@@ -381,33 +263,25 @@ func (s *pebbleStorage) DeleteEntries(ctx context.Context, keys []string) error 
 		existingEntries = append(existingEntries, entry)
 	}
 
-	batch := s.db.NewBatch()
-	defer batch.Close()
-
+	batch := &KVBatch{}
 	for _, entry := range existingEntries {
 		objKey, err := ParseKey(entry.Key)
 		if err != nil {
 			continue
 		}
-		if err := batch.Delete(objKey.CatalogKey(), nil); err != nil {
-			return NewStorageError("delete_entries", err)
-		}
+		batch.Delete(objKey.CatalogKey())
 		if err := s.indexManager.DeleteIndexes(batch, entry); err != nil {
 			return err
 		}
 	}
 
-	writeOpts := pebble.NoSync
-	if s.config.SyncWrites {
-		writeOpts = pebble.Sync
-	}
-	if err := batch.Commit(writeOpts); err != nil {
+	if err := s.kv.Apply(ctx, batch); err != nil {
 		return NewStorageError("delete_entries", err)
 	}
 	return nil
 }
 
-func (s *pebbleStorage) Iterate(ctx context.Context, prefix string, fn func(*CatalogEntry) bool) error {
+func (s *kvStorage) Iterate(ctx context.Context, prefix string, fn func(*CatalogEntry) bool) error {
 	if err := s.gate.enter(); err != nil {
 		return err
 	}
@@ -416,45 +290,28 @@ func (s *pebbleStorage) Iterate(ctx context.Context, prefix string, fn func(*Cat
 		return NewStorageError("iterate", err)
 	}
 
-	var iterPrefix []byte
-	if prefix == "" {
-		iterPrefix = []byte(PrefixCatalog)
-	} else {
-		iterPrefix = []byte(PrefixCatalog + prefix)
-	}
-
-	iter, err := s.db.NewIter(&pebble.IterOptions{
-		LowerBound: iterPrefix,
-		UpperBound: pebbleUpperBound(iterPrefix),
-	})
-	if err != nil {
-		return NewStorageError("iterate", err)
-	}
-	defer iter.Close()
-
-	for iter.First(); iter.Valid(); iter.Next() {
+	var scanErr error
+	err := s.kv.Scan(ctx, []byte(PrefixCatalog+prefix), func(_, value []byte) bool {
 		if err := ctx.Err(); err != nil {
-			return NewStorageError("iterate", err)
+			scanErr = err
+			return false
 		}
-		data := iter.Value()
-		dataCopy := make([]byte, len(data))
-		copy(dataCopy, data)
-
-		entry, err := DecodeCatalogEntry(dataCopy)
+		entry, err := DecodeCatalogEntry(cloneBytes(value))
 		if err != nil {
-			continue
+			return true
 		}
-		if !fn(entry) {
-			break
-		}
+		return fn(entry)
+	})
+	if scanErr != nil {
+		return NewStorageError("iterate", scanErr)
 	}
-	if err := iter.Error(); err != nil {
+	if err != nil {
 		return NewStorageError("iterate", err)
 	}
 	return nil
 }
 
-func (s *pebbleStorage) IterateKeys(ctx context.Context, prefix string, fn func(string) bool) error {
+func (s *kvStorage) IterateKeys(ctx context.Context, prefix string, fn func(string) bool) error {
 	if err := s.gate.enter(); err != nil {
 		return err
 	}
@@ -463,82 +320,58 @@ func (s *pebbleStorage) IterateKeys(ctx context.Context, prefix string, fn func(
 		return NewStorageError("iterate_keys", err)
 	}
 
-	var iterPrefix []byte
-	if prefix == "" {
-		iterPrefix = []byte(PrefixCatalog)
-	} else {
-		iterPrefix = []byte(PrefixCatalog + prefix)
-	}
-
-	iter, err := s.db.NewIter(&pebble.IterOptions{
-		LowerBound: iterPrefix,
-		UpperBound: pebbleUpperBound(iterPrefix),
-	})
-	if err != nil {
-		return NewStorageError("iterate_keys", err)
-	}
-	defer iter.Close()
-
-	for iter.First(); iter.Valid(); iter.Next() {
+	var scanErr error
+	err := s.kv.Scan(ctx, []byte(PrefixCatalog+prefix), func(key, _ []byte) bool {
 		if err := ctx.Err(); err != nil {
-			return NewStorageError("iterate_keys", err)
+			scanErr = err
+			return false
 		}
-		key := iter.Key()
 		objKey, err := ParseCatalogKey(key)
 		if err != nil {
-			continue
+			return true
 		}
-		if !fn(objKey.String()) {
-			break
-		}
+		return fn(objKey.String())
+	})
+	if scanErr != nil {
+		return NewStorageError("iterate_keys", scanErr)
 	}
-	if err := iter.Error(); err != nil {
+	if err != nil {
 		return NewStorageError("iterate_keys", err)
 	}
 	return nil
 }
 
-func (s *pebbleStorage) GetPebbleIndexManager() IndexManager { return s.indexManager }
+func (s *kvStorage) Indexes() IndexManager { return s.indexManager }
 
 // Close shuts the store down. It waits for the reads and writes already in
-// flight to finish before closing the database, so a background scan can never
-// be left holding an iterator over a closed PebbleDB instance. Operations that
-// arrive after Close receive a catalog-closed error.
-func (s *pebbleStorage) Close() error {
+// flight to finish before closing the KV, so a background scan can never be
+// left running over a closed store. Operations that arrive after Close
+// receive a catalog-closed error.
+func (s *kvStorage) Close() error {
 	return s.gate.close(func() error {
-		if s.db == nil {
-			return nil
-		}
-		if err := s.db.Close(); err != nil {
+		if err := s.kv.Close(); err != nil {
 			return NewStorageError("close", err)
 		}
 		return nil
 	})
 }
 
-func (s *pebbleStorage) Sync() error {
+// kvFlusher is implemented by a KV that buffers writes in memory and can
+// flush them to durable storage on request.
+type kvFlusher interface {
+	Flush() error
+}
+
+// Sync flushes buffered writes when the KV buffers them; a KV whose writes
+// are durable once Apply returns has nothing to flush.
+func (s *kvStorage) Sync() error {
 	if err := s.gate.enter(); err != nil {
 		return err
 	}
 	defer s.gate.leave()
-	if s.db != nil {
-		if err := s.db.Flush(); err != nil {
+	if f, ok := s.kv.(kvFlusher); ok {
+		if err := f.Flush(); err != nil {
 			return NewStorageError("sync", err)
-		}
-	}
-	return nil
-}
-
-func pebbleUpperBound(prefix []byte) []byte {
-	if len(prefix) == 0 {
-		return nil
-	}
-	upperBound := make([]byte, len(prefix))
-	copy(upperBound, prefix)
-	for i := len(upperBound) - 1; i >= 0; i-- {
-		if upperBound[i] < 0xFF {
-			upperBound[i]++
-			return upperBound[:i+1]
 		}
 	}
 	return nil

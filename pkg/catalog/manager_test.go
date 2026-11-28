@@ -17,8 +17,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,18 +27,8 @@ import (
 func setupTestManager(t *testing.T) (CatalogManager, func()) {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "catalog-manager-test-*")
+	storage, err := NewKVStorage(NewMemoryKV())
 	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-
-	dbPath := filepath.Join(tmpDir, "testdb")
-	storage, err := NewPebbleStorage(&PebbleStorageConfig{
-		Path:       dbPath,
-		SyncWrites: false, // Faster for tests
-	})
-	if err != nil {
-		os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create storage: %v", err)
 	}
 
@@ -49,13 +37,11 @@ func setupTestManager(t *testing.T) (CatalogManager, func()) {
 	})
 	if err != nil {
 		storage.Close()
-		os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
 	cleanup := func() {
 		manager.Close()
-		os.RemoveAll(tmpDir)
 	}
 
 	return manager, cleanup
@@ -1302,6 +1288,49 @@ func TestManagerListByPrefix(t *testing.T) {
 		}
 		if !result.HasMore {
 			t.Error("expected HasMore to be true")
+		}
+	})
+
+	t.Run("pages with a cursor", func(t *testing.T) {
+		want := make([]string, 0, 5)
+		for i := 0; i < 5; i++ {
+			key := "ns-paged:dir/file-" + string(rune('a'+i)) + ".txt"
+			if err := manager.Put(ctx, createTestEntry(key)); err != nil {
+				t.Fatalf("Put failed: %v", err)
+			}
+			want = append(want, key)
+		}
+
+		var got []string
+		cursor := ""
+		for pages := 0; ; pages++ {
+			if pages > 5 {
+				t.Fatal("paging did not terminate")
+			}
+			result, err := manager.ListByPrefix(ctx, "ns-paged:", &ListOptions{Limit: 2, Cursor: cursor})
+			if err != nil {
+				t.Fatalf("ListByPrefix failed: %v", err)
+			}
+			got = append(got, result.Keys...)
+			if !result.HasMore {
+				if result.NextCursor != "" {
+					t.Errorf("last page NextCursor = %q, want empty", result.NextCursor)
+				}
+				break
+			}
+			if result.NextCursor == "" {
+				t.Fatal("HasMore page has no NextCursor")
+			}
+			cursor = result.NextCursor
+		}
+
+		if len(got) != len(want) {
+			t.Fatalf("got keys %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("key %d = %q, want %q", i, got[i], want[i])
+			}
 		}
 	})
 }

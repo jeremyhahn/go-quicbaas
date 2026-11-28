@@ -53,6 +53,7 @@ func saveAndRestoreSeams(t *testing.T) {
 	origGrpcGracefulStop := grpcGracefulStop
 	origGrpcForceStop := grpcForceStop
 	origNewSecretsMgr := newSecretsMgr
+	origNewCatalogKV := newCatalogKV
 	origNewCatalogStore := newCatalogStore
 	origNewCatalogMgr := newCatalogMgr
 	origNewBackendMgr := newBackendMgr
@@ -104,6 +105,7 @@ func saveAndRestoreSeams(t *testing.T) {
 		grpcGracefulStop = origGrpcGracefulStop
 		grpcForceStop = origGrpcForceStop
 		newSecretsMgr = origNewSecretsMgr
+		newCatalogKV = origNewCatalogKV
 		newCatalogStore = origNewCatalogStore
 		newCatalogMgr = origNewCatalogMgr
 		newBackendMgr = origNewBackendMgr

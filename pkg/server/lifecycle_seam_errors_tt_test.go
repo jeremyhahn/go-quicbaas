@@ -137,7 +137,10 @@ func TestServer_StartCatalogManager_TT_StorageFailurePropagates(t *testing.T) {
 	srv.config.ObjectStorage.Enabled = true
 
 	sentinel := errors.New("catalog storage open failed")
-	newCatalogStore = func(_ *catalog.PebbleStorageConfig) (catalog.PebbleStorage, error) {
+	// The server has no qrdb node: give the catalog a memory KV so the store
+	// seam is the step that fails.
+	useMemoryCatalogKV(t)
+	newCatalogStore = func(_ catalog.KV) (catalog.Storage, error) {
 		return nil, sentinel
 	}
 
@@ -145,6 +148,21 @@ func TestServer_StartCatalogManager_TT_StorageFailurePropagates(t *testing.T) {
 	require.Error(t, err, "catalog storage construction failure must abort startCatalogManager")
 	assert.Contains(t, err.Error(), "catalog storage",
 		"the wrapped error must identify the failing catalog-storage step")
+	assert.Nil(t, srv.catalogManager, "no catalog manager may be left set on failure")
+}
+
+// TestServer_StartCatalogManager_TT_NoQRDBNodeFails verifies that object
+// storage on a server without a qrdb node fails closed: the catalog is stored
+// in go-qrdb, and there is no fallback store.
+func TestServer_StartCatalogManager_TT_NoQRDBNodeFails(t *testing.T) {
+	saveAndRestoreSeams(t)
+	srv := withTempServer(t)
+	srv.config.ObjectStorage.Enabled = true
+	require.Nil(t, srv.getQRDBNode(), "the temp server must have no qrdb node")
+
+	err := srv.startCatalogManager()
+	require.Error(t, err, "a catalog without a qrdb node must not start")
+	assert.ErrorIs(t, err, ErrCatalogNeedsQRDB)
 	assert.Nil(t, srv.catalogManager, "no catalog manager may be left set on failure")
 }
 
@@ -157,7 +175,7 @@ func TestServer_Initialize_TT_CatalogFailurePropagates(t *testing.T) {
 	srv.config.ObjectStorage.Enabled = true
 
 	sentinel := errors.New("catalog storage open failed")
-	newCatalogStore = func(_ *catalog.PebbleStorageConfig) (catalog.PebbleStorage, error) {
+	newCatalogStore = func(_ catalog.KV) (catalog.Storage, error) {
 		return nil, sentinel
 	}
 	t.Cleanup(func() {
@@ -364,6 +382,7 @@ func TestServer_Shutdown_TT_DataPlaneBarrierCloseFailure(t *testing.T) {
 // runs.
 func TestServer_StartCatalogManager_TT_ManagerFailure(t *testing.T) {
 	saveAndRestoreSeams(t)
+	useMemoryCatalogKV(t)
 	srv := withTempServer(t)
 	srv.config.ObjectStorage.Enabled = true
 
@@ -380,6 +399,7 @@ func TestServer_StartCatalogManager_TT_ManagerFailure(t *testing.T) {
 // backend-manager construction failure so the newBackendMgr error branch runs.
 func TestServer_StartCatalogManager_TT_BackendManagerFailure(t *testing.T) {
 	saveAndRestoreSeams(t)
+	useMemoryCatalogKV(t)
 	srv := withTempServer(t)
 	srv.config.ObjectStorage.Enabled = true
 
@@ -397,6 +417,7 @@ func TestServer_StartCatalogManager_TT_BackendManagerFailure(t *testing.T) {
 // but startCatalogManager continues (the failure is non-fatal).
 func TestServer_StartCatalogManager_TT_BadBackendRegistration(t *testing.T) {
 	saveAndRestoreSeams(t)
+	useMemoryCatalogKV(t)
 	srv := withTempServer(t)
 	srv.config.ObjectStorage.Enabled = true
 	srv.config.ObjectStorage.Backends = map[string]*config.StorageBackendConfig{

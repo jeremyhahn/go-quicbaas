@@ -1,6 +1,6 @@
 # Object Storage — Architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-11-24
 > Design, component boundaries and data flow. Feature folder: `docs/object-storage/`.
 
 ## Overview
@@ -51,6 +51,20 @@ QuicBaaS Object Storage provides a distributed object storage layer built on the
       │ Backend  │         │ Backend  │         │ Backend  │
       └──────────┘         └──────────┘         └──────────┘
 ```
+
+## Layer Ownership
+
+The service layer authorizes and scopes every request, the catalog records where each object lives, and go-objstore backends hold the bytes; go-quicbaas links go-objstore directly today (see [engineering.md, ObjStoreAdapter](engineering.md#objstoreadapter) for the open SDK re-export).
+
+| Operation | Service layer (`pkg/service`) | Catalog (`pkg/catalog`, go-qrdb) | Backend (go-objstore) |
+|---|---|---|---|
+| Put, get, head, delete, copy, batch put/get/delete | Validates the request; `objectStorageTenant` binds the caller's tenant; `osTenantScopedKey` scopes the key; put checks quotas | `CatalogManager` holds the entry (locations, checksum, tags) under the tenant-scoped key, stored in go-qrdb under `__sys:catalog/` | `common.Storage` from `BackendManager.GetBackend` reads, writes and deletes the bytes |
+| List (by prefix, tag, tenant) | `objectStorageTenant`; `osTenantListPrefix` scopes a prefix list | `ListByPrefix`, `ListByTag`, `ListByTenant` | Not called |
+| Replicate, migrate, archive, restore, verify | `objectStorageTenant`; resolves policy through `config.ObjectStoreConfigResolver` | Records locations and the primary store (`AddLocation`, `SetPrimaryStore`, `RemoveLocation`, `Update`) | Source and target backends copy, read or delete the bytes |
+| Object policy (set, get); tenant usage and quotas | `objectStorageTenant`; quotas are kept by `config.ObjectStoreConfigResolver` | Policy lives on the entry; `GetTenantUsage` counts a tenant's objects | Not called |
+| Backend admin (create, update, delete, set status, list, health) | Platform resources, not tenant-scoped; create, update, delete and set status check `prepareTenantContext`; list and health carry no tenant check | `BackendManager` registers backends and runs health checks | One `common.Storage` per registered backend |
+| Garbage collection and compaction | GC: `prepareTenantContext`, system scope only, dry runs only (`NewGarbageCollectionDeleteUnsupportedError` otherwise); compaction is refused (`NewCompactionUnsupportedError`) | GC compares backend objects with the catalog's references | GC lists each backend's objects; compaction: `common.Storage` has no compaction verb |
+| Buckets, multipart, pre-signed URLs, rename | Not yet: waits on go-objstore #89/#90 and the go-qrdb object-storage seam | Not yet | Not yet |
 
 ## Catalog Manager
 
@@ -428,15 +442,17 @@ must outlive the workers that scan it:
 2. `BackendManager.Close()` — closes the storage backends.
 3. `CatalogManager.Close()` — closes the catalog store.
 
+The catalog lives in go-qrdb, under the `__sys:catalog/` namespace of the
+server's qrdb node, so `Server.Shutdown` stops the catalog before the node.
 `Server.Shutdown` performs exactly this sequence. Embedders that drive the
 managers directly must keep it: closing the catalog first leaves a scan
-iterating a closed PebbleDB.
+reading a closed catalog store.
 
-The store defends the ordering rather than trusting it. `pebbleStorage` holds
+The store defends the ordering rather than trusting it. `kvStorage` holds
 every read and write open against its close, so a `Close()` that arrives while
 a scan is in flight waits for that scan, and any operation arriving afterwards
-receives a `catalog closed` error (`IsCatalogClosed`) instead of panicking
-inside PebbleDB. Workers treat that error as an ordinary end-of-life condition
+receives a `catalog closed` error (`IsCatalogClosed`) instead of failing
+inside the KV. Workers treat that error as an ordinary end-of-life condition
 and return.
 
 ## Multi-Tenancy
@@ -447,7 +463,7 @@ and return.
 ┌───────────────────────────────────────────────────────────┐
 │                   Tenant: tenant-acme                     │
 ├───────────────────────────────────────────────────────────┤
-│  Namespace: tenant-acme:*                                 │
+│  Namespace: tenant/tenant-acme/*                          │
 │  Primary Backend: s3-primary                              │
 │  Allowed Backends: [s3-primary, gcs-west]                 │
 │  Encryption Key: dek:tenant/acme/objects                  │
@@ -460,6 +476,22 @@ and return.
 │      └── Primary: s3-archive                              │
 └───────────────────────────────────────────────────────────┘
 ```
+
+#### Key Namespace
+
+An object key has the form `{namespace}:{path}`. The catalog stores a tenant's
+key as `tenant/{tenant}/{namespace}:{path}`: it accepts `tenant/{tenant}/{namespace}`
+as a namespace and no other slash in a namespace. The object's backend
+reference is derived from that stored key as well. A tenant always uses its own
+keys. Two tenants can each store `docs:report.pdf` without overwriting each
+other. A tenant asking for a key that only another tenant holds gets not found,
+and its listings contain only its own objects. Keys in responses come back as
+the tenant wrote them, without the prefix.
+
+The system scope uses keys exactly as given. It therefore sees the stored form,
+for example `tenant/tenant-acme/docs:report.pdf`, and can list one tenant's
+namespace with the prefix `tenant/tenant-acme/`. A system-scope caller naming a
+tenant in the request is refused. The scope never lifts across tenants.
 
 ### Quota Enforcement
 
@@ -564,14 +596,15 @@ quicbaas_objstore_tenant_object_count
 
 ## Tenant Isolation
 
-The object storage service validates tenant context on all admin operations using `iam.TenantFromContext(ctx)`.
+The object storage service checks tenant context on its admin operations with `prepareTenantContext` (`pkg/service`), which reads the tenant through `tenantctx.FromContext`. It refuses a request with no tenant bound, treats the system tenant as the platform scope, and validates any other tenant ID. Object verbs use `objectStorageTenant`, which reads the tenant through `tenantctx.Target` and treats the system tenant the same way.
 
 ### Validated Operations
 
-- **CreateBackend**: Tenant ID validated before backend registration
-- **DeleteBackend**: Tenant ID validated before backend removal
-- **ListBackends**: Tenant ID validated before returning backend list
-- **GetBackendHealth/CheckAllHealth**: Tenant ID validated before health checks
+- **CreateBackend**: Tenant context checked before backend registration
+- **UpdateBackend / SetBackendStatus**: Tenant context checked before the backend is re-registered
+- **DeleteBackend**: Tenant context checked before backend removal
+- **GetStorageStats, RunGarbageCollection, GetGarbageCollectionProgress, RepairObject, CompactBackend**: Tenant context checked first; garbage collection also refuses any caller but the system tenant
+- **ListBackends / GetBackendHealth**: No tenant check in the service layer at present
 
 Backends are infrastructure-level resources shared across the platform. Tenant validation on these operations ensures the request originates from a well-formed, authenticated context rather than scoping backends per tenant.
 
@@ -579,9 +612,9 @@ Backends are infrastructure-level resources shared across the platform. Tenant v
 
 Validation occurs at the service layer before requests reach the `BackendManager` or `CatalogManager`. Invalid or malformed tenant IDs are rejected with a typed `ErrTenantAccessDenied` error.
 
-### Single-Tenant Mode
+### Requests Without a Tenant
 
-When the tenant ID from context is empty, the service operates in single-tenant mode. No tenant validation is applied to admin operations, preserving backward compatibility with existing deployments.
+There is no single-tenant mode. A request with no tenant bound is refused: `tenantctx.FromContext` returns a `MissingTenantError` on every verb listed above that checks tenant context, and on every object verb. A request bound to the system tenant (`tenantctx.SystemTenantID`) acts on the platform scope.
 
 
 ---

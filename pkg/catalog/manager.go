@@ -169,8 +169,8 @@ type VerifyTask struct {
 
 // ManagerConfig configures the catalog manager.
 type ManagerConfig struct {
-	// Storage is the PebbleDB storage backend.
-	Storage PebbleStorage
+	// Storage is the catalog's storage backend.
+	Storage Storage
 
 	// Logger is the logger instance.
 	Logger interfaces.Logger
@@ -189,7 +189,7 @@ func (c *ManagerConfig) Validate() error {
 
 // manager implements CatalogManager.
 type manager struct {
-	storage PebbleStorage
+	storage Storage
 	logger  interfaces.Logger
 	closed  atomic.Bool
 	mu      sync.RWMutex
@@ -503,7 +503,7 @@ func (m *manager) ListByStore(ctx context.Context, store string, opts *ListOptio
 		return nil, ErrStoreNameEmpty
 	}
 
-	return m.storage.GetPebbleIndexManager().ListByStore(ctx, store, opts)
+	return m.storage.Indexes().ListByStore(ctx, store, opts)
 }
 
 // ListByTenant returns keys for entries owned by a tenant.
@@ -515,7 +515,7 @@ func (m *manager) ListByTenant(ctx context.Context, tenant string, opts *ListOpt
 		return nil, ErrTenantEmpty
 	}
 
-	return m.storage.GetPebbleIndexManager().ListByTenant(ctx, tenant, opts)
+	return m.storage.Indexes().ListByTenant(ctx, tenant, opts)
 }
 
 // ListByPrefix returns keys matching a prefix.
@@ -534,8 +534,18 @@ func (m *manager) ListByPrefix(ctx context.Context, prefix string, opts *ListOpt
 		Total: -1,
 	}
 
+	cursor := ""
+	if opts != nil {
+		cursor = opts.Cursor
+	}
+
+	// IterateKeys yields keys in ascending key order, so a page resumes after
+	// the cursor by skipping every key up to and including it.
 	count := 0
 	err := m.storage.IterateKeys(ctx, prefix, func(key string) bool {
+		if cursor != "" && key <= cursor {
+			return true
+		}
 		if count < limit {
 			result.Keys = append(result.Keys, key)
 		} else {
@@ -547,6 +557,10 @@ func (m *manager) ListByPrefix(ctx context.Context, prefix string, opts *ListOpt
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if result.HasMore && len(result.Keys) > 0 {
+		result.NextCursor = result.Keys[len(result.Keys)-1]
 	}
 
 	return result, nil
@@ -561,7 +575,7 @@ func (m *manager) ListByStatus(ctx context.Context, status EntryStatus, opts *Li
 		return nil, ErrInvalidStatus
 	}
 
-	return m.storage.GetPebbleIndexManager().ListByStatus(ctx, status, opts)
+	return m.storage.Indexes().ListByStatus(ctx, status, opts)
 }
 
 // ListByTag returns keys for entries with a specific tag.
@@ -573,7 +587,7 @@ func (m *manager) ListByTag(ctx context.Context, tag, value string, opts *ListOp
 		return nil, ErrTagEmpty
 	}
 
-	return m.storage.GetPebbleIndexManager().ListByTag(ctx, tag, value, opts)
+	return m.storage.Indexes().ListByTag(ctx, tag, value, opts)
 }
 
 // ListByEncryptionKey returns keys for entries encrypted with a specific key.
@@ -585,7 +599,7 @@ func (m *manager) ListByEncryptionKey(ctx context.Context, keyID string, opts *L
 		return nil, ErrKeyIDEmpty
 	}
 
-	return m.storage.GetPebbleIndexManager().ListByEncryptionKey(ctx, keyID, opts)
+	return m.storage.Indexes().ListByEncryptionKey(ctx, keyID, opts)
 }
 
 // Search performs a complex search across catalog entries.
@@ -885,7 +899,7 @@ func (m *manager) GetTenantUsage(ctx context.Context, tenant string) (*TenantUsa
 	}
 
 	// Get all entries for tenant
-	result, err := m.storage.GetPebbleIndexManager().ListByTenant(ctx, tenant, nil)
+	result, err := m.storage.Indexes().ListByTenant(ctx, tenant, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -927,7 +941,7 @@ func (m *manager) GetStoreUsage(ctx context.Context, store string) (*StoreUsage,
 	}
 
 	// Get all entries in store
-	result, err := m.storage.GetPebbleIndexManager().ListByStore(ctx, store, nil)
+	result, err := m.storage.Indexes().ListByStore(ctx, store, nil)
 	if err != nil {
 		return nil, err
 	}

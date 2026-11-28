@@ -87,6 +87,12 @@ var (
 	// ErrServerCertPath is returned when a configured server TLS cert or key
 	// path is unset or absent.
 	ErrServerCertPath = errors.New("server: configured TLS cert/key path refused")
+
+	// ErrCatalogNeedsQRDB indicates object storage was started on a server
+	// with no live qrdb node. The object catalog is stored in go-qrdb, so the
+	// catalog fails closed rather than falling back to a store that is not
+	// durable.
+	ErrCatalogNeedsQRDB = errors.New("object storage catalog requires a qrdb node")
 )
 
 // ServerCauseError wraps a server operation error with an underlying cause.

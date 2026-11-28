@@ -15,6 +15,8 @@ package objectstorage
 
 import (
 	"context"
+	stderrors "errors"
+	"io"
 	"sync/atomic"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -921,6 +923,9 @@ type streamGetReader struct {
 	bytesRead int64
 	totalSize int64
 	closed    bool
+	// ended is set once the stream has delivered its last chunk or
+	// reported io.EOF; Read returns io.EOF after the buffer drains.
+	ended bool
 }
 
 // Read reads data from the stream.
@@ -937,8 +942,19 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 		return n, nil
 	}
 
+	if r.ended {
+		return 0, r.endOfStream()
+	}
+
 	// Receive next chunk from stream.
 	resp, err := r.stream.Recv()
+	if stderrors.Is(err, io.EOF) {
+		// A transport EOF ends the stream; the end of stream is checked
+		// against the advertised object size, so a truncated download is
+		// not reported as a complete one.
+		r.ended = true
+		return 0, r.endOfStream()
+	}
 	if err != nil {
 		return 0, errors.Wrap(err, errors.CodeConnection, "streamGetReader.Read", "failed to receive chunk")
 	}
@@ -952,14 +968,21 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 		return 0, errors.NewInternal("streamGetReader.Read", "invalid chunk type")
 	}
 
-	// Update metadata from first chunk if not set.
-	if r.metadata == nil && chunk.TotalSize > 0 {
+	// A chunk may advertise the object size in the first or the last chunk;
+	// record it whenever it is present, also after ReadMetadata.
+	if chunk.TotalSize > 0 {
 		r.totalSize = chunk.TotalSize
+		if r.metadata != nil && r.metadata.Size == 0 {
+			r.metadata.Size = chunk.TotalSize
+		}
 	}
 
-	// If this is the last chunk with no data, signal EOF.
-	if chunk.IsLast && len(chunk.Data) == 0 {
-		return 0, errors.NewInternal("streamGetReader.Read", "end of stream")
+	// The last chunk ends the stream; its data, if any, is still returned.
+	if chunk.IsLast {
+		r.ended = true
+		if len(chunk.Data) == 0 {
+			return 0, r.endOfStream()
+		}
 	}
 
 	// Copy chunk data to output buffer.
@@ -972,6 +995,16 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 
 	atomic.AddInt64(&r.bytesRead, int64(n))
 	return n, nil
+}
+
+// endOfStream is the result of a Read at the end of the stream: io.EOF
+// once the advertised object size has been delivered, io.ErrUnexpectedEOF
+// for a stream that ended short of it.
+func (r *streamGetReader) endOfStream() error {
+	if r.totalSize > 0 && atomic.LoadInt64(&r.bytesRead) < r.totalSize {
+		return io.ErrUnexpectedEOF
+	}
+	return io.EOF
 }
 
 // Close closes the stream.
@@ -1010,11 +1043,13 @@ func (r *streamGetReader) ReadMetadata() (*ObjectMetadata, error) {
 	}
 
 	// Store metadata.
+	if chunk.TotalSize > 0 {
+		r.totalSize = chunk.TotalSize
+	}
 	r.metadata = &ObjectMetadata{
 		Key:  r.req.Key,
-		Size: chunk.TotalSize,
+		Size: r.totalSize,
 	}
-	r.totalSize = chunk.TotalSize
 
 	// Buffer the data from first chunk.
 	if len(chunk.Data) > 0 {

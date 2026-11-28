@@ -17,32 +17,22 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/stretchr/testify/require"
 )
 
 // benchmarkSetup creates a temporary PebbleDB storage for benchmarks.
-func benchmarkSetup(b *testing.B) (PebbleStorage, func()) {
+func benchmarkSetup(b *testing.B) (Storage, func()) {
 	b.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "catalog-bench-*")
-	require.NoError(b, err)
-
-	storage, err := NewPebbleStorage(&PebbleStorageConfig{
-		Path:       filepath.Join(tmpDir, "catalog"),
-		SyncWrites: false, // Disable sync for benchmark performance
-	})
+	storage, err := NewKVStorage(NewMemoryKV())
 	require.NoError(b, err)
 
 	cleanup := func() {
 		storage.Close()
-		os.RemoveAll(tmpDir)
 	}
 	b.Cleanup(cleanup)
 
@@ -290,12 +280,7 @@ func BenchmarkCatalogManager_Delete(b *testing.B) {
 
 // BenchmarkIndexManager_WriteIndexes benchmarks index write performance.
 func BenchmarkIndexManager_WriteIndexes(b *testing.B) {
-	tmpDir, err := os.MkdirTemp("", "index-bench-*")
-	require.NoError(b, err)
-	defer os.RemoveAll(tmpDir)
-
-	db, err := pebble.Open(filepath.Join(tmpDir, "index"), &pebble.Options{})
-	require.NoError(b, err)
+	db := NewMemoryKV()
 	defer db.Close()
 
 	indexMgr, err := NewIndexManager(db)
@@ -306,16 +291,13 @@ func BenchmarkIndexManager_WriteIndexes(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		entry := createBenchEntry(fmt.Sprintf("bench:index/entry-%d", i), 1024)
-		batch := db.NewBatch()
+		batch := &KVBatch{}
 		if err := indexMgr.WriteIndexes(batch, entry); err != nil {
-			batch.Close()
 			b.Fatal(err)
 		}
-		if err := batch.Commit(pebble.NoSync); err != nil {
-			batch.Close()
+		if err := db.Apply(context.Background(), batch); err != nil {
 			b.Fatal(err)
 		}
-		batch.Close()
 	}
 }
 
@@ -339,7 +321,7 @@ func BenchmarkIndexManager_ListByStore(b *testing.B) {
 		}
 	}
 
-	indexMgr := storage.GetPebbleIndexManager()
+	indexMgr := storage.Indexes()
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -373,7 +355,7 @@ func BenchmarkIndexManager_ListByTenant(b *testing.B) {
 		}
 	}
 
-	indexMgr := storage.GetPebbleIndexManager()
+	indexMgr := storage.Indexes()
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -407,7 +389,7 @@ func BenchmarkIndexManager_ListByStatus(b *testing.B) {
 		}
 	}
 
-	indexMgr := storage.GetPebbleIndexManager()
+	indexMgr := storage.Indexes()
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -441,7 +423,7 @@ func BenchmarkIndexManager_ListByTag(b *testing.B) {
 		}
 	}
 
-	indexMgr := storage.GetPebbleIndexManager()
+	indexMgr := storage.Indexes()
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -473,7 +455,7 @@ func BenchmarkIndexManager_CountByStore(b *testing.B) {
 		}
 	}
 
-	indexMgr := storage.GetPebbleIndexManager()
+	indexMgr := storage.Indexes()
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -908,7 +890,7 @@ func BenchmarkIndexManager_Scalability(b *testing.B) {
 				}
 			}
 
-			indexMgr := storage.GetPebbleIndexManager()
+			indexMgr := storage.Indexes()
 
 			b.ResetTimer()
 			b.ReportAllocs()

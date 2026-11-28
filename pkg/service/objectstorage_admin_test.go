@@ -176,6 +176,8 @@ type adminMockCatalogManager struct {
 
 	getFn           func(ctx context.Context, key string) (*catalog.CatalogEntry, error)
 	getStoreUsageFn func(ctx context.Context, store string) (*catalog.StoreUsage, error)
+	listByStoreFn   func(ctx context.Context, store string, opts *catalog.ListOptions) (*catalog.ListResult, error)
+	listByPrefixFn  func(ctx context.Context, prefix string, opts *catalog.ListOptions) (*catalog.ListResult, error)
 }
 
 func newAdminMockCatalogManager() *adminMockCatalogManager {
@@ -249,6 +251,9 @@ func (m *adminMockCatalogManager) UpdateLocationStatus(ctx context.Context, key,
 }
 
 func (m *adminMockCatalogManager) ListByStore(ctx context.Context, store string, opts *catalog.ListOptions) (*catalog.ListResult, error) {
+	if m.listByStoreFn != nil {
+		return m.listByStoreFn(ctx, store, opts)
+	}
 	return &catalog.ListResult{Keys: []string{}}, nil
 }
 
@@ -257,6 +262,9 @@ func (m *adminMockCatalogManager) ListByTenant(ctx context.Context, tenant strin
 }
 
 func (m *adminMockCatalogManager) ListByPrefix(ctx context.Context, prefix string, opts *catalog.ListOptions) (*catalog.ListResult, error) {
+	if m.listByPrefixFn != nil {
+		return m.listByPrefixFn(ctx, prefix, opts)
+	}
 	return &catalog.ListResult{Keys: []string{}}, nil
 }
 
@@ -935,7 +943,7 @@ func TestRunGarbageCollection_Success(t *testing.T) {
 
 	req := &RunGarbageCollectionRequest{
 		Backends:   []string{"test-backend"},
-		DryRun:     false,
+		DryRun:     true,
 		Aggressive: true,
 	}
 
@@ -1002,6 +1010,7 @@ func TestGetGarbageCollectionProgress_Success(t *testing.T) {
 	// Start a GC operation
 	gcReq := &RunGarbageCollectionRequest{
 		Backends: []string{"test-backend"},
+		DryRun:   true,
 	}
 
 	gcResp, err := svc.RunGarbageCollection(ctx, gcReq)
@@ -1244,12 +1253,12 @@ func TestCompactBackend_Success(t *testing.T) {
 		Aggressive: false,
 	}
 
+	// No backend has a compaction verb: the request is refused, not faked.
 	resp, err := svc.CompactBackend(ctx, req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Equal(t, "test-backend", resp.Name)
-	assert.NotEmpty(t, resp.OperationID)
-	assert.NotZero(t, resp.StartedAt)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrUnimplemented, qbErr.Code)
+	assert.Nil(t, resp)
 }
 
 func TestCompactBackend_Aggressive(t *testing.T) {
@@ -1264,9 +1273,10 @@ func TestCompactBackend_Aggressive(t *testing.T) {
 	}
 
 	resp, err := svc.CompactBackend(ctx, req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.NotEmpty(t, resp.OperationID)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrUnimplemented, qbErr.Code)
+	assert.Nil(t, resp)
 }
 
 func TestCompactBackend_ValidationError_NilRequest(t *testing.T) {

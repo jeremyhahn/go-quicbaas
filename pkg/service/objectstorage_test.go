@@ -518,6 +518,20 @@ type objstoreMockStorage struct {
 	getWithContextFn    func(ctx context.Context, key string) (io.ReadCloser, error)
 	deleteWithContextFn func(ctx context.Context, key string) error
 	listWithContextFn   func(ctx context.Context, prefix string) ([]string, error)
+
+	// lastModified is what GetMetadata reports as an object's LastModified
+	// (zero when unset); set it with setLastModified.
+	lastModified map[string]time.Time
+}
+
+// setLastModified sets the LastModified that GetMetadata reports for key.
+func (m *objstoreMockStorage) setLastModified(key string, at time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.lastModified == nil {
+		m.lastModified = make(map[string]time.Time)
+	}
+	m.lastModified[key] = at
 }
 
 func newObjstoreMockStorage() *objstoreMockStorage {
@@ -583,7 +597,7 @@ func (m *objstoreMockStorage) GetMetadata(ctx context.Context, key string) (*com
 	if !ok {
 		return nil, errors.New("not found")
 	}
-	return &common.Metadata{Size: int64(len(data))}, nil
+	return &common.Metadata{Size: int64(len(data)), LastModified: m.lastModified[key]}, nil
 }
 
 // UpdateMetadata implements common.Storage

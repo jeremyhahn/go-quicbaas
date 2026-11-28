@@ -16,20 +16,18 @@ package catalog
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// newRetentionTestCatalog builds a real PebbleDB-backed catalog manager seeded
+// newRetentionTestCatalog builds a real catalog manager over an in-memory KV, seeded
 // with active entries, so a retention scan has something to list and read.
 func newRetentionTestCatalog(t *testing.T, entries int) CatalogManager {
 	t.Helper()
 
-	dbPath := filepath.Join(t.TempDir(), "retention-shutdown")
-	storage, err := NewPebbleStorage(&PebbleStorageConfig{Path: dbPath, SyncWrites: false})
+	storage, err := NewKVStorage(NewMemoryKV())
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}

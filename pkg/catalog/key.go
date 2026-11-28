@@ -33,6 +33,13 @@ const (
 
 	// MaxPathLength is the maximum length of a path (MaxKeyLength - MaxNamespaceLength - separator).
 	MaxPathLength = 895
+
+	// TenantNamespacePrefix starts a tenant-scoped namespace: a tenant's
+	// objects live under the namespace tenant/{tenant}/{namespace}.
+	TenantNamespacePrefix = "tenant/"
+
+	// scopedNamespaceSeparator separates the segments of a tenant-scoped namespace.
+	scopedNamespaceSeparator = "/"
 )
 
 // Storage key prefixes for PebbleDB.
@@ -63,8 +70,10 @@ const (
 )
 
 // ObjectKey represents a parsed object storage key.
-// Format: {namespace}:{path}
-// Example: "tenant-acme:documents/report.pdf".
+// Format: {namespace}:{path}, where namespace is a plain namespace or the
+// tenant-scoped form tenant/{tenant}/{namespace}.
+// Examples: "backups:daily/2024-01-15.tar.gz",
+// "tenant/tenant-acme/docs:report.pdf".
 type ObjectKey struct {
 	// Namespace identifies the logical grouping (e.g., "backups", "tenant-acme").
 	Namespace string
@@ -138,7 +147,9 @@ func (k *ObjectKey) Validate() error {
 		return NewPathEmptyError()
 	}
 
-	if len(k.Namespace) > MaxNamespaceLength {
+	// A plain namespace is limited as a whole; each segment of a
+	// tenant-scoped namespace is limited in IsValidScopedNamespace.
+	if !strings.HasPrefix(k.Namespace, TenantNamespacePrefix) && len(k.Namespace) > MaxNamespaceLength {
 		return NewNamespaceInvalidError(k.Namespace, "exceeds maximum length of 128 characters")
 	}
 
@@ -151,8 +162,8 @@ func (k *ObjectKey) Validate() error {
 		return NewKeyTooLongError(totalLen, MaxKeyLength)
 	}
 
-	if !IsValidNamespace(k.Namespace) {
-		return NewNamespaceInvalidError(k.Namespace, "must be alphanumeric with hyphens/underscores, starting with letter or digit")
+	if !IsValidScopedNamespace(k.Namespace) {
+		return NewNamespaceInvalidError(k.Namespace, "must be alphanumeric with hyphens/underscores, starting with letter or digit, or tenant/{tenant}/{namespace}")
 	}
 
 	if !IsValidPath(k.Path) {
@@ -184,6 +195,30 @@ func IsValidNamespace(ns string) bool {
 		}
 	}
 
+	return true
+}
+
+// IsValidScopedNamespace reports whether ns is a namespace an object key may
+// carry: a plain namespace (IsValidNamespace), or the tenant-scoped form
+// tenant/{tenant}/{namespace} where both segments are plain namespaces of at
+// most MaxNamespaceLength characters. No other slash is accepted.
+func IsValidScopedNamespace(ns string) bool {
+	if IsValidNamespace(ns) {
+		return true
+	}
+	rest, ok := strings.CutPrefix(ns, TenantNamespacePrefix)
+	if !ok {
+		return false
+	}
+	parts := strings.Split(rest, scopedNamespaceSeparator)
+	if len(parts) != 2 {
+		return false
+	}
+	for _, part := range parts {
+		if len(part) > MaxNamespaceLength || !IsValidNamespace(part) {
+			return false
+		}
+	}
 	return true
 }
 

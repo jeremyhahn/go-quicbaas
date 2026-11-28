@@ -29,6 +29,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/netport"
@@ -229,6 +230,22 @@ func testRunsInParallel(t *testing.T) bool {
 
 // withTempServer creates a server with test configuration and temp directories.
 // It automatically cleans up on test completion.
+// useMemoryCatalogKV makes startCatalogManager build its catalog on a fresh
+// in-memory KV, for tests that start object storage on a server with no qrdb
+// node. The previous seam is restored when the test ends.
+func useMemoryCatalogKV(t *testing.T) {
+	t.Helper()
+	seamMu.Lock()
+	orig := newCatalogKV
+	newCatalogKV = func(_ *Server) (catalog.KV, error) { return catalog.NewMemoryKV(), nil }
+	seamMu.Unlock()
+	t.Cleanup(func() {
+		seamMu.Lock()
+		newCatalogKV = orig
+		seamMu.Unlock()
+	})
+}
+
 func withTempServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := createTestConfig(t)

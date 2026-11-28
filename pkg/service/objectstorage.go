@@ -286,7 +286,10 @@ func (s *objectStorageService) PutObject(ctx context.Context, req *PutObjectRequ
 	}
 
 	// Generate object reference for backend storage
-	objectRef := s.generateObjectRef(req.Key)
+	// The catalog key and the object ref live in the caller's tenant
+	// namespace; the response carries the caller's unscoped key.
+	catalogKey := osTenantScopedKey(req.TenantID, req.Key)
+	objectRef := s.generateObjectRef(catalogKey)
 
 	// Write to backend
 	if err := backend.PutWithContext(ctx, objectRef, bytes.NewReader(req.Value)); err != nil {
@@ -301,7 +304,7 @@ func (s *objectStorageService) PutObject(ctx context.Context, req *PutObjectRequ
 	now := time.Now().UnixNano()
 
 	// Create catalog entry
-	entry := catalog.NewCatalogEntry(req.Key, int64(len(req.Value)), checksum[:])
+	entry := catalog.NewCatalogEntry(catalogKey, int64(len(req.Value)), checksum[:])
 	entry.ObjectID = objectID
 	entry.ContentType = req.ContentType
 	entry.TenantID = req.TenantID
@@ -351,7 +354,7 @@ func (s *objectStorageService) PutObject(ctx context.Context, req *PutObjectRequ
 	// Enqueue async replication if configured
 	if entry.ReplicationPolicy != nil && entry.ReplicationPolicy.Enabled {
 		if entry.ReplicationPolicy.Mode == "async" && len(entry.ReplicationPolicy.TargetStores) > 0 {
-			if enqErr := s.catalogMgr.EnqueueReplication(ctx, req.Key, entry.ReplicationPolicy.TargetStores, entry.ReplicationPolicy.Priority); enqErr != nil {
+			if enqErr := s.catalogMgr.EnqueueReplication(ctx, osTenantScopedKey(req.TenantID, req.Key), entry.ReplicationPolicy.TargetStores, entry.ReplicationPolicy.Priority); enqErr != nil {
 				s.logger.WithError(enqErr).WithField("key", req.Key).Warn("failed to enqueue async replication")
 			}
 		}
@@ -416,7 +419,7 @@ func (s *objectStorageService) GetObject(ctx context.Context, req *GetObjectRequ
 	defer s.mu.RUnlock()
 
 	// Get catalog entry
-	entry, err := s.catalogMgr.Get(ctx, req.Key)
+	entry, err := s.catalogMgr.Get(ctx, osTenantScopedKey(req.TenantID, req.Key))
 	if err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("get_object", "not_found").Inc()
@@ -425,7 +428,7 @@ func (s *objectStorageService) GetObject(ctx context.Context, req *GetObjectRequ
 	}
 
 	// Validate tenant access if specified
-	if req.TenantID != "" && entry.TenantID != "" && entry.TenantID != req.TenantID {
+	if req.TenantID != "" && entry.TenantID != req.TenantID {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("get_object", "forbidden").Inc()
 		}
@@ -481,7 +484,7 @@ func (s *objectStorageService) GetObject(ctx context.Context, req *GetObjectRequ
 
 	// Update access time (async)
 	go func() {
-		if accessErr := s.catalogMgr.UpdateAccessTime(context.WithoutCancel(ctx), req.Key); accessErr != nil {
+		if accessErr := s.catalogMgr.UpdateAccessTime(context.WithoutCancel(ctx), osTenantScopedKey(req.TenantID, req.Key)); accessErr != nil {
 			s.logger.WithError(accessErr).WithField("key", req.Key).Warn("failed to update access time")
 		}
 	}()
@@ -497,7 +500,7 @@ func (s *objectStorageService) GetObject(ctx context.Context, req *GetObjectRequ
 	}
 
 	resp := &GetObjectResponse{
-		Key:         entry.Key,
+		Key:         osTenantStripKey(req.TenantID, entry.Key),
 		Value:       buf.Bytes(),
 		ContentType: entry.ContentType,
 		Size:        entry.Size,
@@ -547,7 +550,7 @@ func (s *objectStorageService) DeleteObject(ctx context.Context, req *DeleteObje
 	defer s.mu.Unlock()
 
 	// Get catalog entry
-	entry, err := s.catalogMgr.Get(ctx, req.Key)
+	entry, err := s.catalogMgr.Get(ctx, osTenantScopedKey(req.TenantID, req.Key))
 	if err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("delete_object", "not_found").Inc()
@@ -556,7 +559,7 @@ func (s *objectStorageService) DeleteObject(ctx context.Context, req *DeleteObje
 	}
 
 	// Validate tenant access if specified
-	if req.TenantID != "" && entry.TenantID != "" && entry.TenantID != req.TenantID {
+	if req.TenantID != "" && entry.TenantID != req.TenantID {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("delete_object", "forbidden").Inc()
 		}
@@ -588,7 +591,7 @@ func (s *objectStorageService) DeleteObject(ctx context.Context, req *DeleteObje
 	}
 
 	// Delete catalog entry
-	if err := s.catalogMgr.Delete(ctx, req.Key); err != nil {
+	if err := s.catalogMgr.Delete(ctx, osTenantScopedKey(req.TenantID, req.Key)); err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("delete_object", "catalog_error").Inc()
 		}
@@ -644,7 +647,7 @@ func (s *objectStorageService) HeadObject(ctx context.Context, req *HeadObjectRe
 	defer s.mu.RUnlock()
 
 	// Get catalog entry
-	entry, err := s.catalogMgr.Get(ctx, req.Key)
+	entry, err := s.catalogMgr.Get(ctx, osTenantScopedKey(req.TenantID, req.Key))
 	if err != nil {
 		// Return not found response instead of error for HEAD
 		return &HeadObjectResponse{
@@ -654,7 +657,7 @@ func (s *objectStorageService) HeadObject(ctx context.Context, req *HeadObjectRe
 	}
 
 	// Validate tenant access if specified
-	if req.TenantID != "" && entry.TenantID != "" && entry.TenantID != req.TenantID {
+	if req.TenantID != "" && entry.TenantID != req.TenantID {
 		return &HeadObjectResponse{
 			Key:    req.Key,
 			Exists: false,
@@ -662,7 +665,7 @@ func (s *objectStorageService) HeadObject(ctx context.Context, req *HeadObjectRe
 	}
 
 	return &HeadObjectResponse{
-		Key:          entry.Key,
+		Key:          osTenantStripKey(req.TenantID, entry.Key),
 		Exists:       true,
 		ContentType:  entry.ContentType,
 		Size:         entry.Size,
@@ -726,7 +729,8 @@ func (s *objectStorageService) ListObjects(ctx context.Context, req *ListObjects
 		Cursor: req.Cursor,
 	}
 
-	result, err := s.catalogMgr.ListByPrefix(ctx, req.Prefix, opts)
+	// A tenant lists only its own namespace; keys come back unscoped.
+	result, err := s.catalogMgr.ListByPrefix(ctx, osTenantListPrefix(req.TenantID)+req.Prefix, opts)
 	if err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("list_objects", "storage_error").Inc()
@@ -743,12 +747,12 @@ func (s *objectStorageService) ListObjects(ctx context.Context, req *ListObjects
 		}
 
 		// Filter by tenant if specified
-		if req.TenantID != "" && entry.TenantID != "" && entry.TenantID != req.TenantID {
+		if req.TenantID != "" && entry.TenantID != req.TenantID {
 			continue
 		}
 
 		summary := &ObjectSummary{
-			Key:         entry.Key,
+			Key:         osTenantStripKey(req.TenantID, entry.Key),
 			Size:        entry.Size,
 			ContentType: entry.ContentType,
 			Version:     entry.Version,
@@ -833,12 +837,12 @@ func (s *objectStorageService) ListByTag(ctx context.Context, req *ListByTagRequ
 		}
 
 		// Filter by tenant if specified
-		if req.TenantID != "" && entry.TenantID != "" && entry.TenantID != req.TenantID {
+		if req.TenantID != "" && entry.TenantID != req.TenantID {
 			continue
 		}
 
 		objects = append(objects, &ObjectSummary{
-			Key:         entry.Key,
+			Key:         osTenantStripKey(req.TenantID, entry.Key),
 			Size:        entry.Size,
 			ContentType: entry.ContentType,
 			Version:     entry.Version,
@@ -917,7 +921,7 @@ func (s *objectStorageService) ListByTenant(ctx context.Context, req *ListByTena
 		}
 
 		summary := &ObjectSummary{
-			Key:         entry.Key,
+			Key:         osTenantStripKey(req.TenantID, entry.Key),
 			Size:        entry.Size,
 			ContentType: entry.ContentType,
 			Version:     entry.Version,
@@ -984,7 +988,7 @@ func (s *objectStorageService) CopyObject(ctx context.Context, req *CopyObjectRe
 	}
 
 	// Check if destination exists
-	exists, _ := s.catalogMgr.Exists(ctx, req.DestinationKey)
+	exists, _ := s.catalogMgr.Exists(ctx, osTenantScopedKey(req.TenantID, req.DestinationKey))
 	if exists && !req.OverwriteExisting {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("copy_object", "already_exists").Inc()
@@ -1057,7 +1061,7 @@ func (s *objectStorageService) ReplicateObject(ctx context.Context, req *Replica
 	defer s.mu.Unlock()
 
 	// Get catalog entry
-	entry, err := s.catalogMgr.Get(ctx, req.Key)
+	entry, err := s.catalogMgr.Get(ctx, osTenantScopedKey(req.TenantID, req.Key))
 	if err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("replicate_object", "not_found").Inc()
@@ -1066,7 +1070,7 @@ func (s *objectStorageService) ReplicateObject(ctx context.Context, req *Replica
 	}
 
 	// Validate tenant access
-	if req.TenantID != "" && entry.TenantID != "" && entry.TenantID != req.TenantID {
+	if req.TenantID != "" && entry.TenantID != req.TenantID {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("replicate_object", "forbidden").Inc()
 		}
@@ -1128,7 +1132,7 @@ func (s *objectStorageService) ReplicateObject(ctx context.Context, req *Replica
 		}
 
 		// Generate new object ref for replica
-		replicaRef := s.generateObjectRef(req.Key + ":" + target)
+		replicaRef := s.generateObjectRef(osTenantScopedKey(req.TenantID, req.Key) + ":" + target)
 
 		// Write to target
 		if err := targetBackend.PutWithContext(ctx, replicaRef, bytes.NewReader(buf.Bytes())); err != nil {
@@ -1149,7 +1153,7 @@ func (s *objectStorageService) ReplicateObject(ctx context.Context, req *Replica
 			SyncedAt:   time.Now().UnixNano(),
 		}
 
-		if err := s.catalogMgr.AddLocation(ctx, req.Key, loc); err != nil {
+		if err := s.catalogMgr.AddLocation(ctx, osTenantScopedKey(req.TenantID, req.Key), loc); err != nil {
 			// Best effort - location added but catalog update failed
 			s.logger.WithFields(map[string]interface{}{
 				"key":    req.Key,
@@ -1204,12 +1208,20 @@ func (s *objectStorageService) MigrateObject(ctx context.Context, req *MigrateOb
 	}
 
 	// Get catalog entry
-	entry, err := s.catalogMgr.Get(ctx, req.Key)
+	entry, err := s.catalogMgr.Get(ctx, osTenantScopedKey(req.TenantID, req.Key))
 	if err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("migrate_object", "not_found").Inc()
 		}
 		return nil, api.NewNotFoundWithCauseError("objectstorage.MigrateObject", "object", err)
+	}
+
+	// Validate tenant access
+	if req.TenantID != "" && entry.TenantID != req.TenantID {
+		if s.metrics != nil && s.metrics.operationErrors != nil {
+			s.metrics.operationErrors.WithLabelValues("migrate_object", "forbidden").Inc()
+		}
+		return nil, api.NewCrossTenantAccessError("objectstorage.MigrateObject")
 	}
 
 	sourceBackend := entry.PrimaryStore.Store
@@ -1228,7 +1240,7 @@ func (s *objectStorageService) MigrateObject(ctx context.Context, req *MigrateOb
 	}
 
 	// Set target as primary
-	if err := s.catalogMgr.SetPrimaryStore(ctx, req.Key, req.TargetBackend); err != nil {
+	if err := s.catalogMgr.SetPrimaryStore(ctx, osTenantScopedKey(req.TenantID, req.Key), req.TargetBackend); err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("migrate_object", "set_primary_error").Inc()
 		}
@@ -1239,7 +1251,7 @@ func (s *objectStorageService) MigrateObject(ctx context.Context, req *MigrateOb
 
 	// Delete from source if requested
 	if req.DeleteFromSource {
-		if err := s.catalogMgr.RemoveLocation(ctx, req.Key, sourceBackend); err != nil {
+		if err := s.catalogMgr.RemoveLocation(ctx, osTenantScopedKey(req.TenantID, req.Key), sourceBackend); err != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key":    req.Key,
 				"source": sourceBackend,
@@ -1304,7 +1316,7 @@ func (s *objectStorageService) ArchiveObject(ctx context.Context, req *ArchiveOb
 	}
 
 	// Get catalog entry
-	entry, err := s.catalogMgr.Get(ctx, req.Key)
+	entry, err := s.catalogMgr.Get(ctx, osTenantScopedKey(req.TenantID, req.Key))
 	if err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("archive_object", "not_found").Inc()
@@ -1321,7 +1333,7 @@ func (s *objectStorageService) ArchiveObject(ctx context.Context, req *ArchiveOb
 	}
 
 	// Validate tenant access
-	if req.TenantID != "" && entry.TenantID != "" && entry.TenantID != req.TenantID {
+	if req.TenantID != "" && entry.TenantID != req.TenantID {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("archive_object", "forbidden").Inc()
 		}
@@ -1358,7 +1370,7 @@ func (s *objectStorageService) ArchiveObject(ctx context.Context, req *ArchiveOb
 	}
 
 	// Get the archive location
-	entry, catalogErr := s.catalogMgr.Get(ctx, req.Key)
+	entry, catalogErr := s.catalogMgr.Get(ctx, osTenantScopedKey(req.TenantID, req.Key))
 	if catalogErr != nil {
 		s.logger.WithError(catalogErr).WithField("key", req.Key).Warn("failed to refresh catalog entry after archive replication")
 	}
@@ -1371,7 +1383,7 @@ func (s *objectStorageService) ArchiveObject(ctx context.Context, req *ArchiveOb
 	}
 
 	// Update entry status and set archive store
-	err = s.catalogMgr.Update(ctx, req.Key, func(e *catalog.CatalogEntry) error {
+	err = s.catalogMgr.Update(ctx, osTenantScopedKey(req.TenantID, req.Key), func(e *catalog.CatalogEntry) error {
 		if archiveLoc != nil {
 			e.ArchiveStore = archiveLoc.Clone()
 		}
@@ -1442,7 +1454,7 @@ func (s *objectStorageService) RestoreObject(ctx context.Context, req *RestoreOb
 	}
 
 	// Get catalog entry
-	entry, err := s.catalogMgr.Get(ctx, req.Key)
+	entry, err := s.catalogMgr.Get(ctx, osTenantScopedKey(req.TenantID, req.Key))
 	if err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("restore_object", "not_found").Inc()
@@ -1459,7 +1471,7 @@ func (s *objectStorageService) RestoreObject(ctx context.Context, req *RestoreOb
 	}
 
 	// Validate tenant access
-	if req.TenantID != "" && entry.TenantID != "" && entry.TenantID != req.TenantID {
+	if req.TenantID != "" && entry.TenantID != req.TenantID {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("restore_object", "forbidden").Inc()
 		}
@@ -1496,7 +1508,7 @@ func (s *objectStorageService) RestoreObject(ctx context.Context, req *RestoreOb
 	}
 
 	// Set restored location as primary
-	if err := s.catalogMgr.SetPrimaryStore(ctx, req.Key, targetBackend); err != nil {
+	if err := s.catalogMgr.SetPrimaryStore(ctx, osTenantScopedKey(req.TenantID, req.Key), targetBackend); err != nil {
 		s.logger.WithFields(map[string]interface{}{
 			"key":    req.Key,
 			"target": targetBackend,
@@ -1505,7 +1517,7 @@ func (s *objectStorageService) RestoreObject(ctx context.Context, req *RestoreOb
 	}
 
 	// Update status to active
-	err = s.catalogMgr.Update(ctx, req.Key, func(e *catalog.CatalogEntry) error {
+	err = s.catalogMgr.Update(ctx, osTenantScopedKey(req.TenantID, req.Key), func(e *catalog.CatalogEntry) error {
 		e.Status = catalog.StatusActive
 		e.ModifiedAt = time.Now().UnixNano()
 		e.Version++
@@ -1562,7 +1574,7 @@ func (s *objectStorageService) VerifyObject(ctx context.Context, req *VerifyObje
 	defer s.mu.RUnlock()
 
 	// Get catalog entry
-	entry, err := s.catalogMgr.Get(ctx, req.Key)
+	entry, err := s.catalogMgr.Get(ctx, osTenantScopedKey(req.TenantID, req.Key))
 	if err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("verify_object", "not_found").Inc()
@@ -1571,7 +1583,7 @@ func (s *objectStorageService) VerifyObject(ctx context.Context, req *VerifyObje
 	}
 
 	// Validate tenant access
-	if req.TenantID != "" && entry.TenantID != "" && entry.TenantID != req.TenantID {
+	if req.TenantID != "" && entry.TenantID != req.TenantID {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("verify_object", "forbidden").Inc()
 		}
@@ -1702,11 +1714,20 @@ func (s *objectStorageService) SetObjectPolicy(ctx context.Context, req *SetObje
 		return nil, err
 	}
 
+	// A key missing from the caller's namespace is not found, as in the
+	// other verbs, rather than an uncoded catalog update error.
+	if _, getErr := s.catalogMgr.Get(ctx, osTenantScopedKey(req.TenantID, req.Key)); getErr != nil {
+		if s.metrics != nil && s.metrics.operationErrors != nil {
+			s.metrics.operationErrors.WithLabelValues("set_object_policy", "not_found").Inc()
+		}
+		return nil, api.NewNotFoundWithCauseError("objectstorage.SetObjectPolicy", "object", getErr)
+	}
+
 	var newVersion uint64
 
-	err = s.catalogMgr.Update(ctx, req.Key, func(entry *catalog.CatalogEntry) error {
+	err = s.catalogMgr.Update(ctx, osTenantScopedKey(req.TenantID, req.Key), func(entry *catalog.CatalogEntry) error {
 		// Validate tenant access
-		if req.TenantID != "" && entry.TenantID != "" && entry.TenantID != req.TenantID {
+		if req.TenantID != "" && entry.TenantID != req.TenantID {
 			return api.NewCrossTenantAccessError("objectstorage.SetObjectPolicy")
 		}
 
@@ -1769,7 +1790,7 @@ func (s *objectStorageService) GetObjectPolicy(ctx context.Context, req *GetObje
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	entry, err := s.catalogMgr.Get(ctx, req.Key)
+	entry, err := s.catalogMgr.Get(ctx, osTenantScopedKey(req.TenantID, req.Key))
 	if err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("get_object_policy", "not_found").Inc()
@@ -1778,7 +1799,7 @@ func (s *objectStorageService) GetObjectPolicy(ctx context.Context, req *GetObje
 	}
 
 	// Validate tenant access
-	if req.TenantID != "" && entry.TenantID != "" && entry.TenantID != req.TenantID {
+	if req.TenantID != "" && entry.TenantID != req.TenantID {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("get_object_policy", "forbidden").Inc()
 		}

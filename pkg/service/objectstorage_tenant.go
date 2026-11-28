@@ -12,23 +12,26 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package service provides the unified service facade for QuicBaaS.
-// This file implements multi-tenant object storage isolation. When a tenantID
-// is present in the request context, all object and bucket operations are
-// scoped to that tenant's namespace. When tenantID is empty, the system
-// operates in single-tenant mode with no behavioral changes (full backward
-// compatibility).
+// This file implements multi-tenant object storage isolation. A tenant caller's
+// object keys are stored in the catalog as "tenant/{tenantID}/{key}", so two
+// tenants can use the same key without colliding, and keys are returned to the
+// caller with that prefix removed. The system scope uses keys as given and so
+// sees the stored, tenant-scoped keys.
 package service
 
 import (
 	"context"
 	"strings"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
-// osTenantPrefix is the storage prefix for tenant-scoped object keys.
-const osTenantPrefix = "tenant/"
+// osTenantPrefix is the storage prefix for tenant-scoped object keys. It is
+// the catalog's tenant namespace prefix, so a stored key
+// tenant/{tenant}/{namespace}:{path} is one the catalog accepts.
+const osTenantPrefix = catalog.TenantNamespacePrefix
 
 // osTenantSeparator follows the tenant ID in the object storage namespace.
 const osTenantSeparator = "/"
