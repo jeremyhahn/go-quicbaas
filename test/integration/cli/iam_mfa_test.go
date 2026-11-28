@@ -46,6 +46,9 @@ func TestIAMMFAStatus(t *testing.T) {
 		}()
 
 		statusCmd := IAMMFAStatusCommand(tenantID, userID)
+		if expectMCPUnmappedRefusal(t, runner, statusCmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(statusCmd)
 		if runner.IsSkipped(statusCmd) {
 			return
@@ -81,6 +84,9 @@ func TestIAMMFAStatusJSON(t *testing.T) {
 			ExpectSuccess:  true,
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
+		}
+		if expectMCPUnmappedRefusal(t, runner, statusCmd) {
+			return
 		}
 		stdout, stderr, err := runner.Run(statusCmd)
 		if runner.IsSkipped(statusCmd) {
@@ -120,6 +126,9 @@ func TestIAMMFAEnroll(t *testing.T) {
 		}()
 
 		enrollCmd := IAMMFAEnrollCommand(tenantID, userID)
+		if expectMCPUnmappedRefusal(t, runner, enrollCmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
 			return
@@ -163,6 +172,9 @@ func TestIAMMFAEnrollWithMethod(t *testing.T) {
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
 		}
+		if expectMCPUnmappedRefusal(t, runner, enrollCmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
 			return
@@ -203,6 +215,9 @@ func TestIAMMFAVerifyInvalidCode(t *testing.T) {
 
 		// Enroll first so we have a valid enrollment to verify against
 		enrollCmd := IAMMFAEnrollCommand(tenantID, userID)
+		if expectMCPUnmappedRefusal(t, runner, enrollCmd) {
+			return
+		}
 		stdout, enrollStderr, err := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
 			return
@@ -312,6 +327,9 @@ func TestIAMMFABackupCodesStatus(t *testing.T) {
 		// may require completed enrollment (verified TOTP code) before backup
 		// codes are available.
 		enrollCmd := IAMMFAEnrollCommand(tenantID, userID)
+		if expectMCPUnmappedRefusal(t, runner, enrollCmd) {
+			return
+		}
 		enrollStdout, enrollStderr, enrollErr := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
 			return
@@ -404,6 +422,9 @@ func TestIAMMFABackupCodesGenerate(t *testing.T) {
 		// may require completed enrollment (verified TOTP code) before backup
 		// codes can be generated.
 		enrollCmd := IAMMFAEnrollCommand(tenantID, userID)
+		if expectMCPUnmappedRefusal(t, runner, enrollCmd) {
+			return
+		}
 		enrollStdout, enrollStderr, enrollErr := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
 			return
@@ -463,6 +484,9 @@ func TestIAMMFALifecycle(t *testing.T) {
 
 		// Step 1: Check initial MFA status (should not be enabled)
 		statusCmd := IAMMFAStatusCommand(tenantID, userID)
+		if expectMCPUnmappedRefusal(t, runner, statusCmd) {
+			return
+		}
 		statusStdout, statusStderr, statusErr := runner.Run(statusCmd)
 		if runner.IsSkipped(statusCmd) {
 			return

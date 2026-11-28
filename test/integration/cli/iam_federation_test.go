@@ -632,6 +632,10 @@ func TestIAMIdentityListEmpty(t *testing.T) {
 
 		// List identities for a user with none linked
 		listIdentities := IAMIdentityListCommand(tenantID, userID)
+		if expectMCPUnmappedRefusal(t, runner, listIdentities) {
+			runner.Run(IAMTenantDeleteCommand(tenantID))
+			return
+		}
 		stdout, _, err := runner.Run(listIdentities)
 		if !runner.IsSkipped(listIdentities) {
 			// The command should succeed even if there are no linked identities.
@@ -665,6 +669,10 @@ func TestIAMIdentityListJSON(t *testing.T) {
 			ExpectSuccess:  true,
 			Timeout:        15 * time.Second,
 			SkipTransports: iamTransportsToSkip,
+		}
+		if expectMCPUnmappedRefusal(t, runner, listJSON) {
+			runner.Run(IAMTenantDeleteCommand(tenantID))
+			return
 		}
 		stdout, _, err := runner.Run(listJSON)
 		if !runner.IsSkipped(listJSON) {
@@ -704,6 +712,10 @@ func TestIAMIdentityUnlinkNonExistent(t *testing.T) {
 			ExpectSuccess:  false,
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
+		}
+		if expectMCPUnmappedRefusal(t, runner, unlinkNonExistent) {
+			runner.Run(IAMTenantDeleteCommand(tenantID))
+			return
 		}
 		stdout, stderr, err := runner.Run(unlinkNonExistent)
 		if !runner.IsSkipped(unlinkNonExistent) {
