@@ -1,0 +1,537 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package iam
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"fmt"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
+)
+
+func daemonGuardClientCert(t *testing.T, cn string) *x509.Certificate {
+	t.Helper()
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("key: %v", err)
+	}
+	tpl := &x509.Certificate{
+		SerialNumber: big.NewInt(7),
+		Subject:      pkix.Name{CommonName: cn},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, k.Public(), k)
+	if err != nil {
+		t.Fatalf("cert: %v", err)
+	}
+	c, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	return c
+}
+
+// The go-trusted-platform daemon's REST plane (go-trusted-platform#644)
+// mounts the sdk/go route guard over the tokens this node issues:
+// a WebAuthn login, a PIV smartcard login and an mTLS service login each reach
+// the daemon's handler with the token's tenant and subject, the role's RBAC
+// permissions decide the route, and an mTLS-bound token needs its certificate.
+func TestDaemonRESTGuard_AdmitsTokensThisNodeIssues(t *testing.T) {
+	const issuer = "https://broker.example.com"
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("issuer key: %v", err)
+	}
+	rbac := &fakeRBACClient{permsByRole: map[string][]string{"keyholder": {"keys:get"}}}
+	svc := newKIDTokenService(t, priv, &OIDCConfig{
+		Issuer:           issuer,
+		SigningAlgorithm: "ES256",
+		AccessTokenTTL:   time.Hour,
+		RefreshTokenTTL:  24 * time.Hour,
+		IDTokenTTL:       time.Hour,
+		AuthCodeTTL:      10 * time.Minute,
+	}, &fakePermissionResolver{client: rbac})
+
+	validator, err := platformtoken.NewValidator(platformtoken.Options{
+		Issuer:       issuer,
+		Audience:     issuer,
+		JWKS:         svc.keyManager.JWKS(),
+		ModeResolver: func(string) platformtoken.AuthzMode { return platformtoken.AuthzModeOffline },
+		Authorizer:   &qrdbsdk.NoopAuthorizer{},
+		RBAC:         &qrdbsdk.NoopAuthorizer{},
+	})
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	echo := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ok := platformtoken.FromContext(r.Context())
+		if !ok {
+			t.Error("the guard passed a request without binding its principal")
+			return
+		}
+		_, _ = w.Write([]byte(ac.TenantID + "/" + ac.Subject))
+	})
+
+	hardware := func(amr []string) string {
+		t.Helper()
+		set, err := svc.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
+			User:        &User{ID: 42, TenantID: "system", Email: "k@example.com", Name: "K", Roles: []string{"keyholder"}},
+			AMR:         amr,
+			Attestation: testHardwareAttestation("cb69481e"),
+		})
+		if err != nil {
+			t.Fatalf("IssueHardwareTokens(%v): %v", amr, err)
+		}
+		return set.AccessToken
+	}
+	webauthn := hardware([]string{"webauthn", "hwk"})
+	piv := hardware([]string{"smartcard", "mfa"})
+
+	clientCert := daemonGuardClientCert(t, "svc-daemon")
+	sum := sha256.Sum256(clientCert.Raw)
+	svcSet, err := svc.IssueServiceAccountTokens(context.Background(), ServiceAccountTokenOptions{
+		ClientID:           "svc-daemon",
+		TenantID:           "system",
+		SCP:                []string{"keys:get"},
+		CertThumbprintS256: base64.RawURLEncoding.EncodeToString(sum[:]),
+		AMR:                []string{"mtls"},
+	})
+	if err != nil {
+		t.Fatalf("IssueServiceAccountTokens: %v", err)
+	}
+	mtls := svcSet.AccessToken
+
+	for _, tc := range []struct {
+		name       string
+		token      string
+		permission string
+		peer       *x509.Certificate
+		wantStatus int
+		wantBody   string
+	}{
+		{"webauthn login, granted", webauthn, "keys:get", nil, http.StatusOK, "system/42"},
+		{"webauthn login, not granted", webauthn, "keys:delete", nil, http.StatusForbidden, ""},
+		{"piv login, granted", piv, "keys:get", nil, http.StatusOK, "system/42"},
+		{"piv login, not granted", piv, "keys:delete", nil, http.StatusForbidden, ""},
+		{"mtls login with its certificate", mtls, "keys:get", clientCert, http.StatusOK, "system/svc-daemon"},
+		{"mtls login without a certificate", mtls, "keys:get", nil, http.StatusUnauthorized, ""},
+		{"mtls login with another certificate", mtls, "keys:get", daemonGuardClientCert(t, "other"), http.StatusUnauthorized, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys?tenant_id=acme",
+				strings.NewReader(`{"tenant_id":"acme","user_id":"9001"}`))
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			req.Header.Set("X-Tenant-ID", "acme")
+			if tc.peer != nil {
+				req.TLS.PeerCertificates = []*x509.Certificate{tc.peer}
+			}
+			w := httptest.NewRecorder()
+			validator.Middleware(tc.permission)(echo).ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantBody != "" && w.Body.String() != tc.wantBody {
+				t.Fatalf("principal %q, want %q", w.Body.String(), tc.wantBody)
+			}
+		})
+	}
+}
+
+// TestDaemonRESTGuard_AttributeSelectedDenyRefusesNodeToken drives a token
+// this node issues through the guard with an ABAC policy that denies get on
+// keys to callers whose attest_method is manual: the manually attested
+// service token is refused, the TPM-attested one is admitted.
+func TestDaemonRESTGuard_AttributeSelectedDenyRefusesNodeToken(t *testing.T) {
+	const issuer = "https://broker.example.com"
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("issuer key: %v", err)
+	}
+	rbac := &fakeRBACClient{permsByRole: map[string][]string{"keyholder": {"keys:get"}}}
+	svc := newKIDTokenService(t, priv, &OIDCConfig{
+		Issuer:           issuer,
+		SigningAlgorithm: "ES256",
+		AccessTokenTTL:   time.Hour,
+		RefreshTokenTTL:  24 * time.Hour,
+		IDTokenTTL:       time.Hour,
+		AuthCodeTTL:      10 * time.Minute,
+	}, &fakePermissionResolver{client: rbac})
+
+	policy := &qrdbsdk.ABACPolicy{
+		APIVersion: "abac.qrdb.io/v1",
+		Kind:       "Policy",
+		Metadata:   qrdbsdk.ABACPolicyMetadata{Name: "deny-manual-attest-key-reads", Tenant: "system"},
+		Spec: qrdbsdk.ABACPolicySpec{
+			Subjects: qrdbsdk.ABACSubjectSelector{Match: map[string]interface{}{"attest_method": "manual"}},
+			Rules: []qrdbsdk.ABACRule{{
+				Name: "deny-manual-get", Effect: qrdbsdk.ABACEffectDeny,
+				Actions: []string{"get"}, Resources: []string{"keys"},
+			}},
+		},
+	}
+	authz, err := qrdbsdk.DecorateAuthorizer(&qrdbsdk.NoopAuthorizer{}, qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{policy}))
+	if err != nil {
+		t.Fatalf("DecorateAuthorizer: %v", err)
+	}
+	validator, err := platformtoken.NewValidator(platformtoken.Options{
+		Issuer:       issuer,
+		Audience:     issuer,
+		JWKS:         svc.keyManager.JWKS(),
+		ModeResolver: func(string) platformtoken.AuthzMode { return platformtoken.AuthzModeOffline },
+		Authorizer:   authz,
+		RBAC:         &qrdbsdk.NoopAuthorizer{},
+	})
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	echo := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ok := platformtoken.FromContext(r.Context())
+		if !ok {
+			t.Error("the guard passed a request without binding its principal")
+			return
+		}
+		_, _ = w.Write([]byte(ac.TenantID + "/" + ac.Subject))
+	})
+
+	clientCert := daemonGuardClientCert(t, "svc-daemon")
+	sum := sha256.Sum256(clientCert.Raw)
+	issue := func(attestMethod string) string {
+		t.Helper()
+		set, err := svc.IssueServiceAccountTokens(context.Background(), ServiceAccountTokenOptions{
+			ClientID:           "svc-daemon",
+			TenantID:           "system",
+			SCP:                []string{"keys:get"},
+			CertThumbprintS256: base64.RawURLEncoding.EncodeToString(sum[:]),
+			AttestMethod:       attestMethod,
+			AMR:                []string{"mtls"},
+		})
+		if err != nil {
+			t.Fatalf("IssueServiceAccountTokens(%s): %v", attestMethod, err)
+		}
+		return set.AccessToken
+	}
+
+	for _, tc := range []struct {
+		name       string
+		token      string
+		wantStatus int
+		wantBody   string
+	}{
+		{"manually attested service token", issue("manual"), http.StatusForbidden, ""},
+		{"tpm attested service token", issue("tpm"), http.StatusOK, "system/svc-daemon"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys", nil)
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			req.TLS.PeerCertificates = []*x509.Certificate{clientCert}
+			w := httptest.NewRecorder()
+			validator.Middleware("keys:get")(echo).ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantBody != "" && w.Body.String() != tc.wantBody {
+				t.Fatalf("principal %q, want %q", w.Body.String(), tc.wantBody)
+			}
+		})
+	}
+}
+
+// TestDaemonRESTGuard_AbsenceDenyRefusesClaimlessNodeToken: the node's
+// secret-authenticated client_credentials tokens carry no authentication
+// claim, and an ABAC deny on the absence of attest_method refuses them at the
+// guard, while an attested service token passes it.
+func TestDaemonRESTGuard_AbsenceDenyRefusesClaimlessNodeToken(t *testing.T) {
+	const issuer = "https://broker.example.com"
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("issuer key: %v", err)
+	}
+	rbac := &fakeRBACClient{permsByRole: map[string][]string{"keyholder": {"keys:get"}}}
+	svc := newKIDTokenService(t, priv, &OIDCConfig{
+		Issuer:           issuer,
+		SigningAlgorithm: "ES256",
+		AccessTokenTTL:   time.Hour,
+		RefreshTokenTTL:  24 * time.Hour,
+		IDTokenTTL:       time.Hour,
+		AuthCodeTTL:      10 * time.Minute,
+	}, &fakePermissionResolver{client: rbac})
+
+	policy := &qrdbsdk.ABACPolicy{
+		APIVersion: "abac.qrdb.io/v1",
+		Kind:       "Policy",
+		Metadata:   qrdbsdk.ABACPolicyMetadata{Name: "deny-unattested-key-reads", Tenant: "system"},
+		Spec: qrdbsdk.ABACPolicySpec{
+			Subjects: qrdbsdk.ABACSubjectSelector{Authenticated: true},
+			Rules: []qrdbsdk.ABACRule{{
+				Name: "deny-unattested-get", Effect: qrdbsdk.ABACEffectDeny,
+				Actions: []string{"get"}, Resources: []string{"keys"},
+				When: []qrdbsdk.ABACCondition{{Expression: "subject.attrs.attest_method notexists"}},
+			}},
+		},
+	}
+	authz, err := qrdbsdk.DecorateAuthorizer(&qrdbsdk.NoopAuthorizer{}, qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{policy}))
+	if err != nil {
+		t.Fatalf("DecorateAuthorizer: %v", err)
+	}
+	validator, err := platformtoken.NewValidator(platformtoken.Options{
+		Issuer:       issuer,
+		Audience:     issuer,
+		JWKS:         svc.keyManager.JWKS(),
+		ModeResolver: func(string) platformtoken.AuthzMode { return platformtoken.AuthzModeOffline },
+		Authorizer:   authz,
+		RBAC:         &qrdbsdk.NoopAuthorizer{},
+	})
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	echo := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ok := platformtoken.FromContext(r.Context())
+		if !ok {
+			t.Error("the guard passed a request without binding its principal")
+			return
+		}
+		_, _ = w.Write([]byte(ac.TenantID + "/" + ac.Subject))
+	})
+
+	// A token shaped the way the secret-authenticated client_credentials
+	// grant signs it: no auth_method, attest_method, attest_level,
+	// attest_aaguid or amr.
+	now := time.Now()
+	jti, err := generateJTI()
+	if err != nil {
+		t.Fatalf("generateJTI: %v", err)
+	}
+	claimless, err := svc.GenerateAccessToken(context.Background(), &Claims{
+		Issuer:        issuer,
+		Subject:       "svc-reporter",
+		Audience:      []string{issuer},
+		ExpiresAt:     NewUnixTime(now.Add(time.Hour)),
+		IssuedAt:      NewUnixTime(now),
+		NotBefore:     NewUnixTime(now),
+		JTI:           jti,
+		TenantID:      "system",
+		PrincipalType: PrincipalTypeService,
+		ClientID:      "svc-reporter",
+		Scope:         "keys:get",
+		SCP:           []string{"keys:get"},
+	})
+	if err != nil {
+		t.Fatalf("GenerateAccessToken: %v", err)
+	}
+
+	// The token really carries no authentication claim.
+	countAttrs := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ok := platformtoken.FromContext(r.Context())
+		if !ok {
+			t.Error("the guard passed a request without binding its principal")
+			return
+		}
+		_, _ = w.Write([]byte(fmt.Sprint(len(ac.AuthAttributes))))
+	})
+	req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer "+claimless)
+	w := httptest.NewRecorder()
+	validator.Middleware("")(countAttrs).ServeHTTP(w, req)
+	if w.Code != http.StatusOK || w.Body.String() != "0" {
+		t.Fatalf("authenticate-only: status %d, authentication claims %q, want 200 and 0", w.Code, w.Body.String())
+	}
+
+	clientCert := daemonGuardClientCert(t, "svc-daemon")
+	sum := sha256.Sum256(clientCert.Raw)
+	set, err := svc.IssueServiceAccountTokens(context.Background(), ServiceAccountTokenOptions{
+		ClientID:           "svc-daemon",
+		TenantID:           "system",
+		SCP:                []string{"keys:get"},
+		CertThumbprintS256: base64.RawURLEncoding.EncodeToString(sum[:]),
+		AttestMethod:       "tpm",
+		AMR:                []string{"mtls"},
+	})
+	if err != nil {
+		t.Fatalf("IssueServiceAccountTokens: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name       string
+		token      string
+		peer       *x509.Certificate
+		wantStatus int
+		wantBody   string
+	}{
+		{"a client_credentials token with no authentication claims is refused by an absence-based deny",
+			claimless, nil, http.StatusForbidden, ""},
+		{"an attested service token passes the absence-based deny",
+			set.AccessToken, clientCert, http.StatusOK, "system/svc-daemon"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys", nil)
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			if tc.peer != nil {
+				req.TLS.PeerCertificates = []*x509.Certificate{tc.peer}
+			}
+			w := httptest.NewRecorder()
+			validator.Middleware("keys:get")(echo).ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantBody != "" && w.Body.String() != tc.wantBody {
+				t.Fatalf("principal %q, want %q", w.Body.String(), tc.wantBody)
+			}
+			if tc.wantStatus == http.StatusForbidden && !strings.Contains(w.Body.String(), "access_denied") {
+				t.Fatalf("refusal body %q, want access_denied", w.Body.String())
+			}
+		})
+	}
+}
+
+// daemonGuardCountingAuthorizer counts the decisions the guard asks inner for.
+type daemonGuardCountingAuthorizer struct {
+	inner qrdbsdk.Authorizer
+	calls int
+}
+
+func (c *daemonGuardCountingAuthorizer) Authorize(ctx context.Context, id *qrdbsdk.Identity, resource, action string) error {
+	c.calls++
+	return c.inner.Authorize(ctx, id, resource, action)
+}
+
+// TestDaemonRESTGuard_TokenRolesDenyMatchesAndScopeBoundsGrants: on a token
+// this node issues, the token's roles reach the guard's authorizer, so a deny
+// on the token's role refuses, and the token's scope bounds every grant, so a
+// role-selected allow outside the scope is refused before the authorizer is
+// asked.
+func TestDaemonRESTGuard_TokenRolesDenyMatchesAndScopeBoundsGrants(t *testing.T) {
+	const issuer = "https://broker.example.com"
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("issuer key: %v", err)
+	}
+	rbac := &fakeRBACClient{permsByRole: map[string][]string{"keyholder": {"keys:get"}}}
+	svc := newKIDTokenService(t, priv, &OIDCConfig{
+		Issuer:           issuer,
+		SigningAlgorithm: "ES256",
+		AccessTokenTTL:   time.Hour,
+		RefreshTokenTTL:  24 * time.Hour,
+		IDTokenTTL:       time.Hour,
+		AuthCodeTTL:      10 * time.Minute,
+	}, &fakePermissionResolver{client: rbac})
+
+	set, err := svc.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
+		User:        &User{ID: 42, TenantID: "system", Email: "k@example.com", Name: "K", Roles: []string{"keyholder"}},
+		AMR:         []string{"webauthn", "hwk"},
+		Attestation: testHardwareAttestation("cb69481e"),
+	})
+	if err != nil {
+		t.Fatalf("IssueHardwareTokens: %v", err)
+	}
+	token := set.AccessToken
+
+	keyholderPolicy := func(effect qrdbsdk.ABACEffect, actions []string) *qrdbsdk.ABACPolicy {
+		return &qrdbsdk.ABACPolicy{
+			APIVersion: "abac.qrdb.io/v1",
+			Kind:       "Policy",
+			Metadata:   qrdbsdk.ABACPolicyMetadata{Name: "keyholder-keys", Tenant: "system"},
+			Spec: qrdbsdk.ABACPolicySpec{
+				Subjects: qrdbsdk.ABACSubjectSelector{Roles: []string{"keyholder"}},
+				Rules: []qrdbsdk.ABACRule{{
+					Name: "keyholder-keys", Effect: effect,
+					Actions: actions, Resources: []string{"keys"},
+				}},
+			},
+		}
+	}
+	echo := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ok := platformtoken.FromContext(r.Context())
+		if !ok {
+			t.Error("the guard passed a request without binding its principal")
+			return
+		}
+		_, _ = w.Write([]byte(ac.TenantID + "/" + ac.Subject))
+	})
+
+	for _, tc := range []struct {
+		name       string
+		effect     qrdbsdk.ABACEffect
+		actions    []string
+		permission string
+		wantStatus int
+		wantBody   string
+		wantError  string
+		wantCalls  bool
+	}{
+		{name: "a deny on the token's role refuses", effect: qrdbsdk.ABACEffectDeny, actions: []string{"get"},
+			permission: "keys:get", wantStatus: http.StatusForbidden, wantError: "access_denied", wantCalls: true},
+		{name: "a role grant outside the token scope is refused", effect: qrdbsdk.ABACEffectAllow,
+			actions: []string{"get", "delete"}, permission: "keys:delete",
+			wantStatus: http.StatusForbidden, wantError: "insufficient_scope"},
+		{name: "a role grant inside the token scope is admitted", effect: qrdbsdk.ABACEffectAllow,
+			actions: []string{"get", "delete"}, permission: "keys:get",
+			wantStatus: http.StatusOK, wantBody: "system/42", wantCalls: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decorated, err := qrdbsdk.DecorateAuthorizer(&qrdbsdk.NoopAuthorizer{},
+				qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{keyholderPolicy(tc.effect, tc.actions)}))
+			if err != nil {
+				t.Fatalf("DecorateAuthorizer: %v", err)
+			}
+			counter := &daemonGuardCountingAuthorizer{inner: decorated}
+			validator, err := platformtoken.NewValidator(platformtoken.Options{
+				Issuer:       issuer,
+				Audience:     issuer,
+				JWKS:         svc.keyManager.JWKS(),
+				ModeResolver: func(string) platformtoken.AuthzMode { return platformtoken.AuthzModeOffline },
+				Authorizer:   counter,
+				RBAC:         &qrdbsdk.NoopAuthorizer{},
+			})
+			if err != nil {
+				t.Fatalf("NewValidator: %v", err)
+			}
+			req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			validator.Middleware(tc.permission)(echo).ServeHTTP(w, req)
+
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantBody != "" && w.Body.String() != tc.wantBody {
+				t.Fatalf("principal %q, want %q", w.Body.String(), tc.wantBody)
+			}
+			if tc.wantError != "" && !strings.Contains(w.Body.String(), tc.wantError) {
+				t.Fatalf("refusal body %q, want %s", w.Body.String(), tc.wantError)
+			}
+			if tc.wantCalls && counter.calls == 0 {
+				t.Fatal("the guard never asked the authorizer")
+			}
+			if !tc.wantCalls && counter.calls != 0 {
+				t.Fatalf("the authorizer was asked %d times for an out-of-scope permission", counter.calls)
+			}
+		})
+	}
+}

@@ -32,6 +32,7 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/dpop"
 )
@@ -72,6 +73,16 @@ type Claims struct {
 	// asked of the token rather than inferred from a user lookup coming up
 	// empty. Empty on user tokens and on tokens minted before the claim.
 	PrincipalType string `json:"ptyp,omitempty"`
+	// AuthMethod is how the subject authenticated to the issuer (auth_method).
+	AuthMethod string `json:"auth_method,omitempty"`
+	// AttestMethod is how the subject's key or device was attested (attest_method).
+	AttestMethod string `json:"attest_method,omitempty"`
+	// AttestLevel is the assurance level of that attestation (attest_level).
+	AttestLevel string `json:"attest_level,omitempty"`
+	// AttestAAGUID is the attested authenticator's AAGUID (attest_aaguid).
+	AttestAAGUID string `json:"attest_aaguid,omitempty"`
+	// AMR lists the authentication methods references (RFC 8176 amr).
+	AMR []string `json:"amr,omitempty"`
 	// Confirmation is the cnf sender-constraint binding (DPoP jkt / mTLS x5t).
 	Confirmation *Confirmation `json:"cnf,omitempty"`
 }
@@ -135,6 +146,24 @@ type Options struct {
 	// sender-constrained token. Required only when sender-constrained tokens are
 	// authorized through Authorize.
 	ReplayCache dpop.ReplayCache
+	// Authorizer is the go-qrdb policy decision point a permission route asks
+	// after the scope check: go-qrdb RBAC, decorated with its ABAC policies by
+	// qrdbsdk.DecorateAuthorizer. It is asked with the complete verified
+	// identity (subject, tenant, roles, scope, authentication claims).
+	// AuthorizeRequest and Middleware refuse a permission route with 503 when
+	// it is nil; an empty permission does not use it.
+	Authorizer qrdbsdk.Authorizer
+	// RBAC is the undecorated go-qrdb RBAC authorizer that Authorizer's ABAC
+	// policies decorate (the inner authorizer passed to
+	// qrdbsdk.DecorateAuthorizer). A permission route asks it with the
+	// complete verified identity as well as Authorizer, because in go-qrdb a
+	// matched ABAC allow is decisive and skips the inner RBAC: its mandatory
+	// restrictions (the SO deny-list for cryptographic operations, the
+	// tenant scope rules) hold only when RBAC is asked directly. A request is
+	// admitted only when both allow. AuthorizeRequest and Middleware refuse a
+	// permission route with 503 when it is nil; an empty permission does not
+	// use it.
+	RBAC qrdbsdk.Authorizer
 }
 
 // Validator verifies platform access tokens for one trusted issuer and one
@@ -149,6 +178,8 @@ type Validator struct {
 	cachedLiveness LivenessChecker
 	modeResolver   ModeResolver
 	replayCache    dpop.ReplayCache
+	authorizer     qrdbsdk.Authorizer
+	rbac           qrdbsdk.Authorizer
 }
 
 // NewValidator constructs a Validator. It requires an issuer, an audience, and
@@ -213,6 +244,8 @@ func NewValidator(opts Options) (*Validator, error) {
 		liveness:     opts.LivenessChecker,
 		modeResolver: opts.ModeResolver,
 		replayCache:  opts.ReplayCache,
+		authorizer:   opts.Authorizer,
+		rbac:         opts.RBAC,
 	}
 	if opts.LivenessChecker != nil {
 		v.cachedLiveness = NewCachedLivenessChecker(opts.LivenessChecker, opts.LivenessCacheTTL, nowFunc)
@@ -275,7 +308,8 @@ func (v *Validator) ValidatePlatformToken(ctx context.Context, tokenString strin
 
 // ValidateWithDPoP verifies the access token (as ValidatePlatformToken) and
 // then verifies the presented DPoP proof against the token's cnf.jkt binding
-// (RFC 9449): the proof signature, htm/htu, iat skew, jti replay, and that the
+// (RFC 9449): the proof signature, htm/htu, the ath hash of tokenString, iat
+// skew, jti replay, and that the
 // SHA-256 thumbprint of the proof key equals cnf.jkt. A token without cnf.jkt
 // is rejected on this path (a bearer cannot be replayed with an attacker's DPoP
 // key and accepted). The replayCache must be supplied by the caller and is
@@ -298,6 +332,7 @@ func (v *Validator) ValidateWithDPoP(ctx context.Context, tokenString, dpopProof
 		ExpectedJkt: claims.Confirmation.Jkt,
 		ReplayCache: replayCache,
 		Clock:       clockAdapter{now: v.nowFunc},
+		AccessToken: tokenString,
 	}); err != nil {
 		return nil, err
 	}

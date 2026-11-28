@@ -14,6 +14,8 @@
 package platformtoken
 
 import (
+	"strings"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
@@ -44,6 +46,12 @@ type AuthorizedContext struct {
 	Scopes []string
 	// Roles is optional supplemental RBAC input (from roles).
 	Roles []string
+	// AuthAttributes are the authentication claims of the verified token
+	// (auth_method, attest_method, attest_level, attest_aaguid, and amr joined
+	// by single spaces), keyed by claim name. The guard hands them to the
+	// authorizer as Identity.Metadata, so an ABAC subjects.match on those
+	// names selects the caller. It is nil when the token carries none of them.
+	AuthAttributes map[string]string
 	// Confirmation is the sender-constraint binding present on the token, if any.
 	Confirmation *Confirmation
 }
@@ -52,14 +60,39 @@ type AuthorizedContext struct {
 // transformation; the token must already be verified.
 func Authorize(claims *Claims) *AuthorizedContext {
 	return &AuthorizedContext{
-		Subject:      claims.Subject,
-		Username:     claims.Name,
-		UserID:       claims.UserID,
-		TenantID:     claims.TenantID,
-		Scopes:       claims.scopes(),
-		Roles:        claims.Roles,
-		Confirmation: claims.Confirmation,
+		Subject:        claims.Subject,
+		Username:       claims.Name,
+		UserID:         claims.UserID,
+		TenantID:       claims.TenantID,
+		Scopes:         claims.scopes(),
+		Roles:          claims.Roles,
+		AuthAttributes: authAttributes(claims),
+		Confirmation:   claims.Confirmation,
 	}
+}
+
+// authAttributes projects the token's authentication claims into the
+// attribute map the authorizer sees as Identity.Metadata. Only non-empty
+// claims are added; it returns nil when there are none.
+func authAttributes(claims *Claims) map[string]string {
+	var attrs map[string]string
+	add := func(key, value string) {
+		if value == "" {
+			return
+		}
+		if attrs == nil {
+			attrs = make(map[string]string, 5)
+		}
+		attrs[key] = value
+	}
+	add("auth_method", claims.AuthMethod)
+	add("attest_method", claims.AttestMethod)
+	add("attest_level", claims.AttestLevel)
+	add("attest_aaguid", claims.AttestAAGUID)
+	if len(claims.AMR) > 0 {
+		add("amr", strings.Join(claims.AMR, " "))
+	}
+	return attrs
 }
 
 // HasScope reports whether the authorized context was granted scope, honoring

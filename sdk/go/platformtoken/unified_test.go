@@ -288,7 +288,7 @@ func TestAuthorize_DPoPEnforcedForSenderConstrained(t *testing.T) {
 		ModeResolver: func(string) AuthzMode { return AuthzModeOffline },
 		ReplayCache:  dpop.NewMemoryReplayCache(&fixedDPoPClock{now}),
 	})
-	proof, err := dpop.NewProofWithClock(dpopKey, htm, htu, &fixedDPoPClock{now})
+	proof, err := dpop.NewProofForAccessTokenWithClock(dpopKey, htm, htu, tok, &fixedDPoPClock{now})
 	if err != nil {
 		t.Fatalf("NewProof: %v", err)
 	}

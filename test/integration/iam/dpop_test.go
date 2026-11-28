@@ -105,7 +105,7 @@ func TestDPoPSenderConstrainedToken(t *testing.T) {
 		// A downstream service validates the token with a fresh proof for its own
 		// resource call. The proof key matches cnf.jkt, so it is accepted.
 		const resourceHTU = "https://api.app.example/v1/records"
-		callProof, err := dpop.NewProof(dpopKey, http.MethodGet, resourceHTU)
+		callProof, err := dpop.NewProofForAccessToken(dpopKey, http.MethodGet, resourceHTU, accessToken)
 		require.NoError(t, err)
 
 		cache := dpop.NewMemoryReplayCache(dpop.SystemClock{})
@@ -126,7 +126,7 @@ func TestDPoPSenderConstrainedToken(t *testing.T) {
 		attackerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
 		const resourceHTU = "https://api.app.example/v1/records"
-		attackerProof, err := dpop.NewProof(attackerKey, http.MethodGet, resourceHTU)
+		attackerProof, err := dpop.NewProofForAccessToken(attackerKey, http.MethodGet, resourceHTU, accessToken)
 		require.NoError(t, err)
 
 		cache := dpop.NewMemoryReplayCache(dpop.SystemClock{})

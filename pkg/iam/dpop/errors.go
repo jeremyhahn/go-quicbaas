@@ -71,6 +71,17 @@ func (e *HTTPBindingError) Error() string {
 	return fmt.Sprintf("dpop: %s mismatch: expected %q, proof carried %q", e.Field, e.Expected, e.Actual)
 }
 
+// AccessTokenHashError indicates the proof's ath claim is missing or does
+// not match the access token presented with it (RFC 9449 §4.3).
+type AccessTokenHashError struct {
+	// Detail describes the mismatch.
+	Detail string
+}
+
+func (e *AccessTokenHashError) Error() string {
+	return fmt.Sprintf("dpop: %s", e.Detail)
+}
+
 // StaleProofError indicates the proof iat is outside the allowed clock skew
 // window (too old or too far in the future).
 type StaleProofError struct {

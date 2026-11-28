@@ -18,6 +18,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"net/url"
@@ -70,6 +72,10 @@ type VerifyOptions struct {
 	// protection (only acceptable for stateless issuance-time binding where the
 	// caller has its own single-use guarantee).
 	ReplayCache ReplayCache
+	// AccessToken, when non-empty, is the access token presented with the
+	// proof; the proof must then carry ath = base64url(SHA-256(AccessToken))
+	// (RFC 9449 §4.3). Empty at issuance, where no access token exists yet.
+	AccessToken string
 }
 
 // VerifiedProof is the result of a successful verification.
@@ -86,7 +92,8 @@ type VerifiedProof struct {
 
 // VerifyProof validates a DPoP proof JWT per RFC 9449: it checks the typ header,
 // that the algorithm is asymmetric, that the signature verifies against the
-// embedded jwk, that htm/htu match the request, that iat is within skew, that
+// embedded jwk, that htm/htu match the request, that ath matches
+// opts.AccessToken when it is set, that iat is within skew, that
 // the jti has not been replayed, and — when opts.ExpectedJkt is set — that the
 // proof-key thumbprint equals the access-token cnf.jkt binding. Every failure
 // returns a typed error so callers can fail closed with 401.
@@ -185,6 +192,17 @@ func VerifyProof(proofJWT string, opts VerifyOptions) (*VerifiedProof, error) {
 		return nil, &HTTPBindingError{Field: "htu", Expected: wantHTU, Actual: gotHTU}
 	}
 
+	// ath binds the proof to the access token presented with it.
+	if opts.AccessToken != "" {
+		ath := stringClaim(claims, "ath")
+		if ath == "" {
+			return nil, &AccessTokenHashError{Detail: "proof carries no ath"}
+		}
+		if subtle.ConstantTimeCompare([]byte(ath), []byte(AccessTokenHash(opts.AccessToken))) != 1 {
+			return nil, &AccessTokenHashError{Detail: "ath does not match the presented access token"}
+		}
+	}
+
 	// iat within skew window (must be present).
 	iatSecs, ok := numericClaim(claims, "iat")
 	if !ok {
@@ -234,6 +252,13 @@ func Thumbprint(pub crypto.PublicKey) (string, error) {
 		return "", &SignerError{Detail: "compute jwk thumbprint", Cause: err}
 	}
 	return base64.RawURLEncoding.EncodeToString(sum), nil
+}
+
+// AccessTokenHash is the RFC 9449 ath value of an access token:
+// base64url(SHA-256(token)) without padding.
+func AccessTokenHash(accessToken string) string {
+	sum := sha256.Sum256([]byte(accessToken))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 // CanonicalHTU strips the query and fragment from a URI and returns scheme +

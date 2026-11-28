@@ -68,9 +68,17 @@ type tokenClaims struct {
 	sub string
 	tid string
 	scp []string
+	// roles is the token's "roles" claim.
+	roles []string
+	// attestMethod is the token's "attest_method" claim.
+	attestMethod string
+	// amr is the token's "amr" claim.
+	amr []string
 	exp time.Time
 	iat time.Time
 	jkt string
+	// x5t is the RFC 8705 cnf "x5t#S256" mTLS certificate binding.
+	x5t string
 	// typ overrides the JOSE "typ" header. Empty defaults to the RFC 9068
 	// access-token media type "at+jwt"; the sentinel "-" omits the header
 	// entirely (to exercise the missing-typ rejection).
@@ -93,8 +101,20 @@ func (k *issuerKey) sign(t *testing.T, tc tokenClaims) string {
 	if len(tc.scp) > 0 {
 		m["scp"] = tc.scp
 	}
+	if len(tc.roles) > 0 {
+		m["roles"] = tc.roles
+	}
+	if tc.attestMethod != "" {
+		m["attest_method"] = tc.attestMethod
+	}
+	if len(tc.amr) > 0 {
+		m["amr"] = tc.amr
+	}
 	if tc.jkt != "" {
 		m["cnf"] = map[string]interface{}{"jkt": tc.jkt}
+	}
+	if tc.x5t != "" {
+		m["cnf"] = map[string]interface{}{"x5t#S256": tc.x5t}
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodES256, m)
 	tok.Header["kid"] = k.kid
@@ -369,7 +389,7 @@ func TestValidateWithDPoP_BindsTokenToProofKey(t *testing.T) {
 		exp: now.Add(10 * time.Minute), iat: now, jkt: jkt,
 	})
 
-	proof, err := dpop.NewProofWithClock(dpopKey, htm, htu, &fixedDPoPClock{now})
+	proof, err := dpop.NewProofForAccessTokenWithClock(dpopKey, htm, htu, tok, &fixedDPoPClock{now})
 	if err != nil {
 		t.Fatalf("NewProof: %v", err)
 	}
@@ -381,6 +401,76 @@ func TestValidateWithDPoP_BindsTokenToProofKey(t *testing.T) {
 	}
 	if claims.Confirmation == nil || claims.Confirmation.Jkt != jkt {
 		t.Fatalf("expected cnf.jkt %q, got %+v", jkt, claims.Confirmation)
+	}
+}
+
+// A proof without ath is refused with a DPoP-bound token.
+func TestValidateWithDPoP_ProofWithoutATH(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := newIssuerKey(t, testKID)
+	v := newTestValidator(t, key, now)
+
+	dpopKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("dpop key: %v", err)
+	}
+	jkt, err := dpop.Thumbprint(dpopKey.Public())
+	if err != nil {
+		t.Fatalf("thumbprint: %v", err)
+	}
+
+	htm, htu := "GET", "https://api.app.example/v1/records"
+	tok := key.sign(t, tokenClaims{
+		iss: testIssuer, aud: []string{testAudience}, sub: "u",
+		tid: "tenant-1", scp: []string{"app.read"},
+		exp: now.Add(10 * time.Minute), iat: now, jkt: jkt,
+	})
+
+	proof, err := dpop.NewProofWithClock(dpopKey, htm, htu, &fixedDPoPClock{now})
+	if err != nil {
+		t.Fatalf("NewProof: %v", err)
+	}
+
+	cache := dpop.NewMemoryReplayCache(&fixedDPoPClock{now})
+	_, err = v.ValidateWithDPoP(context.Background(), tok, proof, htm, htu, cache)
+	var athErr *dpop.AccessTokenHashError
+	if !errors.As(err, &athErr) {
+		t.Fatalf("expected AccessTokenHashError, got %v", err)
+	}
+}
+
+// A proof made for another access token is refused, even with the bound key.
+func TestValidateWithDPoP_ATHForAnotherToken(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := newIssuerKey(t, testKID)
+	v := newTestValidator(t, key, now)
+
+	dpopKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("dpop key: %v", err)
+	}
+	jkt, err := dpop.Thumbprint(dpopKey.Public())
+	if err != nil {
+		t.Fatalf("thumbprint: %v", err)
+	}
+
+	htm, htu := "GET", "https://api.app.example/v1/records"
+	tok := key.sign(t, tokenClaims{
+		iss: testIssuer, aud: []string{testAudience}, sub: "u",
+		tid: "tenant-1", scp: []string{"app.read"},
+		exp: now.Add(10 * time.Minute), iat: now, jkt: jkt,
+	})
+
+	proof, err := dpop.NewProofForAccessTokenWithClock(dpopKey, htm, htu, "another-token", &fixedDPoPClock{now})
+	if err != nil {
+		t.Fatalf("NewProof: %v", err)
+	}
+
+	cache := dpop.NewMemoryReplayCache(&fixedDPoPClock{now})
+	_, err = v.ValidateWithDPoP(context.Background(), tok, proof, htm, htu, cache)
+	var athErr *dpop.AccessTokenHashError
+	if !errors.As(err, &athErr) {
+		t.Fatalf("expected AccessTokenHashError, got %v", err)
 	}
 }
 
@@ -401,7 +491,7 @@ func TestValidateWithDPoP_StolenTokenDifferentKey(t *testing.T) {
 
 	// Attacker steals the token and presents a proof signed with its OWN key.
 	attackerKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	proof, err := dpop.NewProofWithClock(attackerKey, htm, htu, &fixedDPoPClock{now})
+	proof, err := dpop.NewProofForAccessTokenWithClock(attackerKey, htm, htu, tok, &fixedDPoPClock{now})
 	if err != nil {
 		t.Fatalf("NewProof: %v", err)
 	}
