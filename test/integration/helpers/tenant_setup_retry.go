@@ -78,17 +78,26 @@ func retryTenantSetup(ctx context.Context, op, tenantID string, call func() erro
 	start := time.Now()
 	err := call()
 	for attempt := 1; err != nil && leaderLossError(err); attempt++ {
-		if time.Since(start) >= tenantSetupRetryWindow || ctx.Err() != nil {
+		remaining := tenantSetupRetryWindow - time.Since(start)
+		if remaining <= 0 || ctx.Err() != nil {
 			return err
 		}
-		log.Printf("tenant setup retry after leader loss: op=%s tenant=%s attempt=%d: %v", op, tenantID, attempt, err)
-		timer := time.NewTimer(tenantSetupRetryPause)
+		pause := tenantSetupRetryPause
+		if pause > remaining {
+			pause = remaining
+		}
+		timer := time.NewTimer(pause)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return err
 		case <-timer.C:
 		}
+		// The pause can end the window: no call starts after it.
+		if time.Since(start) >= tenantSetupRetryWindow {
+			return err
+		}
+		log.Printf("tenant setup retry after leader loss: op=%s tenant=%s attempt=%d: %v", op, tenantID, attempt, err)
 		err = call()
 	}
 	return err
