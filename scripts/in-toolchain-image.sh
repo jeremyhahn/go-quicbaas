@@ -42,6 +42,24 @@ fi
 case $cpus in
   "" | 0 | *[!0-9]*) echo "IN_IMAGE_CPUS must be a positive integer: $cpus" >&2; exit 2 ;;
 esac
+# IN_IMAGE_CPUS_MAX (default 8) caps the stage's --cpus, GOMAXPROCS and -p,
+# whatever the job's cgroup or nproc reports: on a 112-CPU runner host with no
+# job quota the stage would otherwise take every CPU, outside the host's CI
+# CPU budget.
+cpus_max=${IN_IMAGE_CPUS_MAX:-8}
+case $cpus_max in
+  "" | 0 | *[!0-9]*) echo "IN_IMAGE_CPUS_MAX must be a positive integer: $cpus_max" >&2; exit 2 ;;
+esac
+if [ "$cpus" -gt "$cpus_max" ]; then cpus=$cpus_max; fi
+# CI_CGROUP_PARENT (default ci.slice) is the container's --cgroup-parent, so
+# the runner host's ci.slice bounds every CI container together; without it a
+# container runs in system.slice, outside that bound. Set it empty to pass no
+# --cgroup-parent (a developer host with no ci.slice).
+cgroup_parent=${CI_CGROUP_PARENT-ci.slice}
+if [ -n "$cgroup_parent" ] && ! [[ $cgroup_parent =~ ^[A-Za-z0-9][A-Za-z0-9_.@:/-]*$ ]]; then
+  echo "CI_CGROUP_PARENT must be a cgroup name such as ci.slice, or empty: $cgroup_parent" >&2
+  exit 2
+fi
 # cgroup_memory_limit prints the tightest numeric memory.max from the
 # caller's cgroup v2 path (/proc/self/cgroup's 0:: line) up to the cgroup
 # root, or nothing when every level is unbounded or unreadable. A path that
@@ -117,7 +135,7 @@ args=(
 )
 if [ "$memory" != none ]; then args+=(--memory "$memory" --memory-swap "$memory"); fi
 # The sidecar is then charged to the runner's slice, not the daemon root.
-if [ -n "${CI_CGROUP_PARENT:-}" ]; then args+=(--cgroup-parent "$CI_CGROUP_PARENT"); fi
+if [ -n "$cgroup_parent" ]; then args+=(--cgroup-parent "$cgroup_parent"); fi
 modcache=/tmp/gomodcache
 if [ "$cache" = on ]; then
   vols="${prefix}cache-${class}"

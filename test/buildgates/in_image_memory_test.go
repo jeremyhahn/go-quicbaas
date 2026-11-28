@@ -247,13 +247,13 @@ func TestInImageMemoryReadsOnlyTheRootForAPathOutsideTheNamespace(t *testing.T) 
 	assertMemoryAndSwap(t, run.containerArgs(t), "4294967296")
 }
 
-func TestInImageMemoryCgroupParentOnlyWhenSet(t *testing.T) {
+func TestInImageCgroupParentDefaultsToCISlice(t *testing.T) {
 	cases := map[string]struct {
 		env        map[string]string
 		wantParent string
 	}{
 		"set":   {env: map[string]string{"CI_CGROUP_PARENT": "runner.slice"}, wantParent: "runner.slice"},
-		"unset": {env: nil},
+		"unset": {env: nil, wantParent: "ci.slice"},
 		"empty": {env: map[string]string{"CI_CGROUP_PARENT": ""}},
 	}
 	for name, tc := range cases {
@@ -268,6 +268,80 @@ func TestInImageMemoryCgroupParentOnlyWhenSet(t *testing.T) {
 			}
 			if !ok || got != tc.wantParent {
 				t.Errorf("--cgroup-parent = %q (present %v), want %q", got, ok, tc.wantParent)
+			}
+		})
+	}
+}
+
+func TestInImageCgroupParentRejectsAnInvalidNameBeforeDocker(t *testing.T) {
+	for _, value := range []string{"-ci.slice", "ci slice", "ci;slice", "../ci.slice"} {
+		t.Run(value, func(t *testing.T) {
+			run := runInToolchainImage(t, map[string]string{"CI_CGROUP_PARENT": value}, nil)
+			if run.exitCode != 2 {
+				t.Errorf("exit code = %d, want 2", run.exitCode)
+			}
+			if !strings.Contains(run.stderr, "CI_CGROUP_PARENT") {
+				t.Errorf("stderr %q does not name CI_CGROUP_PARENT", run.stderr)
+			}
+			if len(run.invocations) != 0 {
+				t.Errorf("docker was invoked: %q", run.invocations)
+			}
+		})
+	}
+}
+
+func assertCPUs(t *testing.T, args []string, want string) {
+	t.Helper()
+	if got, ok := flagValue(args, "--cpus"); !ok || got != want {
+		t.Errorf("--cpus = %q (present %v), want %q", got, ok, want)
+	}
+	for _, env := range []string{"GOMAXPROCS=" + want, "GOFLAGS=-p=" + want} {
+		if !slices.Contains(args, env) {
+			t.Errorf("--env %s not passed: %q", env, args)
+		}
+	}
+}
+
+func TestInImageCPUsCappedAtTheMax(t *testing.T) {
+	cases := map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"above the default cap": {env: map[string]string{"IN_IMAGE_CPUS": "112"}, want: "8"},
+		"at the default cap":    {env: map[string]string{"IN_IMAGE_CPUS": "8"}, want: "8"},
+		"below the default cap": {env: map[string]string{"IN_IMAGE_CPUS": "4"}, want: "4"},
+		"lower cap":             {env: map[string]string{"IN_IMAGE_CPUS": "6", "IN_IMAGE_CPUS_MAX": "2"}, want: "2"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			assertCPUs(t, runInToolchainImage(t, tc.env, nil).containerArgs(t), tc.want)
+		})
+	}
+}
+
+func TestInImageCPUsNeverExceedTheDefaultCapUnset(t *testing.T) {
+	args := runInToolchainImage(t, nil, nil).containerArgs(t)
+	got, ok := flagValue(args, "--cpus")
+	if !ok {
+		t.Fatalf("--cpus not passed: %q", args)
+	}
+	if got == "" || len(got) > 1 || got[0] < '1' || got[0] > '8' {
+		t.Errorf("--cpus = %q with no IN_IMAGE_CPUS, want 1 to 8", got)
+	}
+}
+
+func TestInImageCPUsMaxRejectsAnInvalidValueBeforeDocker(t *testing.T) {
+	for _, value := range []string{"0", "-1", "abc", "1.5"} {
+		t.Run(value, func(t *testing.T) {
+			run := runInToolchainImage(t, map[string]string{"IN_IMAGE_CPUS_MAX": value}, nil)
+			if run.exitCode != 2 {
+				t.Errorf("exit code = %d, want 2", run.exitCode)
+			}
+			if !strings.Contains(run.stderr, "IN_IMAGE_CPUS_MAX") {
+				t.Errorf("stderr %q does not name IN_IMAGE_CPUS_MAX", run.stderr)
+			}
+			if len(run.invocations) != 0 {
+				t.Errorf("docker was invoked: %q", run.invocations)
 			}
 		})
 	}
