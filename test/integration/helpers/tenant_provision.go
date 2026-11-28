@@ -97,7 +97,12 @@ func ProvisionTenant(ctx context.Context, baseURL, tenantID, systemBearer string
 		"admin_csr_pem":    string(csrPEM),
 	}
 	endpoint := baseURL + "/api/v1/tenants/" + url.PathEscape(tenantID) + "/provision"
-	body, err := postJSON(ctx, endpoint, systemBearer, reqBody)
+	var body []byte
+	err = retryTenantSetup(ctx, "provision", tenantID, func() error {
+		var e error
+		body, e = postJSON(ctx, endpoint, systemBearer, reqBody)
+		return e
+	})
 	if err != nil {
 		return nil, &TenantProvisionError{Step: "provision", TenantID: tenantID, Cause: err}
 	}
@@ -147,27 +152,29 @@ func (e *TenantDeleteError) Unwrap() error { return e.Cause }
 // not an error.
 func DeleteTenant(ctx context.Context, baseURL, tenantID, systemBearer string) error {
 	endpoint := strings.TrimRight(baseURL, "/") + "/api/v1/tenants/" + url.PathEscape(tenantID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
-	if err != nil {
-		return &TenantDeleteError{TenantID: tenantID, Cause: err}
-	}
-	req.Header.Set("Authorization", "Bearer "+systemBearer)
+	return retryTenantSetup(ctx, "delete", tenantID, func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+		if err != nil {
+			return &TenantDeleteError{TenantID: tenantID, Cause: err}
+		}
+		req.Header.Set("Authorization", "Bearer "+systemBearer)
 
-	resp, err := NewHTTPClient(tenantSetupTimeout).Do(req)
-	if err != nil {
-		return &TenantDeleteError{TenantID: tenantID, Cause: err}
-	}
-	defer resp.Body.Close()
+		resp, err := NewHTTPClient(tenantSetupTimeout).Do(req)
+		if err != nil {
+			return &TenantDeleteError{TenantID: tenantID, Cause: err}
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound || (resp.StatusCode >= 200 && resp.StatusCode <= 299) {
-		return nil
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return &TenantDeleteError{TenantID: tenantID, Cause: err}
-	}
-	return &TenantDeleteError{TenantID: tenantID,
-		Cause: &AuthBadStatusError{URL: endpoint, Status: resp.StatusCode, Body: string(body)}}
+		if resp.StatusCode == http.StatusNotFound || (resp.StatusCode >= 200 && resp.StatusCode <= 299) {
+			return nil
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return &TenantDeleteError{TenantID: tenantID, Cause: err}
+		}
+		return &TenantDeleteError{TenantID: tenantID,
+			Cause: &AuthBadStatusError{URL: endpoint, Status: resp.StatusCode, Body: string(body)}}
+	})
 }
 
 // newTenantAdminCSR generates a P-256 key and a CSR for it. The server sets
