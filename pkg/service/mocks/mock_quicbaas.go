@@ -127,6 +127,7 @@ type MockQuicBaaS struct {
 	TrustServiceFunc              func() service.TrustService
 	AttestationServiceFunc        func() service.AttestationService
 	RegistryServiceFunc           func() service.RegistryService
+	ServicesServiceFunc           func() service.ServicesService
 	PIVServiceFunc                func() service.PIVService
 	FIDO2ServiceFunc              func() service.FIDO2Service
 	ACMEServiceFunc               func() service.ACMEServicer
@@ -715,6 +716,14 @@ func (m *MockQuicBaaS) Attestation() service.AttestationService {
 func (m *MockQuicBaaS) Registry() service.RegistryService {
 	if m.RegistryServiceFunc != nil {
 		return m.RegistryServiceFunc()
+	}
+	return nil
+}
+
+// Services returns the configured ServicesService stub, or nil.
+func (m *MockQuicBaaS) Services() service.ServicesService {
+	if m.ServicesServiceFunc != nil {
+		return m.ServicesServiceFunc()
 	}
 	return nil
 }

@@ -40,6 +40,7 @@ DELETE /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer permission sdlc
 DELETE /api/v1/secrets/* permission secrets:delete
 DELETE /api/v1/secrets/dynamic/leases/{id} permission dynamic_secrets:lease_revoke
 DELETE /api/v1/secrets/dynamic/roles/{name} permission dynamic_secrets:role_delete
+DELETE /api/v1/services/{name} permission services:deploy
 DELETE /api/v1/ssh/authorized/keys/{scope}/{owner}/{name} permission keys:delete
 DELETE /api/v1/ssh/keys/{scope}/{owner}/{name} permission keys:delete
 DELETE /api/v1/ssh/known-hosts/{host} permission keys:delete
@@ -228,6 +229,8 @@ GET /api/v1/secrets/dynamic/leases permission dynamic_secrets:lease_list
 GET /api/v1/secrets/dynamic/roles permission dynamic_secrets:role_list
 GET /api/v1/secrets/dynamic/roles/{name} permission dynamic_secrets:role_read
 GET /api/v1/server/capabilities session -:-
+GET /api/v1/services permission services:read
+GET /api/v1/services/{name} permission services:read
 GET /api/v1/ssh/authorized/keys permission keys:list
 GET /api/v1/ssh/authorized/keys/{scope}/{owner}/{name} permission keys:get
 GET /api/v1/ssh/keys permission keys:list
@@ -501,6 +504,11 @@ POST /api/v1/secrets/* permission secrets:write
 POST /api/v1/secrets/dynamic/credentials/{role} permission dynamic_secrets:generate
 POST /api/v1/secrets/dynamic/leases/{id}/renew permission dynamic_secrets:lease_renew
 POST /api/v1/secrets/dynamic/roles permission dynamic_secrets:role_create
+POST /api/v1/services permission services:deploy
+POST /api/v1/services/{name}/restart permission services:control
+POST /api/v1/services/{name}/resume permission services:control
+POST /api/v1/services/{name}/start permission services:control
+POST /api/v1/services/{name}/stop permission services:control
 POST /api/v1/ssh/authorized permission keys:get
 POST /api/v1/ssh/authorized/keys permission keys:create
 POST /api/v1/ssh/authorized/verify permission keys:verify
@@ -652,6 +660,7 @@ PUT /api/v1/scheduler/jobs/{id} permission scheduler:update
 PUT /api/v1/sdlc/projects/{projectID}/binding permission sdlc:bind
 PUT /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer permission sdlc:bind
 PUT /api/v1/secrets/* permission secrets:write
+PUT /api/v1/services permission services:deploy
 PUT /api/v1/tenants/{tenant_id} permission tenants:create
 PUT /api/v1/tenants/{tenant_id}/apps/{client_id} permission tenants:create
 PUT /api/v1/tenants/{tenant_id}/policies/{policy_name} permission tenants:create

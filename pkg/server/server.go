@@ -105,6 +105,11 @@ type serverOptions struct {
 	// AttestContainer returns a typed not-configured error.
 	containerAttestor service.ContainerAttestor
 
+	// servicePlane is the application-supplied launcher, grants and
+	// manifest keyring of the service plane (WithServicePlane). The node
+	// supplies the store.
+	servicePlane *service.ServicePlaneRuntime
+
 	// attestationTrustAnchors are the root certificates every attestation
 	// verification is anchored against. When empty, only the per-request
 	// anchors supplied in the verify options apply.
@@ -195,6 +200,16 @@ func WithDANEPublisher(publisher dane.DANEPublisher) ServerOption {
 // WithDANEPublisher uses.
 func WithContainerAttestor(attestor service.ContainerAttestor) ServerOption {
 	return func(o *serverOptions) { o.containerAttestor = attestor }
+}
+
+// WithServicePlane supplies the service plane's launcher, its grants (one per
+// grant kind, or none for the node to build the five from its own CA, secrets,
+// registry and IAM) and the keyring that verifies service manifests. The node
+// keeps the services in the platform shard of go-qrdb, every write arbitrated
+// by cas.Writer. Until this is set, every Services() verb answers
+// service.ErrServicePlaneNotConfigured on every transport.
+func WithServicePlane(rt service.ServicePlaneRuntime) ServerOption {
+	return func(o *serverOptions) { o.servicePlane = &rt }
 }
 
 // WithAttestationTrustAnchors returns a ServerOption that sets the root
@@ -416,6 +431,9 @@ type Server struct {
 	// orchWorkspaceSweep is the periodic sweep of concluded tasks' session
 	// workspaces, stopped at shutdown.
 	orchWorkspaceSweep *orchestrationSweeps
+	// servicePlaneRecovery settles abandoned service claims, stopped at
+	// shutdown.
+	servicePlaneRecovery *orchestrationSweeps
 
 	// sdlcLabelSweeps is the SDLC module's forge-label reconciliation
 	// goroutine, started by startSDLC and stopped before the module detaches.
@@ -1348,6 +1366,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		// from go away.
 		s.stopOrchestrationSweeps()
 		s.stopWorkspaceSweep()
+		s.stopServicePlaneRecovery()
 
 		// Nothing starts new jobs from here on, so the running ones can be
 		// drained: they get a bounded window to conclude while the stores

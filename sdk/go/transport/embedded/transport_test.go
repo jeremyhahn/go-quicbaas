@@ -448,6 +448,7 @@ func (m *mockQuicBaaS) Certificate() service.CertificateService       { return n
 func (m *mockQuicBaaS) Trust() service.TrustService                   { return nil }
 func (m *mockQuicBaaS) Attestation() service.AttestationService       { return nil }
 func (m *mockQuicBaaS) Registry() service.RegistryService             { return nil }
+func (m *mockQuicBaaS) Services() service.ServicesService             { return nil }
 func (m *mockQuicBaaS) PIV() service.PIVService                       { return nil }
 func (m *mockQuicBaaS) FIDO2() service.FIDO2Service                   { return nil }
 func (m *mockQuicBaaS) ACME() service.ACMEServicer                    { return nil }

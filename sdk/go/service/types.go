@@ -129,6 +129,25 @@ type (
 	// SDLCService is the SDLC module's binding service.
 	SDLCService = pkgservice.SDLCService
 
+	// ServicesService deploys and manages a tenant's signed services.
+	ServicesService = pkgservice.ServicesService
+
+	// DeployServiceRequest carries a signed manifest to Deploy or Redeploy.
+	DeployServiceRequest = pkgservice.DeployServiceRequest
+
+	// ServiceNameRequest names one of the caller tenant's services.
+	ServiceNameRequest = pkgservice.ServiceNameRequest
+
+	// ServiceRecord is one service's state, manifest and grant references.
+	ServiceRecord = pkgservice.ServiceRecord
+
+	// ListServicesResponse lists the caller tenant's services by name.
+	ListServicesResponse = pkgservice.ListServicesResponse
+
+	// ServicePlaneResolver answers the node's plane, built on first use, or
+	// why it cannot be built yet.
+	ServicePlaneResolver = pkgservice.ServicePlaneResolver
+
 	// PromptService serves the prompt-set verbs: list, get, effective,
 	// diff, history, put, rollback and reset.
 	PromptService = pkgservice.PromptService

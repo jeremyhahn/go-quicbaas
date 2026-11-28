@@ -1,6 +1,6 @@
 # Trusted service plane: architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-10-15
+> **Status: NORMATIVE** · Last verified: 2026-11-14
 > The design for the SPEC rows `container-runtime`, `services`, `oci-registry`,
 > `measured-launch` and `service-policy`. All five are planned; the parts
 > already built are noted where they appear.
@@ -122,14 +122,59 @@ scoped to a tenant, with CAS-arbitrated writes. The manifest holds:
 on REST, gRPC, QUIC, MCP, Unix and embedded, and in the SDK as
 `SDK().Compute().Services()`.
 
+**Built: the core.** `pkg/serviceplane` holds the model and the rules the
+service serves: the `Manifest` and its validation (the role is a go-qrdb
+built-in role other than `so`), `Sign` and the `Keyring` verifier (Ed25519,
+ECDSA P-256 and P-384, over a domain-separated payload kept as signed), the
+tenant-scoped `Store` whose writes go through a `Guard` (go-qrdb's
+`cas.Writer`), and the `Plane`. Each verb on a deployed service first claims
+it by a guarded swap to `transitioning`, so of two racing nodes one acts.
+While a verb's launcher or grant call runs, the plane renews the claim, so
+only a claim whose holder stopped is recovered as stale; a verb that finds
+its claim taken over cancels that call and writes nothing more. Legal
+transitions: `start` from stopped, `stop` from running, `resume` from
+halted, `restart` from running or halted, and `undeploy` and `redeploy` from
+any settled state. A failed launch, halt or revoke leaves the service
+`halted` with the reason. The five grants come in through one `Grant` per
+kind, in the order identity, certificate, name, RBAC, secrets; a failed grant
+on deploy revokes the grants already made and releases the name. Plan:
+[docs/plans/1687.md](../plans/1687.md).
+
 **On deploy, the platform grants the service:**
 
 - a workload identity: an x509-svid from go-xkms,
-  `spiffe://<tenant>/...`, where the tenant is the SPIFFE trust domain;
+  `spiffe://<trust domain>/tenant/<tenant>/svc/<name>`, the platform form
+  every workload logs in with;
 - a certificate through the re-exported go-xkms ACME;
 - a name in `pkg/registry`;
 - RBAC grants from the built-in role;
 - secrets bound to the identity.
+
+**Built: the grants.** `pkg/serviceplane/grants` implements the five over
+go-xkms, the registry, IAM and secrets; `grants.All` builds them in plane
+order. The identity is
+`spiffe://<trust domain>/tenant/<tenant>/svc/<name>`, under the operator
+trust domain `grants.Config.TrustDomain` (`iam.spiffe_trust_domain`), so the
+SVID passes `TenantFromCert` like any workload's. Its x509-svid
+(`ProfileNameX509SVID`) and the ACME leaf for `<name>.<tenant>.<domain>`
+are issued as the tenant's from a fresh P-256 key, and certificate and key are stored under
+`services/<name>/svid` and `services/<name>/tls`. The name is a registry
+lease, RBAC binds the manifest's role to the identity, and the secrets grant
+binds `services/<name>/` to it. The plane stores these under the tenant's
+scope (`tenant/<tenant>/services/<name>/...`), the same place the secrets
+service maps the tenant's `services/<name>/` to, so two tenants' services of
+one name never share credentials. The identity and certificate grants keep
+their credential as one `data` PEM bundle (certificate, then key), which the
+secrets API serves to the bound workload. A redeploy keeps every grant whose
+ref still fits the manifest; an SVID under another ID is reissued and the old one
+revoked; undeploy revokes the certificates and destroys what was
+stored. The `RoleBinder` over go-qrdb IAM is `iam.WorkloadRoleBinder`: the
+SPIFFE ID is a machine principal (username the SVID's CommonName, active,
+mTLS-only, no email login key) holding the built-in role; it never widens an
+account that is not mTLS-only, and a revoke removes the role. The node builds
+them: a `ServicePlaneRuntime` with no grants gets `grants.All` over the node's
+go-xkms CA, secrets manager, platform registry and `iam.WorkloadRoleBinder`,
+its names under `ServicePlaneRuntime.Domain` (default: the trust domain).
 
 **Placement** reuses `pkg/scheduler/placement`. `FleetDeployService`, the SSH
 install of the daemon itself, stays as node bootstrap. Its verbs are not
@@ -158,6 +203,36 @@ type Strategy interface {
 
 `ABSwitch` is the first strategy. `BlueGreen` and `Canary` are later
 strategies on the same interface; there is never a second controller.
+
+**Built: the release and the controller.** `serviceplane.Release` is signed
+by `SignRelease` and checked by `Keyring.VerifyRelease`, under a domain that
+differs from the manifest's, so neither signature verifies as the other.
+`pkg/serviceplane/rollout` holds the A/B `Slots` record per service, the
+`Strategy` interface (`Name`, `Plan(slots, target)`, `Step`, `Rollback`),
+`ABSwitch` over a `SlotRuntime`, an `Appraiser` and a `NameSwitch`, and the
+`Controller`. The controller acts only while its `scheduler.LeaderChecker`
+says it leads, and refuses a release that is forged, for another tenant, or
+of kind `node`. It claims the service by writing the rollout into the slot
+record through the `Guard`, and writes each phase against the record it
+read; a controller that finds a rollout in flight refuses, and one whose
+write loses stops. `Resume` lets a new leader take over a rollout in flight.
+`ResumeAll` resumes every one, and the node's service-plane recovery tick
+calls it each minute, so the current leader takes over a rollout its
+predecessor left in flight. Each claim takes the service's next `Epoch`,
+and every fill, drain and switch carries it as a `Fence`: the runtime and
+the registry refuse (`ErrFenced`) an epoch older than the newest they took
+for the service (`EpochGate`), so a superseded leader's delayed side effect
+never lands. A failed step rolls back (`rolled_back`); a failed rollback is
+recorded as `failed`. A rollback whose switch back fails leaves the target
+slot running, since the name may still route to it. `rollout.PlaneRoller`
+drives the plane's own slot
+verbs. `FillSlot` and `DrainSlot` are the slot runtime (over the plane's launcher),
+`SwitchSlot` is the name switch (it moves the name grant), and the plane
+fences each with the claim's epoch. The node builds the one controller over
+the platform shard, gated by the shard's leader, when its
+`ServicePlaneRuntime` supplies an `Appraiser` and a `Keyring` verifier;
+otherwise a release redeploy is refused. Not built: a node appraiser over
+measured-launch evidence, and a release redeploy on the transports.
 
 ### Boot node, NBD and the deployer
 

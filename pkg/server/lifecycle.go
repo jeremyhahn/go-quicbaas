@@ -2164,6 +2164,13 @@ func (s *Server) startService() error {
 		builder = builder.WithContainerAttestor(s.opts.containerAttestor)
 		s.logger.Info("Container attestor attached to service builder")
 	}
+	if s.opts.servicePlane != nil {
+		resolve := s.servicePlaneResolver(*s.opts.servicePlane)
+		builder = builder.WithServicePlane(resolve)
+		// Abandoned claims (a crash mid-verb, a lost settlement) are
+		// settled halted, so their owners can act on them again.
+		s.startServicePlaneRecovery(resolve)
+	}
 
 	// Wire the Certificate Authority into the service builder so the
 	// CertificateService inside QuicBaaS can issue and revoke certificates
@@ -2683,6 +2690,7 @@ func (s *Server) startGRPCServer() error {
 	s.registerTrustService(grpcServer, quicbaasService)
 	s.registerAttestationService(grpcServer, quicbaasService)
 	s.registerRegistryService(grpcServer)
+	s.registerServicesService(grpcServer)
 
 	// Register the FIDO2 (WebAuthn ceremony) and PIV gRPC services. The
 	// handlers delegate to the tenant-scoped FIDO2() and backend-scoped

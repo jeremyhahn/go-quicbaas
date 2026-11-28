@@ -361,6 +361,19 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		return registryResult(method, result)
 	}
 
+	// The service plane: signed manifests in, typed records out.
+	if isMCPServicesService(service) {
+		arguments, err := servicesArguments(method, reqBody)
+		if err != nil {
+			return nil, err
+		}
+		result, err := t.callTool(ctx, toolName, arguments)
+		if err != nil {
+			return nil, err
+		}
+		return servicesResult(method, result)
+	}
+
 	// The parameter store is a closed set of string-typed tools with typed
 	// answers; a method with no tool fails fast.
 	if isMCPParameterStoreService(service) {

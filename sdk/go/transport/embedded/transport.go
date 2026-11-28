@@ -505,6 +505,17 @@ var unaryHandlers = map[string]handlerFunc{
 	registryService + "/Deregister": handleRegistryDeregister,
 	registryService + "/Resolve":    handleRegistryResolve,
 
+	// Service plane (#1687)
+	servicesService + "/Deploy":   servicesManifestHandler("Deploy", service.ServicesService.Deploy),
+	servicesService + "/Redeploy": servicesManifestHandler("Redeploy", service.ServicesService.Redeploy),
+	servicesService + "/Undeploy": handleServicesUndeploy,
+	servicesService + "/Start":    servicesNameHandler("Start", service.ServicesService.Start),
+	servicesService + "/Stop":     servicesNameHandler("Stop", service.ServicesService.Stop),
+	servicesService + "/Resume":   servicesNameHandler("Resume", service.ServicesService.Resume),
+	servicesService + "/Restart":  servicesNameHandler("Restart", service.ServicesService.Restart),
+	servicesService + "/Get":      servicesNameHandler("Get", service.ServicesService.Get),
+	servicesService + "/List":     handleServicesList,
+
 	// ObjectStorage operations
 	"quicbaas.ObjectStorage/PutObject":          handleObjPutObject,
 	"quicbaas.ObjectStorage/GetObject":          handleObjGetObject,

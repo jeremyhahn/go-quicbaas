@@ -79,4 +79,8 @@ var (
 	// ErrRegistryServiceUnavailable indicates the service registry is not
 	// configured on this server.
 	ErrRegistryServiceUnavailable = errors.New("service registry not available")
+
+	// ErrServicesServiceUnavailable indicates the service plane is not
+	// served on this server.
+	ErrServicesServiceUnavailable = errors.New("service plane not available")
 )

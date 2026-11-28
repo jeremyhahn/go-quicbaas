@@ -1815,7 +1815,7 @@ INTEGRATION_FEATURES := account agent agents api attestation auth backup batch \
 	fleet-enrollment fleet-runtime forge-gitea iam init kms lifecycle login mcp merge-result messaging \
 	observability orchestration orchestration-gpu orchestrator parameter_store \
 	placement project quicbaasd raft rag registry routing scheduler sdk-go sdk-js seal \
-	seal-hardware secrets secrets-resolver server session-attach signalbridge \
+	seal-hardware secrets secrets-resolver server services session-attach signalbridge \
 	standalone storage storage-file tenantbarrier timeseries transactions transport vector \
 	workerimage
 FEATURE_PATHS_account           := test/integration/cli/account_test.go
@@ -1865,6 +1865,7 @@ FEATURE_PATHS_seal-hardware     := test/integration/seal/
 FEATURE_PATHS_secrets           := test/integration/secrets/
 FEATURE_PATHS_secrets-resolver  := test/integration/secrets-resolver/
 FEATURE_PATHS_server            := test/integration/server/
+FEATURE_PATHS_services          := test/integration/services/
 FEATURE_PATHS_session-attach    := test/integration/session_attach/
 FEATURE_PATHS_signalbridge      := test/integration/signalbridge/ pkg/signalbridge/
 FEATURE_PATHS_standalone        := test/integration/standalone/
@@ -5208,6 +5209,10 @@ bench-registry: ## Run service registry benchmarks
 .PHONY: integration-test-registry
 integration-test-registry: ## Run service registry CLI integration tests (all transports, in the devcontainer)
 	@$(MAKE) integration-test WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 QUICBAAS_TEST_FILTER="-run TestServiceRegistry ./test/integration/cli/..."
+
+.PHONY: integration-test-services
+integration-test-services: ## Run service plane integration tests (a real node started WithServicePlane, in the devcontainer)
+	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/services/..."
 
 .PHONY: test-attestation
 test-attestation: ## Run attestation Verifier unit tests (service, every transport, SDK, CLI)

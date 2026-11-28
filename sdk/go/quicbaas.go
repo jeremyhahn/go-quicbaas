@@ -56,6 +56,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/secrets"
+	servicesclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/services"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/transaction"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/vector"
@@ -164,6 +165,11 @@ type Client interface {
 	// watch), served by the server on every transport and scoped to the
 	// caller's authenticated tenant.
 	Registry() RegistryClient
+
+	// Services returns the service plane client: the seven lifecycle verbs
+	// (deploy, undeploy, redeploy, start, stop, resume, restart) over the
+	// caller tenant's signed service manifests, and reads.
+	Services() ServicesClient
 
 	// DataStore returns a KVStore suitable for constructing DAOs.
 	// Uses the QRDB transport layer.
@@ -1191,6 +1197,16 @@ type (
 // RegistryClient is the service registry client (client/registry.Client).
 type RegistryClient = registry.Client
 
+// ServicesClient is the service plane client (client/services.Client).
+type ServicesClient = servicesclient.Client
+
+// Service plane request and record aliases.
+type (
+	SignedServiceManifest = servicesclient.SignedManifest
+	ServiceRecord         = servicesclient.Record
+	ListServicesResponse  = servicesclient.ListResponse
+)
+
 // Service registry request, response and event aliases, so consumers never
 // import the leaf client package.
 type (
@@ -1746,6 +1762,7 @@ type client struct {
 	parameterStoreClient     ParameterStoreClient
 	schedulerClient          SchedulerClient
 	registryClient           RegistryClient
+	servicesClient           ServicesClient
 	messagingClient          MessagingClient
 	embeddingClient          EmbeddingClient
 	ollamaClient             OllamaClient
@@ -2552,6 +2569,24 @@ func (c *client) Registry() RegistryClient {
 		c.registryClient = newRegistryClient(c.transport)
 	}
 	return c.registryClient
+}
+
+// Services returns the service plane client.
+func (c *client) Services() ServicesClient {
+	c.mu.RLock()
+	if c.servicesClient != nil {
+		c.mu.RUnlock()
+		return c.servicesClient
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.servicesClient == nil {
+		c.servicesClient = servicesclient.NewClient(c.transport)
+	}
+	return c.servicesClient
 }
 
 // Messaging returns the Messaging client for pub/sub and push notifications.

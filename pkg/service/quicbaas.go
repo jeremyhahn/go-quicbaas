@@ -176,6 +176,7 @@ type quicBaaS struct {
 	trustService              TrustService
 	attestationService        AttestationService
 	registryService           RegistryService
+	servicesService           ServicesService
 	pivService                PIVService
 	fido2Service              FIDO2Service
 	webauthnCredentialService WebAuthnCredentialService
@@ -632,6 +633,10 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		}
 		return registry.NewFromClient(ctx, client)
 	})
+
+	// The service plane is always wired; its resolver comes from the node,
+	// and without one every verb answers ErrServicePlaneNotConfigured.
+	svc.servicesService = NewServicesService(b.servicePlane)
 
 	// The PIV and FIDO2 services are always wired. PIV is a stateless
 	// delegate to the composed go-xkms service singleton (typed
@@ -4859,6 +4864,11 @@ func (s *quicBaaS) Attestation() AttestationService {
 // Registry returns the service registry. It is always non-nil.
 func (s *quicBaaS) Registry() RegistryService {
 	return s.registryService
+}
+
+// Services returns the service plane. It is always non-nil.
+func (s *quicBaaS) Services() ServicesService {
+	return s.servicesService
 }
 
 // PIV returns the backend-scoped PIV composition service surfaced under

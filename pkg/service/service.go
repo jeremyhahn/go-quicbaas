@@ -130,6 +130,11 @@ type QuicBaaS interface {
 	// configured; a store that cannot be reached is reported per call.
 	Registry() RegistryService
 
+	// Services returns the service plane: signed service manifests and the
+	// seven lifecycle verbs. It is always non-nil; a node with no
+	// ServicePlaneRuntime answers ErrServicePlaneNotConfigured per call.
+	Services() ServicesService
+
 	// PIV returns the backend-scoped PIV composition service surfaced
 	// under Security().Auth().PIV(). Always configured: every verb
 	// delegates to the composed go-xkms service, whose typed errors
@@ -1728,6 +1733,10 @@ type ServiceBuilder interface {
 	// returns a typed not-configured error.
 	WithContainerAttestor(attestor ContainerAttestor) ServiceBuilder
 
+	// WithServicePlane sets the resolver of the node's service plane. When
+	// unset, every Services() verb answers ErrServicePlaneNotConfigured.
+	WithServicePlane(resolve ServicePlaneResolver) ServiceBuilder
+
 	// WithAttestationTrustAnchors sets the root certificates every
 	// attestation verification is anchored against. When unset, only the
 	// per-request anchors supplied in the verify options apply.
@@ -1811,6 +1820,7 @@ type serviceBuilder struct {
 	caService                 interface{}
 	danePublisher             DANEPublisher
 	containerAttestor         ContainerAttestor
+	servicePlane              ServicePlaneResolver
 	attestationTrustAnchors   []*x509.Certificate
 	acmeService               ACMEServicer
 	catalogManager            catalog.CatalogManager
@@ -1912,6 +1922,11 @@ func (b *serviceBuilder) WithCAService(caService interface{}) ServiceBuilder {
 
 func (b *serviceBuilder) WithDANEPublisher(publisher DANEPublisher) ServiceBuilder {
 	b.danePublisher = publisher
+	return b
+}
+
+func (b *serviceBuilder) WithServicePlane(resolve ServicePlaneResolver) ServiceBuilder {
+	b.servicePlane = resolve
 	return b
 }
 
