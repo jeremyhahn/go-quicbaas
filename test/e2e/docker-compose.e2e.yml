@@ -1,15 +1,4 @@
-# Dockerized Playwright e2e — the host needs only Docker.
-#
-# The e2e service is self-contained: a multi-stage build produces quicbaasd with
-# the freshly-built UI embedded, on a Playwright base image (browsers included).
-# Its entrypoint (run-e2e.sh) boots the daemon and runs the suite in the same
-# container, so the CA cert and first-boot invite log are shared locally.
-#
-#   make test-e2e-docker        → chromium-no-backend (no agent backend needed)
-#   make test-e2e-acp-docker …  → chromium-acp (opencode + ollama; see override)
-#
-# The `workspace` named context supplies the sibling repos for the go.work
-# reconstruction, identical to the integration compose files.
+# Dockerized Playwright e2e; the host needs only Docker.
 
 services:
   e2e:
@@ -29,12 +18,7 @@ services:
       # Surface Playwright artifacts (traces/screenshots/report) to the host.
       - ./.docker-results:/app/cmd/quicbaas/frontend/test-results
 
-# Gitea module-fetch credentials for the image builds, as a BuildKit secret
-# rather than an env var or build arg (dependency-resolution.md §6). The file
-# is staged by `make stage-gomodauth` -- from the runner's environment, or a
-# Gitea read token on any other host -- before the build and emptied after it
-# (docs/testing/private-modules.md). When it is empty the builds fall back to
-# the public proxy, which is what happens on GitHub.
+# Module fetch credentials for the image builds as a BuildKit secret.
 secrets:
   gomodauth:
     file: ${GOMODAUTH_ENV:-/tmp/quicbaas-gomodauth.env}

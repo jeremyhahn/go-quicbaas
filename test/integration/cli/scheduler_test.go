@@ -781,7 +781,9 @@ func TestSchedulerJobCreate(t *testing.T) {
 	RunForAllTransportsAsTenantAdmin(t, "CreateDelayedJob", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("delayed-%d", time.Now().UnixNano())
 
-		cmd := SchedulerJobCreateDelayedCommand(jobName, "audit.cleanup", "24h")
+		// audit.cleanup is a platform handler only its service schedules
+		// (scheduler.IsPlatformHandler); a tenant admin's job uses its own.
+		cmd := SchedulerJobCreateDelayedCommand(jobName, "test.handler", "24h")
 		if runner.IsSkipped(cmd) {
 			return
 		}
