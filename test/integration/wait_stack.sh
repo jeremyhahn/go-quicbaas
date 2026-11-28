@@ -1,25 +1,5 @@
 #!/bin/bash
-# wait_stack.sh GATE [ARGS...] waits until one readiness gate of an integration
-# stack passes, probing every STEP seconds, and exits 1 naming the gate when its
-# timeout passes first. The Makefile's integration-test and
-# integration-test-cluster targets call it after `compose up` and stop on a
-# nonzero exit, so no test runs against a stack that never became ready.
-#
-#   grpc                 the gRPC port (50051) listens in test-node1..3
-#   mcp                  the MCP port (8888) listens in test-node1..3
-#   storage              the Floci, MinIO and Azurite healthchecks report healthy
-#   ollama               the local Ollama container answers `ollama list`
-#   ready NAME TIMEOUT URL...
-#                        every URL's /api/v1/health/ready answers 200
-#   add-node TIMEOUT URL...
-#                        one URL accepts AddNode for node4
-#
-# COMPOSE is the compose command with its project and file flags, e.g.
-# "docker compose -p quicbaas-integration -f docker-compose.integration.yml".
-# DOCKER is the docker binary. WAIT_TIMEOUT overrides the timeout, in seconds,
-# of the grpc, mcp, storage and ollama gates.
-#
-# Exercised without Docker by wait_stack_test.sh (`make check-workspace-script`).
+# wait_stack.sh GATE [ARGS...]: wait until one readiness gate of an integration stack passes, or exit 1 naming it.
 
 set -u
 
@@ -104,6 +84,25 @@ ports_ready() {
     for node in $NODES; do
         # shellcheck disable=SC2086 # COMPOSE is a command with its flags.
         if limit=$(probe_limit) && timeout "$limit" $COMPOSE exec -T "$node" sh -c "nc -z localhost ${port}" >/dev/null 2>&1; then
+            ready=$((ready + 1))
+        else
+            down="${down} ${node}"
+        fi
+    done
+    PROGRESS="${ready}/3 ready, not ready:${down}"
+    [ "$ready" -eq 3 ]
+}
+
+# leader_ready succeeds when every integration node's /api/v1/health/ready
+# answers 200, which it does only once every raft shard has a leader.
+leader_ready() {
+    local ready=0
+    local down=
+    local node limit
+
+    for node in $NODES; do
+        # shellcheck disable=SC2086 # COMPOSE is a command with its flags.
+        if limit=$(probe_limit) && timeout "$limit" $COMPOSE exec -T "$node" sh -c "curl -ksf -o /dev/null https://localhost:8080/api/v1/health/ready" >/dev/null 2>&1; then
             ready=$((ready + 1))
         else
             down="${down} ${node}"
@@ -200,7 +199,7 @@ node4_added() {
 }
 
 usage() {
-    echo "usage: wait_stack.sh grpc|mcp|storage|ollama|ready NAME TIMEOUT URL...|add-node TIMEOUT URL..." >&2
+    echo "usage: wait_stack.sh grpc|mcp|storage|ollama|leader|ready NAME TIMEOUT URL...|add-node TIMEOUT URL..." >&2
     exit 2
 }
 
@@ -212,6 +211,7 @@ grpc) wait_for "the gRPC ports (50051) on test-node1..3" "${WAIT_TIMEOUT:-30}" 2
 mcp) wait_for "the MCP ports (8888) on test-node1..3" "${WAIT_TIMEOUT:-15}" 2 ports_ready 8888 ;;
 storage) wait_for "the storage backends (Floci, MinIO, Azurite)" "${WAIT_TIMEOUT:-30}" 2 storage_ready ;;
 ollama) wait_for "the local Ollama container" "${WAIT_TIMEOUT:-120}" 5 ollama_ready ;;
+leader) wait_for "a raft leader on test-node1..3 (/api/v1/health/ready)" "${WAIT_TIMEOUT:-120}" 3 leader_ready ;;
 ready)
     [ $# -ge 3 ] || usage
     name=$1

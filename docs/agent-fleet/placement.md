@@ -299,7 +299,7 @@ For the owner or the CA. None is decided here.
 1. **Home package and SPEC row.** Does placement live in `pkg/orchestration`
    (beside the registry and admission, as this note assumes) or under the
    scheduler, where SPEC's `declarative-placement` row and ROADMAP #28 point?
-   Which row does #761 trace to? **Answered** (owner ruling 191, 2026-10-26):
+   Which row does #761 trace to? **Answered**:
    workload placement is go-quicbaas's own scheduler. The row is
    `declarative-placement`, and #761 and #28 trace to it. The decision runs on
    the scheduler's placement engine (`pkg/scheduler/placement`). The spec

@@ -740,3 +740,29 @@ func TestCryptoRewrap(t *testing.T) {
 			"decrypted rewrapped ciphertext should match original plaintext")
 	})
 }
+
+// TestCryptoProbeAuthRefused checks that the crypto availability probe tells
+// an auth refusal from a not-configured answer on every transport.
+func TestCryptoProbeAuthRefused(t *testing.T) {
+	cases := []struct {
+		name   string
+		stdout string
+		stderr string
+		want   bool
+	}{
+		{"mcp 401 at initialize", "", "Error: mcp.initialize: failed to initialize MCP session: transport error: unauthorized (401)", true},
+		{"rest 401", "", "Error: request failed: status 401: UNAUTHORIZED", true},
+		{"rest 403", "", "Error: request failed: status 403: FORBIDDEN", true},
+		{"grpc permission denied", "", "Error: rpc error: code = PermissionDenied desc = not allowed", true},
+		{"grpc unauthenticated", "", "Error: rpc error: code = Unauthenticated desc = missing token", true},
+		{"not configured", "", "Error: crypto service not configured", false},
+		{"empty", "", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cryptoProbeAuthRefused(tc.stdout, tc.stderr); got != tc.want {
+				t.Errorf("cryptoProbeAuthRefused(%q, %q) = %v, want %v", tc.stdout, tc.stderr, got, tc.want)
+			}
+		})
+	}
+}

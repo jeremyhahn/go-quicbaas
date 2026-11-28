@@ -180,6 +180,8 @@ var domainSentinelClasses = []struct {
 	{orchestration.ErrWorkflowValidation, qberrors.ErrInvalidInput},
 	{orchestration.ErrWorkflowRetiredField, qberrors.ErrInvalidInput},
 	{orchestration.ErrInvalidInput, qberrors.ErrInvalidInput},
+	// gRPC answers codes.Unimplemented for the same refusal (server_inference.go convertInferError).
+	{orchestration.ErrInferUnsupported, qberrors.ErrUnimplemented},
 }
 
 // domainErrorClass classes a project or SDLC service error, reporting false

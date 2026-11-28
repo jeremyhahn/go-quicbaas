@@ -123,13 +123,11 @@ func TestMsgChannelListWithFilter(t *testing.T) {
 			runner.RunAndAssert(createCmd)
 		}
 
-		// List with filter
-		filterCmd := MsgChannelListWithFilterCommand(prefix+"*", 10, 0)
-		runner.RunAndAssert(filterCmd)
-
-		// List with pagination
-		paginatedCmd := MsgChannelListWithFilterCommand("", 2, 0)
-		runner.RunAndAssert(paginatedCmd)
+		// list-channels has no filter or paging flags: list the tenant's
+		// channels in each output format and find this test's channels in it.
+		for _, format := range []string{"table", "json"} {
+			runner.RunAndAssert(MsgChannelListOutputCommand(format, channels...))
+		}
 
 		// Cleanup
 		for _, ch := range channels {
@@ -369,14 +367,19 @@ func TestMsgDedupStats(t *testing.T) {
 
 // TestMsgDedupStatsWithOptions tests getting dedup stats with options.
 func TestMsgDedupStatsWithOptions(t *testing.T) {
+	// dedup-stats' only flag is --output; each case names the output the
+	// format must carry.
 	testCases := []struct {
 		name   string
-		reset  bool
-		window string
+		format string
+		expect func(channelName string) []string
 	}{
-		{"WithWindow", false, "1h"},
-		{"WithReset", true, ""},
-		{"WithBothOptions", true, "30m"},
+		{"Table", "table", func(channelName string) []string {
+			return []string{"Deduplication Statistics: " + channelName, "Total Checks:", "Window:"}
+		}},
+		{"JSON", "json", func(string) []string {
+			return []string{`"TotalChecks"`, `"WindowDuration"`}
+		}},
 	}
 
 	for _, tc := range testCases {
@@ -388,8 +391,8 @@ func TestMsgDedupStatsWithOptions(t *testing.T) {
 				createCmd := MsgChannelCreateCommand(channelName)
 				runner.RunAndAssert(createCmd)
 
-				// Get dedup stats with options
-				statsCmd := MsgDedupStatsWithOptionsCommand(channelName, tc.reset, tc.window)
+				// Get dedup stats in the case's output format
+				statsCmd := MsgDedupStatsOutputCommand(channelName, tc.format, tc.expect(channelName)...)
 				runner.RunAndAssert(statsCmd)
 
 				// Cleanup
@@ -569,9 +572,8 @@ func TestMsgMultipleChannels(t *testing.T) {
 		listCmd := MsgChannelListCommand()
 		runner.RunAndAssert(listCmd)
 
-		// List with prefix filter
-		filterCmd := MsgChannelListWithFilterCommand(basePrefix+"*", 10, 0)
-		runner.RunAndAssert(filterCmd)
+		// List as JSON and find every channel this test created
+		runner.RunAndAssert(MsgChannelListOutputCommand("json", channels...))
 
 		// Get info for each channel
 		for _, ch := range channels {
