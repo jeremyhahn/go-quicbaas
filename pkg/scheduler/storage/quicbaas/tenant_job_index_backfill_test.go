@@ -188,3 +188,33 @@ func TestUpdateJob_KeepsTenantJobIndex(t *testing.T) {
 		t.Fatalf("due jobs = %v, want tenant-job", names)
 	}
 }
+
+// TestGetJobsDueForExecution_FindsAnOlderWritersJobAfterTheBackfill is the
+// rolling-upgrade case: the first upgraded node opens and reconciles the
+// index, then a node that predates the index writes a tenant job with no
+// index entry. A later node's open must still find the job in its due scan.
+func TestGetJobsDueForExecution_FindsAnOlderWritersJobAfterTheBackfill(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	first := NewStorage(kv)
+	if err := first.InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("first node: %v", err)
+	}
+
+	old := createTestJob("written-by-an-older-node", scheduler.OwnerTypeTenant, "acme")
+	old.ID = 4242
+	old.NextRun = time.Now().Add(-time.Minute)
+	putUnindexedTenantJob(t, kv, old)
+
+	later := NewStorage(kv)
+	if err := later.InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("later node: %v", err)
+	}
+	due, err := later.GetJobsDueForExecution(ctx, time.Now(), 10, nil)
+	if err != nil {
+		t.Fatalf("GetJobsDueForExecution: %v", err)
+	}
+	if len(due) != 1 || due[0].Name != old.Name {
+		t.Fatalf("due = %v, want the older writer's job", jobNames(due))
+	}
+}

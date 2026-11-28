@@ -523,3 +523,115 @@ func TestCertLoginFactorErrors_Format(t *testing.T) {
 		}
 	})
 }
+
+// enrollWithSource enrolls cert for userID with the given binding_source and
+// returns the new factor's ID.
+func enrollWithSource(t *testing.T, enroller *iam.CertLoginFactorEnroller, userID uint64, cert *x509.Certificate, source string) string {
+	t.Helper()
+	result, err := enroller.Enroll(context.Background(), iam.CertLoginFactorEnrollment{
+		UserID:      userID,
+		Certificate: cert,
+		Metadata:    map[string]string{"binding_source": source},
+	})
+	if err != nil {
+		t.Fatalf("Enroll(%s): %v", source, err)
+	}
+	return result.FactorID
+}
+
+// mustResolve fails the test unless key resolves to an active mtls factor.
+func mustResolve(t *testing.T, factors qrdbsdk.UserAuthFactorServicer, key []byte, what string) {
+	t.Helper()
+	f, err := factors.LookupByCredentialKey(context.Background(), qrdbsdk.AuthFactorMTLS, key)
+	if err != nil || f == nil || !f.IsActive() {
+		t.Fatalf("%s: lookup = (%v, %v), want an active factor", what, f, err)
+	}
+}
+
+// mustBeRevoked fails the test unless key resolves to a revoked factor.
+func mustBeRevoked(t *testing.T, factors qrdbsdk.UserAuthFactorServicer, key []byte, what string) {
+	t.Helper()
+	_, err := factors.LookupByCredentialKey(context.Background(), qrdbsdk.AuthFactorMTLS, key)
+	if !errors.As(err, new(*qrdbsdk.FactorRevokedError)) {
+		t.Fatalf("%s: lookup error = %v, want *FactorRevokedError", what, err)
+	}
+}
+
+func TestCertLoginFactorEnroller_RevokeSupersededCertFactors_RevokesOnlyOlderFactorsOfThatSource(t *testing.T) {
+	enroller, factors := newTestEnroller(t)
+	ctx := context.Background()
+
+	oldCert := newTestCert(t, "admin", nil)
+	otherSourceCert := newTestCert(t, "admin", nil)
+	newCert := newTestCert(t, "admin", nil)
+	otherUserCert := newTestCert(t, "other", nil)
+	enrollWithSource(t, enroller, testAdminQRDBUserID, oldCert, "first_boot_admin_cert")
+	enrollWithSource(t, enroller, testAdminQRDBUserID, otherSourceCert, "bootstrap_admin_cert")
+	enrollWithSource(t, enroller, testAdminQRDBUserID, newCert, "first_boot_admin_cert")
+	enrollWithSource(t, enroller, testAdminQRDBUserID+1, otherUserCert, "first_boot_admin_cert")
+
+	if err := enroller.RevokeSupersededCertFactors(ctx, testAdminQRDBUserID, newCert, "first_boot_admin_cert"); err != nil {
+		t.Fatalf("RevokeSupersededCertFactors: %v", err)
+	}
+
+	mustBeRevoked(t, factors, iam.MTLSCredentialKey(oldCert), "old cert by cert key")
+	mustBeRevoked(t, factors, iam.MTLSSPKICredentialKey(oldCert), "old cert by SPKI key")
+	mustResolve(t, factors, iam.MTLSCredentialKey(newCert), "current cert")
+	mustResolve(t, factors, iam.MTLSCredentialKey(otherSourceCert), "other binding source")
+	mustResolve(t, factors, iam.MTLSCredentialKey(otherUserCert), "other user")
+}
+
+func TestCertLoginFactorEnroller_RevokeSupersededCertFactors_KeepsTheCurrentKeysFactor(t *testing.T) {
+	enroller, factors := newTestEnroller(t)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	first := newTestCert(t, "admin", key)
+	enrollWithSource(t, enroller, testAdminQRDBUserID, first, "first_boot_admin_cert")
+	renewal := newTestCert(t, "admin", key)
+
+	if err := enroller.RevokeSupersededCertFactors(context.Background(), testAdminQRDBUserID, renewal, "first_boot_admin_cert"); err != nil {
+		t.Fatalf("RevokeSupersededCertFactors: %v", err)
+	}
+	mustResolve(t, factors, iam.MTLSSPKICredentialKey(first), "same-key factor")
+}
+
+// removeFailingFactors is a factor store whose revocations always fail.
+type removeFailingFactors struct {
+	*testutil.MemoryUserAuthFactors
+}
+
+func (removeFailingFactors) Remove(context.Context, string, bool) error {
+	return errors.New("injected remove failure")
+}
+
+func TestCertLoginFactorEnroller_RevokeSupersededCertFactors_FailsClosed(t *testing.T) {
+	enroller, factors := newTestEnroller(t)
+	ctx := context.Background()
+	oldCert := newTestCert(t, "admin", nil)
+	newCert := newTestCert(t, "admin", nil)
+	oldID := enrollWithSource(t, enroller, testAdminQRDBUserID, oldCert, "first_boot_admin_cert")
+	enrollWithSource(t, enroller, testAdminQRDBUserID, newCert, "first_boot_admin_cert")
+
+	failing, err := iam.NewCertLoginFactorEnroller(removeFailingFactors{factors})
+	if err != nil {
+		t.Fatalf("NewCertLoginFactorEnroller: %v", err)
+	}
+	err = failing.RevokeSupersededCertFactors(ctx, testAdminQRDBUserID, newCert, "first_boot_admin_cert")
+	var removeErr *iam.CertLoginFactorRemoveError
+	if !errors.As(err, &removeErr) {
+		t.Fatalf("RevokeSupersededCertFactors error = %v, want *CertLoginFactorRemoveError", err)
+	}
+	if removeErr.FactorID != oldID {
+		t.Fatalf("FactorID = %q, want %q", removeErr.FactorID, oldID)
+	}
+	mustResolve(t, factors, iam.MTLSCredentialKey(oldCert), "old cert after a failed revocation")
+
+	t.Run("nil current certificate", func(t *testing.T) {
+		err := enroller.RevokeSupersededCertFactors(ctx, testAdminQRDBUserID, nil, "first_boot_admin_cert")
+		if !errors.As(err, new(*iam.CertLoginFactorConfigError)) {
+			t.Fatalf("error = %v, want *CertLoginFactorConfigError", err)
+		}
+	})
+}

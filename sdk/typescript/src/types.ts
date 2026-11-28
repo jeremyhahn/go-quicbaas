@@ -3046,10 +3046,22 @@ export interface BootstrapBundleRequest {
    */
   noise_addr?: string;
   /**
-   * Noise: hex-encoded 32-byte Curve25519 server static public key.
-   * Required for noise; optional knob for auto.
+   * Noise: hex-encoded 32-byte Curve25519 server static public key, the
+   * Curve25519 key for the Noise_NK suite; required for noise unless
+   * noise_p256_static_key is set. Optional knob for auto.
    */
   noise_static_key?: string;
+  /**
+   * Noise: hex-encoded uncompressed P-256 server static public key (130 hex
+   * characters), for the approved suite. Required for noise unless
+   * noise_static_key is set.
+   */
+  noise_p256_static_key?: string;
+  /**
+   * Noise: pins the suite; omitted selects by policy (the approved suite
+   * when FIPS is enforced).
+   */
+  noise_suite?: 'noise_nk' | 'p256_aesgcm';
   /**
    * SPKI: hex-encoded SHA-256 pin of the server certificate's
    * SubjectPublicKeyInfo (64 hex characters).

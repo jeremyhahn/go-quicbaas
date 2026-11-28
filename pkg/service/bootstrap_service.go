@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/base64"
 	stderrors "errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -49,6 +50,16 @@ import (
 // the deadline. It is applied as the truststrap connect/operation timeout for
 // every mode and as the per-fallback budget under auto.
 const bootstrapPerMethodTimeout = 10 * time.Second
+
+// The Noise suite wire names a BootstrapRequest's NoiseSuite accepts. The CLI
+// and the TypeScript SDK use the same strings.
+const (
+	// BootstrapNoiseSuiteNK pins Noise_NK_25519_ChaChaPoly_SHA256.
+	BootstrapNoiseSuiteNK = "noise_nk"
+
+	// BootstrapNoiseSuiteP256 pins the approved TSBOOT1_P256_AESGCM_SHA256 suite.
+	BootstrapNoiseSuiteP256 = "p256_aesgcm"
+)
 
 // BootstrapServicer is the trust-bootstrap facade the REST handlers consult
 // for the /api/v1/bootstrap/{auto,dane,noise,spki} endpoints. Each method
@@ -106,8 +117,20 @@ type BootstrapRequest struct {
 	NoiseAddr string `json:"noise_addr,omitempty"`
 
 	// NoiseStaticKey is the hex-encoded 32-byte Curve25519 server public
-	// key. Required for Noise; optional auto knob.
+	// key for the Noise_NK suite; a Noise request needs this or
+	// NoiseP256StaticKey. Optional auto knob.
 	NoiseStaticKey string `json:"noise_static_key,omitempty"`
+
+	// NoiseP256StaticKey is the hex-encoded uncompressed P-256 public point
+	// of the server (130 hex characters), for the approved Noise suite. A
+	// Noise request needs this or NoiseStaticKey; with both, the suite is
+	// chosen by policy unless NoiseSuite pins one.
+	NoiseP256StaticKey string `json:"noise_p256_static_key,omitempty"`
+
+	// NoiseSuite optionally pins the Noise suite: "noise_nk" or
+	// "p256_aesgcm". Empty selects by policy (the approved suite whenever
+	// FIPS is enforced). A pinned suite never falls back to the other.
+	NoiseSuite string `json:"noise_suite,omitempty"`
 
 	// SPKIPin is the hex-encoded SHA-256 SPKI pin of the server certificate
 	// (64 hex chars). Required for Spki; optional auto knob.
@@ -149,6 +172,8 @@ var (
 var (
 	errBootstrapNilRequest = stderrors.New("bootstrap request must not be nil")
 	errBootstrapNilBundle  = stderrors.New("bootstrap produced no CA bundle")
+
+	errBootstrapUnknownNoiseSuite = stderrors.New("unknown noise_suite")
 )
 
 // bootstrapFetchFunc is the seam onto the canonical xkms bootstrap.Fetch. It
@@ -190,7 +215,9 @@ func (s *BootstrapService) Auto(ctx context.Context, req *BootstrapRequest) (*Bo
 		cfg.Direct = &xkbootstrap.DirectConfig{}
 	}
 	s.applyDANE(&cfg, req)
-	s.applyNoise(&cfg, req)
+	if err := s.applyNoise(&cfg, req); err != nil {
+		return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "BootstrapService.Auto", Err: err}
+	}
 	s.applySPKI(&cfg, req)
 	return s.run(ctx, "BootstrapService.Auto", xkbootstrap.ModeAuto, cfg)
 }
@@ -213,7 +240,9 @@ func (s *BootstrapService) Noise(ctx context.Context, req *BootstrapRequest) (*B
 	}
 	cfg := s.baseConfig(req)
 	cfg.Mode = xkbootstrap.ModeNoise
-	s.applyNoise(&cfg, req)
+	if err := s.applyNoise(&cfg, req); err != nil {
+		return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "BootstrapService.Noise", Err: err}
+	}
 	return s.run(ctx, "BootstrapService.Noise", xkbootstrap.ModeNoise, cfg)
 }
 
@@ -248,14 +277,37 @@ func (s *BootstrapService) applyDANE(cfg *xkbootstrap.Config, req *BootstrapRequ
 	}
 }
 
-// applyNoise attaches a Noise sub-config when Noise material is present.
-func (s *BootstrapService) applyNoise(cfg *xkbootstrap.Config, req *BootstrapRequest) {
-	if req.NoiseStaticKey == "" {
-		return
+// applyNoise attaches a Noise sub-config when Noise material (either suite's
+// server key) is present. An unknown NoiseSuite name is refused.
+func (s *BootstrapService) applyNoise(cfg *xkbootstrap.Config, req *BootstrapRequest) error {
+	if req.NoiseStaticKey == "" && req.NoiseP256StaticKey == "" {
+		return nil
+	}
+	suite, err := noiseSuiteByte(req.NoiseSuite)
+	if err != nil {
+		return err
 	}
 	cfg.Noise = &xkbootstrap.NoiseConfig{
-		ServerAddr:      req.NoiseAddr,
-		ServerStaticKey: req.NoiseStaticKey,
+		ServerAddr:          req.NoiseAddr,
+		ServerStaticKey:     req.NoiseStaticKey,
+		ServerP256StaticKey: req.NoiseP256StaticKey,
+		Suite:               suite,
+	}
+	return nil
+}
+
+// noiseSuiteByte maps a Noise suite wire name onto the go-xkms suite byte.
+// The empty name selects by policy (0).
+func noiseSuiteByte(name string) (byte, error) {
+	switch name {
+	case "":
+		return 0, nil
+	case BootstrapNoiseSuiteNK:
+		return xkbootstrap.SuiteNoiseNK, nil
+	case BootstrapNoiseSuiteP256:
+		return xkbootstrap.SuiteP256AESGCM, nil
+	default:
+		return 0, fmt.Errorf("%w: %q (want %q or %q)", errBootstrapUnknownNoiseSuite, name, BootstrapNoiseSuiteNK, BootstrapNoiseSuiteP256)
 	}
 }
 
@@ -302,13 +354,20 @@ func bundleResponse(mode xkbootstrap.Mode, bundle *xkbootstrap.CABundle) *Bootst
 
 // mapBootstrapError maps an xkms bootstrap error onto a typed QBError. The
 // configuration-shaped sentinels (invalid mode, missing per-mode config,
-// missing server URL) are caller errors -> invalid input; everything else
-// (a verification or transport failure) is an internal fetch failure.
+// missing server URL) and the Noise suite refusals (a missing or invalid
+// suite key, no usable suite, or a pinned suite this build cannot run, which
+// is a caller choice rather than a server fault) are caller errors -> invalid
+// input; everything else (a verification or transport failure) is an internal
+// fetch failure.
 func mapBootstrapError(op string, err error) error {
 	switch {
 	case stderrors.Is(err, xkbootstrap.ErrInvalidMode),
 		stderrors.Is(err, xkbootstrap.ErrModeNotConfigured),
-		stderrors.Is(err, xkbootstrap.ErrServerURLRequired):
+		stderrors.Is(err, xkbootstrap.ErrServerURLRequired),
+		stderrors.Is(err, xkbootstrap.ErrSuiteKeyMissing),
+		stderrors.Is(err, xkbootstrap.ErrSuiteKeyInvalid),
+		stderrors.Is(err, xkbootstrap.ErrNoSuite),
+		stderrors.Is(err, xkbootstrap.ErrSuiteUnavailable):
 		return &errors.QBError{Code: errors.ErrInvalidInput, Op: op, Err: err}
 	default:
 		return &errors.QBError{Code: errors.ErrInternal, Op: op, Err: err}

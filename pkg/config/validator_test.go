@@ -782,6 +782,38 @@ func TestValidateSecurityConfig(t *testing.T) {
 			expectError: true,
 			errorField:  "security.tls_ca_file",
 		},
+		{
+			name: "auto-provisioned TLS accepts a CA path first boot writes",
+			modify: func(cfg *Config) {
+				cfg.Security.TLSEnabled = true
+				cfg.Security.TLSCertFile = ""
+				cfg.Security.TLSKeyFile = ""
+				cfg.Security.TLSCAFile = filepath.Join(tmpDir, "certs", "ca-chain.crt")
+			},
+			expectError: false,
+		},
+		{
+			name: "auto-provisioned TLS with client auth accepts a CA path first boot writes",
+			modify: func(cfg *Config) {
+				cfg.Security.TLSEnabled = true
+				cfg.Security.TLSCertFile = ""
+				cfg.Security.TLSKeyFile = ""
+				cfg.Security.TLSClientAuth = true
+				cfg.Security.TLSCAFile = filepath.Join(tmpDir, "certs", "ca-chain.crt")
+			},
+			expectError: false,
+		},
+		{
+			name: "operator cert with an absent CA file",
+			modify: func(cfg *Config) {
+				cfg.Security.TLSEnabled = true
+				cfg.Security.TLSCertFile = certFile
+				cfg.Security.TLSKeyFile = keyFile
+				cfg.Security.TLSCAFile = "/nonexistent/ca.pem"
+			},
+			expectError: true,
+			errorField:  "security.tls_ca_file",
+		},
 	}
 
 	for _, tt := range tests {

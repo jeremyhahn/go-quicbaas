@@ -17,7 +17,9 @@ package server
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -28,6 +30,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
 // =============================================================================
@@ -279,7 +282,7 @@ func TestAdminBundleNotDeliveredError_SaysWhatToDo(t *testing.T) {
 	for _, want := range []string{
 		"no private key",        // what is missing
 		"bound certificate",     // why it matters — the cert is live without its key
-		"wipe and re-bootstrap", // the ruled remedy while reissue does not exist
+		"wipe and re-bootstrap", // the remedy when even a reissue delivered nothing
 	} {
 		assert.Contains(t, err.Error(), want, "the message omits %q", want)
 	}
@@ -521,21 +524,26 @@ func TestFirstBootBootstrap_ReEntersAfterAPostGrantFailureCannotHappen(t *testin
 	assert.Equal(t, iam.AdminRoleSuperAdmin, assignments[0].AdminRole)
 }
 
-// TestFirstBootBootstrap_ReEntryWithoutAReissuedCertRefuses covers the state
-// where re-entry cannot complete honestly.
+// TestFirstBootBootstrap_ReEntryReissuesTheAdminCredential covers a re-entered
+// bootstrap: an earlier boot created the admin but the grant is missing.
 //
 // qrdb's first-boot is idempotent: once the admin user exists it returns no
-// certificate. With a CA configured that means the operator receives no private
-// key for a certificate that is already bound to them, so the retry must refuse
-// rather than grant the assignment and let the next boot report a healthy server
-// with an administrator who cannot log in.
-func TestFirstBootBootstrap_ReEntryWithoutAReissuedCertRefuses(t *testing.T) {
+// certificate, so the operator would hold no private key for the certificate
+// bound to them. The re-entry therefore reissues a credential, binds it,
+// delivers it before the grant, and revokes the old certificate's login factor
+// so the superseded certificate can no longer open an administrator session.
+func TestFirstBootBootstrap_ReEntryReissuesTheAdminCredential(t *testing.T) {
+	// qrdb's idempotent first boot issues no certificate for an admin
+	// that already exists, so a re-entered bootstrap used to have nothing to
+	// deliver. The re-entry issues a fresh admin credential, binds its SPKI
+	// in place of the undelivered one, delivers it before the grant, and
+	// revokes the old certificate's login factor.
 	srv := withTempServer(t)
 	srv.config.Auth.AllowPasswordAuth = false
 	srv.config.Auth.InsecureDevMode = false
 	srv.xkmsCA = newFakeTrustedCA(t)
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
-	c := buildTestIAMComponents(t)
+	c, factors := buildTestIAMComponentsWithFactors(t)
 	ctx := context.Background()
 
 	var banner adminEnrollmentBanner
@@ -545,26 +553,192 @@ func TestFirstBootBootstrap_ReEntryWithoutAReissuedCertRefuses(t *testing.T) {
 	// Boot 1 completes, which is what makes the admin user exist.
 	require.NoError(t, srv.firstBootBootstrap(ctx, c))
 	require.NotEmpty(t, banner.CertPath, "boot 1 must have delivered a bundle")
+	firstCert, err := os.ReadFile(banner.CertPath)
+	require.NoError(t, err)
+	admin, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, srv.bootstrapAdminUserID)
+	require.NoError(t, err)
+	firstThumb := admin.SPKIThumbprint()
+	require.NotEmpty(t, firstThumb)
 
 	// Now destroy the grant, exactly as an operator deleting the assignment (or a
 	// boot that failed before writing it) leaves the store. The user survives, so
-	// qrdb's first-boot has nothing to reissue.
+	// qrdb's first-boot itself has nothing to reissue.
 	assignments, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{})
 	require.NoError(t, err)
 	require.Len(t, assignments, 1)
 	require.NoError(t, c.adminManager.DeleteAssignment(ctx, assignments[0].ID))
+	banner = adminEnrollmentBanner{}
 
-	err = srv.firstBootBootstrap(ctx, c)
-	require.Error(t, err, "a re-entry that can deliver no credential must refuse")
-	assert.ErrorIs(t, err, ErrAdminBundleNotDelivered,
-		"the refusal must name the undelivered bundle so the operator knows the remedy")
-	assert.ErrorIs(t, err, ErrFirstBootBootstrap)
+	require.NoError(t, srv.firstBootBootstrap(ctx, c), "a re-entered first boot must deliver a credential")
+	require.NotEmpty(t, banner.CertPath, "the re-entry must deliver the reissued bundle")
+	require.NotEmpty(t, banner.KeyPath, "the reissued bundle carries its private key")
+	secondCert, err := os.ReadFile(banner.CertPath)
+	require.NoError(t, err)
+	assert.NotEqual(t, firstCert, secondCert, "the delivered certificate must be the reissued one")
+
+	admin, err = c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, srv.bootstrapAdminUserID)
+	require.NoError(t, err)
+	cert, err := parseCertLoginPEM(secondCert)
+	require.NoError(t, err)
+	assert.Equal(t, qrdbsdk.ComputeSPKIThumbprint(cert), admin.SPKIThumbprint(),
+		"the admin must be bound to the reissued certificate")
+	assert.NotEqual(t, firstThumb, admin.SPKIThumbprint())
 
 	after, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{ActiveOnly: true})
 	require.NoError(t, err)
-	assert.Empty(t, after,
-		"the refused re-entry granted an assignment anyway, which would let the "+
-			"NEXT boot start a server whose administrator has no private key")
+	assert.Len(t, after, 1, "a delivered re-entry completes with the grant")
+
+	oldCert, err := parseCertLoginPEM(firstCert)
+	require.NoError(t, err)
+	_, err = factors.LookupByCredentialKey(ctx, qrdbsdk.AuthFactorMTLS, iam.MTLSCredentialKey(oldCert))
+	require.ErrorAs(t, err, new(*qrdbsdk.FactorRevokedError), "the superseded certificate must not resolve for login")
+	_, err = factors.LookupByCredentialKey(ctx, qrdbsdk.AuthFactorMTLS, iam.MTLSSPKICredentialKey(oldCert))
+	require.ErrorAs(t, err, new(*qrdbsdk.FactorRevokedError), "the superseded certificate must not resolve for login")
+	requireActiveCertFactor(t, factors, cert)
+}
+
+// requireActiveCertFactor asserts cert resolves to an active mtls factor by
+// both its certificate and its SPKI credential key.
+func requireActiveCertFactor(t *testing.T, factors *testutil.MemoryUserAuthFactors, cert *x509.Certificate) {
+	t.Helper()
+	ctx := context.Background()
+	for _, key := range [][]byte{iam.MTLSCredentialKey(cert), iam.MTLSSPKICredentialKey(cert)} {
+		f, err := factors.LookupByCredentialKey(ctx, qrdbsdk.AuthFactorMTLS, key)
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		require.True(t, f.IsActive())
+	}
+}
+
+func TestFirstBootBootstrap_ReEntryRefusesAnAdminWhoCannotLogIn(t *testing.T) {
+	// hasSystemAdministrator reads a suspended, locked or disabled admin as no
+	// administrator, so first boot re-enters. qrdb's idempotent first boot
+	// accepts the existing user; the re-entry must refuse it before it
+	// reissues, delivers or grants anything.
+	for _, lifecycle := range []iam.Lifecycle{
+		iam.LifecycleSuspended, iam.LifecycleLocked, iam.LifecycleDisabled,
+	} {
+		t.Run(string(lifecycle), func(t *testing.T) {
+			srv := withTempServer(t)
+			srv.config.Auth.AllowPasswordAuth = false
+			srv.config.Auth.InsecureDevMode = false
+			srv.xkmsCA = newFakeTrustedCA(t)
+			srv.config.IAM.SPIFFETrustDomain = testTrustDomain
+			c, factors := buildTestIAMComponentsWithFactors(t)
+			ctx := context.Background()
+
+			var banner adminEnrollmentBanner
+			restore := captureFirstBootBanner(t, &banner)
+			defer restore()
+
+			require.NoError(t, srv.firstBootBootstrap(ctx, c))
+			require.NotEmpty(t, banner.CertPath)
+			firstCertPEM, err := os.ReadFile(banner.CertPath)
+			require.NoError(t, err)
+			firstCert, err := parseCertLoginPEM(firstCertPEM)
+			require.NoError(t, err)
+			adminID := srv.bootstrapAdminUserID
+			admin, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, adminID)
+			require.NoError(t, err)
+			firstThumb := admin.SPKIThumbprint()
+			require.NotEmpty(t, firstThumb)
+
+			l := lifecycle
+			_, err = c.identityStore.UpdateUser(ctx, qrdbsdk.SystemTenantID, adminID,
+				iam.UpdateUserOptions{Lifecycle: &l})
+			require.NoError(t, err, "moving the admin to %s", lifecycle)
+
+			assignments, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{})
+			require.NoError(t, err)
+			require.Len(t, assignments, 1)
+			require.NoError(t, c.adminManager.DeleteAssignment(ctx, assignments[0].ID))
+			banner = adminEnrollmentBanner{}
+
+			err = srv.firstBootBootstrap(ctx, c)
+			require.ErrorIs(t, err, ErrBootstrapAdminUnusable)
+			var unusable *BootstrapAdminUnusableError
+			require.ErrorAs(t, err, &unusable)
+			assert.Equal(t, adminID, unusable.UserID)
+			assert.Equal(t, lifecycle, unusable.Lifecycle)
+
+			active, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{ActiveOnly: true})
+			require.NoError(t, err)
+			assert.Empty(t, active, "an admin nobody can log in as must not be granted super_admin")
+			admin, err = c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, adminID)
+			require.NoError(t, err)
+			assert.Equal(t, firstThumb, admin.SPKIThumbprint(), "nothing may be reissued or rebound")
+			assert.Empty(t, banner.CertPath, "no bundle may be delivered")
+			requireActiveCertFactor(t, factors, firstCert)
+		})
+	}
+}
+
+func TestBootstrapAdminUnusableError_SaysWhatToDo(t *testing.T) {
+	err := &BootstrapAdminUnusableError{UserID: 42, Email: "admin@system.qrdb.local", Lifecycle: iam.LifecycleSuspended}
+	msg := err.Error()
+	assert.Contains(t, msg, "42")
+	assert.Contains(t, msg, "admin@system.qrdb.local")
+	assert.Contains(t, msg, string(iam.LifecycleSuspended))
+	assert.Contains(t, msg, "reactivate")
+	assert.ErrorIs(t, err, ErrBootstrapAdminUnusable)
+}
+
+// removeFailingFactorServicer is a factor store whose revocations fail.
+type removeFailingFactorServicer struct {
+	*testutil.MemoryUserAuthFactors
+}
+
+func (removeFailingFactorServicer) Remove(context.Context, string, bool) error {
+	return errors.New("injected remove failure")
+}
+
+func TestFirstBootBootstrap_ReEntryFailsClosedWhenTheOldFactorCannotBeRevoked(t *testing.T) {
+	srv := withTempServer(t)
+	srv.config.Auth.AllowPasswordAuth = false
+	srv.config.Auth.InsecureDevMode = false
+	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
+	c, factors := buildTestIAMComponentsWithFactors(t)
+	ctx := context.Background()
+
+	var banner adminEnrollmentBanner
+	restore := captureFirstBootBanner(t, &banner)
+	defer restore()
+
+	require.NoError(t, srv.firstBootBootstrap(ctx, c))
+	require.NotEmpty(t, banner.CertPath)
+	firstPEM, err := os.ReadFile(banner.CertPath)
+	require.NoError(t, err)
+	firstCert, err := parseCertLoginPEM(firstPEM)
+	require.NoError(t, err)
+
+	assignments, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{})
+	require.NoError(t, err)
+	require.Len(t, assignments, 1)
+	require.NoError(t, c.adminManager.DeleteAssignment(ctx, assignments[0].ID))
+	banner = adminEnrollmentBanner{}
+
+	normal := c.certLoginFactors
+	failing, err := iam.NewCertLoginFactorEnroller(removeFailingFactorServicer{factors})
+	require.NoError(t, err)
+	c.certLoginFactors = failing
+
+	err = srv.firstBootBootstrap(ctx, c)
+	var bootErr *FirstBootBootstrapError
+	require.ErrorAs(t, err, &bootErr)
+	assert.Equal(t, "revoke superseded admin login factors", bootErr.Op)
+	active, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{ActiveOnly: true})
+	require.NoError(t, err)
+	assert.Empty(t, active, "a failed revocation must stop the boot before the grant")
+	requireActiveCertFactor(t, factors, firstCert)
+
+	c.certLoginFactors = normal
+	require.NoError(t, srv.firstBootBootstrap(ctx, c), "the next boot retries the revocation")
+	active, err = c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{ActiveOnly: true})
+	require.NoError(t, err)
+	assert.Len(t, active, 1)
+	_, err = factors.LookupByCredentialKey(ctx, qrdbsdk.AuthFactorMTLS, iam.MTLSCredentialKey(firstCert))
+	require.ErrorAs(t, err, new(*qrdbsdk.FactorRevokedError), "the superseded certificate must not resolve for login")
 }
 
 // TestFirstBootBootstrap_CALessReEntryStillCompletes is the counterpart that

@@ -461,6 +461,12 @@ func buildInitConfig(dataDir string, f *inlineInitFlags, barrierEnabled bool) *c
 	if operatorCfg != nil && operatorCfg.IAM.SPIFFETrustDomain != "" {
 		cfg.IAM.SPIFFETrustDomain = operatorCfg.IAM.SPIFFETrustDomain
 	}
+	// The operator's bootstrap admin address too. Init is where first boot
+	// creates the administrator; once its grant exists the daemon's start
+	// skips bootstrap, so an address dropped here could never be applied.
+	if operatorCfg != nil && operatorCfg.IAM.BootstrapAdminEmail != "" {
+		cfg.IAM.BootstrapAdminEmail = operatorCfg.IAM.BootstrapAdminEmail
+	}
 	if f.hostname != "" {
 		cfg.Server.Host = f.hostname
 	}

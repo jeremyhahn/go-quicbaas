@@ -213,31 +213,38 @@ func buildTLSConfig() (*tls.Config, error) {
 		}
 	}
 
-	// No CA cert available - return nil to let the SDK use system defaults
-	if caFile == "" {
+	clientPair := tlsCert != "" && tlsKey != ""
+
+	// Neither a CA cert nor a client identity - return nil to let the SDK
+	// use system defaults
+	if caFile == "" && !clientPair {
 		return nil, nil
 	}
 
-	// Load CA certificate pool
-	caCert, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, errors.Wrapf(err, errors.ErrConfiguration, "buildTLSConfig",
-			"failed to read CA certificate")
-	}
-
-	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM(caCert) {
-		return nil, errors.New(errors.ErrConfiguration, "buildTLSConfig",
-			"failed to parse CA certificate")
-	}
-
+	// With no CA cert the server is verified against the system roots
+	// (RootCAs nil); a client identity is still presented.
 	tlsCfg := &tls.Config{
-		RootCAs:    caCertPool,
 		MinVersion: tls.VersionTLS13,
 	}
 
+	if caFile != "" {
+		// Load CA certificate pool
+		caCert, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, errors.Wrapf(err, errors.ErrConfiguration, "buildTLSConfig",
+				"failed to read CA certificate")
+		}
+
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, errors.New(errors.ErrConfiguration, "buildTLSConfig",
+				"failed to parse CA certificate")
+		}
+		tlsCfg.RootCAs = caCertPool
+	}
+
 	// Load client certificate if both cert and key are provided (mTLS)
-	if tlsCert != "" && tlsKey != "" {
+	if clientPair {
 		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
 		if err != nil {
 			return nil, errors.Wrapf(err, errors.ErrConfiguration, "buildTLSConfig",

@@ -115,6 +115,25 @@ func TestBuildTLSConfig_WithClientCert(t *testing.T) {
 	assert.Len(t, cfg.Certificates, 1)
 }
 
+// TestBuildTLSConfig_ClientCertWithSystemRoots checks that a client identity
+// is presented when no CA file is configured: the server is verified against
+// the system roots, and the certificate is still loaded.
+func TestBuildTLSConfig_ClientCertWithSystemRoots(t *testing.T) {
+	withClientTLSGlobals(t)
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "cli.crt")
+	keyPath := filepath.Join(dir, "cli.key")
+	writeSelfSignedKeyPair(t, certPath, keyPath)
+	tlsCert = certPath
+	tlsKey = keyPath
+
+	cfg, err := buildTLSConfig()
+	require.NoError(t, err)
+	require.NotNil(t, cfg, "a client identity needs a TLS config even without a CA file")
+	assert.Nil(t, cfg.RootCAs, "no CA file: the system roots verify the server")
+	assert.Len(t, cfg.Certificates, 1)
+}
+
 func TestBuildTLSConfig_BadClientCert(t *testing.T) {
 	withClientTLSGlobals(t)
 	dir := t.TempDir()

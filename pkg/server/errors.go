@@ -649,8 +649,8 @@ type AdminBundleNotDeliveredError struct{}
 // Error implements the error interface.
 func (e *AdminBundleNotDeliveredError) Error() string {
 	return "first-boot: the admin bundle was not delivered, so the operator has " +
-		"no private key for the bound certificate; reissue-on-re-entry is not " +
-		"implemented — wipe and re-bootstrap"
+		"no private key for the bound certificate; the CA issued no credential " +
+		"to deliver — wipe and re-bootstrap"
 }
 
 // Unwrap returns the sentinel error for errors.Is support.

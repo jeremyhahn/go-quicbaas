@@ -1012,7 +1012,7 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	adminTenantID := qrdbsdk.SystemTenantID
 	user := users.CreatedUser()
 	if user == nil {
-		adminEmail := "admin@" + adminTenantID + ".qrdb.local"
+		adminEmail := users.EmailFor("admin", adminTenantID)
 		user, err = c.identityStore.GetUserByEmail(ctx, adminTenantID, adminEmail)
 		if err != nil {
 			return &FirstBootBootstrapError{Op: "lookup bootstrap admin user", Cause: err}
@@ -1024,12 +1024,32 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	s.bootstrapAdminUserID = user.ID
 	s.bootstrapAdminTenantID = adminTenantID
 
+	// A re-entered first boot accepts the existing admin user whatever its
+	// lifecycle, and hasSystemAdministrator re-enters precisely when that user
+	// cannot authenticate. Reissuing, delivering and granting for such an
+	// account would produce a super-admin nobody can log in as, so the boot
+	// fails before anything is issued. The predicate is the same one
+	// hasSystemAdministrator uses.
+	if (result == nil || !result.AdminCreated) && !user.CanAuthenticate() {
+		return &FirstBootBootstrapError{
+			Op: "verify re-entered bootstrap admin",
+			Cause: &BootstrapAdminUnusableError{
+				UserID:    user.ID,
+				Email:     user.Email,
+				Lifecycle: user.Lifecycle,
+			},
+		}
+	}
+
 	// Make the issued certificate usable for `quicbaas auth login --method
 	// mtls`: enroll it as an mtls auth factor in qrdb's UserAuthFactor store.
 	// This runs BEFORE the admin assignment so a failure leaves first-boot
 	// incomplete and the next boot retries the whole (idempotent) sequence
 	// rather than leaving a privileged admin who cannot log in. Every remaining
 	// step now shares that ordering — see grantFirstBootSuperAdmin.
+	if err := s.reissueAdminCredentialOnReEntry(ctx, c, deps, adminTenantID, user.ID, result); err != nil {
+		return err
+	}
 	if err := s.enrollFirstBootAdminCert(ctx, c, adminTenantID, user.ID, result); err != nil {
 		return err
 	}
@@ -1227,7 +1247,7 @@ func reportUnusableAdministrators(ctx context.Context, c *iamComponents, assignm
 // the tenant/roles/admin without issuing a certificate — the admin then
 // enrolls through the PIV path or a later ceremony.
 func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDependencies, *qrdbadapter.UserAdapter, error) {
-	users := qrdbadapter.WrapUser(c.identityStore)
+	users := qrdbadapter.WrapUser(c.identityStore).WithAdminEmail(s.config.IAM.BootstrapAdminEmail)
 	roles := qrdbadapter.WrapRole(c.identityStore)
 	deps := &qrdbsdk.FirstBootDependencies{
 		Tenants: qrdbadapter.WrapTenant(c.tenantManager),
@@ -1338,9 +1358,89 @@ var ErrNoDataDirForAdminBundle = errors.New("first-boot: storage.data_dir is req
 // hold, so the bootstrap fails closed instead.
 var ErrEmptyAdminCSR = errors.New("first-boot: configured admin CSR file is empty")
 
+// ErrBootstrapAdminUnusable reports that first boot re-entered for an admin
+// account that already exists but cannot authenticate (suspended, locked,
+// disabled or being deleted). Reissuing a credential for it would deliver a
+// bundle and a super-admin grant nobody can log in with.
+var ErrBootstrapAdminUnusable = errors.New("first-boot: the existing bootstrap admin cannot authenticate")
+
+// BootstrapAdminUnusableError names the re-entered bootstrap admin that cannot
+// authenticate and the lifecycle state that stops it. First boot does not
+// change the account's lifecycle itself: that is the operator's decision.
+type BootstrapAdminUnusableError struct {
+	UserID    uint64
+	Email     string
+	Lifecycle iam.Lifecycle
+}
+
+func (e *BootstrapAdminUnusableError) Error() string {
+	return fmt.Sprintf("first-boot: the existing bootstrap admin (user %d, %s) is %s and cannot authenticate, "+
+		"so no credential or super-admin grant was issued; reactivate the account (or delete it) and start again",
+		e.UserID, e.Email, e.Lifecycle)
+}
+
+// Unwrap returns ErrBootstrapAdminUnusable.
+func (e *BootstrapAdminUnusableError) Unwrap() error { return ErrBootstrapAdminUnusable }
+
+// reissueAdminCredentialOnReEntry reissues the admin credential on re-entry. qrdb's
+// idempotent first boot issues no certificate for an admin that already
+// exists, so a re-entered bootstrap (an earlier boot created the admin but
+// never completed) holds no credential to deliver; the certificate bound by
+// that earlier boot has a private key nobody received. Persisting pending
+// key material across boots was the rejected alternative: it would keep an
+// undelivered private key at rest. Instead the re-entry issues a fresh
+// credential through the same path first boot chose — CSR-sign when the
+// operator supplied a CSR, generate-and-distribute otherwise — binds its
+// SPKI thumbprint in place of the undelivered one (enrollFirstBootAdminCert
+// then revokes the old certificate's login factor), and fills result so the
+// enrollment and delivery steps that follow treat it as this run's issue.
+//
+// It does nothing when there is no CA, when this run created the admin, or
+// when first boot already issued a certificate.
+func (s *Server) reissueAdminCredentialOnReEntry(
+	ctx context.Context,
+	c *iamComponents,
+	deps *qrdbsdk.FirstBootDependencies,
+	tenantID string,
+	userID uint64,
+	result *qrdbsdk.FirstBootResult,
+) error {
+	if deps == nil || deps.CA == nil || result == nil || result.AdminCreated || len(result.AdminCertPEM) > 0 {
+		return nil
+	}
+	const subject = "admin"
+	var certPEM, keyPEM []byte
+	var err error
+	if len(deps.AdminCSRPEM) > 0 && deps.Signer != nil {
+		certPEM, err = deps.Signer.SignAdminCSR(ctx, tenantID, subject, deps.AdminCSRPEM)
+	} else {
+		certPEM, keyPEM, err = deps.CA.GenerateAdminCert(ctx, tenantID, subject)
+	}
+	if err != nil {
+		return &FirstBootBootstrapError{Op: "reissue admin certificate", Cause: err}
+	}
+	cert, err := parseCertLoginPEM(certPEM)
+	if err != nil {
+		return &FirstBootBootstrapError{Op: "parse reissued admin certificate", Cause: err}
+	}
+	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
+	if _, err := c.identityStore.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{
+		SPKICertThumbprint: &thumbprint,
+	}); err != nil {
+		return &FirstBootBootstrapError{Op: "bind reissued admin certificate", Cause: err}
+	}
+	result.AdminCertPEM = certPEM
+	result.AdminKeyPEM = keyPEM
+	result.AdminCertThumbprint = thumbprint
+	s.logger.Warnf("First-boot re-entry: admin %d existed without a delivered credential; reissued its certificate (SPKI thumbprint %s)",
+		userID, thumbprint)
+	return nil
+}
+
 // enrollFirstBootAdminCert enrolls the certificate first-boot issued as an mtls
 // login factor. It is a no-op when no certificate was issued (no CA wired, or
-// an idempotent re-run where the admin already existed).
+// an idempotent re-run where the admin already existed). It then revokes the
+// factors earlier boots enrolled for superseded first-boot certificates.
 func (s *Server) enrollFirstBootAdminCert(
 	ctx context.Context,
 	c *iamComponents,
@@ -1357,6 +1457,11 @@ func (s *Server) enrollFirstBootAdminCert(
 	}
 	if err := enrollAdminCertLoginFactor(ctx, c, tenantID, userID, cert, adminCertBindingSourceFirstBoot); err != nil {
 		return &FirstBootBootstrapError{Op: "enroll admin mtls login factor", Cause: err}
+	}
+	// A re-entered bootstrap reissued the credential: the factor an earlier
+	// boot enrolled for the previous certificate must not keep logging in.
+	if err := c.certLoginFactors.RevokeSupersededCertFactors(qrdbsdk.ContextWithTenant(ctx, tenantID), userID, cert, adminCertBindingSourceFirstBoot); err != nil {
+		return &FirstBootBootstrapError{Op: "revoke superseded admin login factors", Cause: err}
 	}
 	// go-quicbaas#2132: the issued cert logs in only if mtls is a permitted method.
 	if _, err := c.identityStore.PermitCertificateLogin(ctx, tenantID, userID); err != nil {

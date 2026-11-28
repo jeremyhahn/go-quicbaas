@@ -447,7 +447,11 @@ func (v *Validator) validateSecurity(cfg *SecurityConfig) {
 			v.addError("security.tls_ca_file", "TLS CA file is required when client auth is enabled")
 		}
 
-		if cfg.TLSCAFile != "" && !v.fileExists(cfg.TLSCAFile) {
+		// An auto-provisioned node (no operator cert/key) writes its CA chain
+		// to TLSCAFile on first boot (pkg/server/lifecycle.go), so the file
+		// need not exist yet. Operator-supplied material must be complete.
+		autoProvisioned := cfg.TLSCertFile == "" && cfg.TLSKeyFile == ""
+		if cfg.TLSCAFile != "" && !autoProvisioned && !v.fileExists(cfg.TLSCAFile) {
 			v.addError("security.tls_ca_file", fmt.Sprintf("TLS CA file does not exist: %s", cfg.TLSCAFile))
 		}
 	}

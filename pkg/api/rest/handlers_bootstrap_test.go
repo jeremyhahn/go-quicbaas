@@ -170,6 +170,37 @@ func TestBootstrapRoutesDelegateToServicer(t *testing.T) {
 	}
 }
 
+// TestBootstrapNoiseDecodesP256Fields: the approved-suite fields of the JSON
+// body reach the servicer.
+func TestBootstrapNoiseDecodesP256Fields(t *testing.T) {
+	server, _, cleanup := setupMockServer(t)
+	defer cleanup()
+
+	fake := &fakeBootstrapServicer{
+		resp: &service.BootstrapBundleResponse{Method: "noise", ContentType: "application/pem-certificate-chain"},
+	}
+	server.SetBootstrapService(fake)
+
+	body := `{"server_url":"https://kms.example.com:8443","noise_p256_static_key":"04ab","noise_suite":"p256_aesgcm"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap/noise", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.GetRouter().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	if fake.lastReq == nil {
+		t.Fatal("servicer did not receive the request")
+	}
+	if fake.lastReq.NoiseP256StaticKey != "04ab" {
+		t.Errorf("NoiseP256StaticKey = %q, want 04ab", fake.lastReq.NoiseP256StaticKey)
+	}
+	if fake.lastReq.NoiseSuite != service.BootstrapNoiseSuiteP256 {
+		t.Errorf("NoiseSuite = %q, want %q", fake.lastReq.NoiseSuite, service.BootstrapNoiseSuiteP256)
+	}
+}
+
 // TestBootstrapServicerErrorMapsToStatus pins that a typed invalid-input error
 // from the servicer (e.g. xkms reporting a missing server URL) surfaces as a
 // 400 through the shared service-error mapping rather than a generic 500.

@@ -129,6 +129,32 @@ describe('RestBootstrapClient.noise', () => {
     const [url] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/bootstrap/noise');
   });
+
+  it('sends the approved P-256 suite key and suite in the request body', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        method: 'noise',
+        bundle_pem: 'PEM-NOISE',
+        content_type: 'application/pem-certificate-chain',
+      }),
+    );
+
+    const client = new RestClient('http://localhost');
+    await client.bootstrap.noise({
+      server_url: 'https://kms.example.com:8443',
+      noise_p256_static_key: '04ab',
+      noise_suite: 'p256_aesgcm',
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost/api/v1/bootstrap/noise');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      server_url: 'https://kms.example.com:8443',
+      noise_p256_static_key: '04ab',
+      noise_suite: 'p256_aesgcm',
+    });
+  });
 });
 
 describe('RestBootstrapClient.spki', () => {

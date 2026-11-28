@@ -18,11 +18,10 @@
 // verb-for-verb so operators get a single, consistent surface across
 // QuicBaaS / XKMS / qrdb clients.
 //
-// QuicBaaS itself does not own bootstrap; the canonical truststrap
-// implementation lives in go-truststrap and is exercised by xkmsctl.
-// This file exposes the same CLI shape but routes through the SDK so a
-// future SDK BootstrapClient can drop in without operator-visible
-// changes.
+// QuicBaaS itself does not own bootstrap; the canonical implementation
+// lives in go-xkms. These commands are a client-side pre-trust fetch: they
+// call go-xkms Fetch on this machine through the SDK re-export
+// (sdk/go/xkms/trust/bootstrap) and never call a QuicBaaS API.
 package main
 
 import (
@@ -36,6 +35,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
+	trustbootstrap "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/trust/bootstrap"
 )
 
 // =============================================================================
@@ -47,6 +47,26 @@ var (
 	bootstrapServerURL string
 	bootstrapBundleOut string
 	bootstrapOutputFmt string
+
+	// DANE material.
+	bootstrapHostname  string
+	bootstrapDNSServer string
+
+	// Noise material.
+	bootstrapNoiseAddr          string
+	bootstrapNoiseStaticKey     string
+	bootstrapNoiseP256StaticKey string
+	bootstrapNoiseSuite         string
+
+	// SPKI material.
+	bootstrapSPKIPin string
+)
+
+// The Noise suite names --noise-suite accepts. They are the same strings the
+// REST bootstrap request and the TypeScript SDK use.
+const (
+	bootstrapNoiseSuiteNK   = "noise_nk"
+	bootstrapNoiseSuiteP256 = "p256_aesgcm"
 )
 
 // validBootstrapMethods is the canonical --method set.
@@ -62,16 +82,44 @@ var validBootstrapMethods = map[string]struct{}{
 // BootstrapClient interface and factory
 // =============================================================================
 
-// BootstrapAutoRequest captures the parameters for /api/v1/bootstrap/auto.
-// Values that are zero are sent as their JSON omitempty defaults so the
-// server can fall back to its configuration.
+// BootstrapAutoRequest captures the parameters of one client-side trust
+// bootstrap. Each method reads only its own material; empty fields are left
+// out of the go-xkms config.
 type BootstrapAutoRequest struct {
 	// Method selects the bootstrap method (auto, dane, noise, spki, direct).
 	Method string `json:"method"`
 
-	// ServerURL is the target QuicBaaS server. When empty the SDK uses the
-	// global --address.
+	// ServerURL is the https URL of the QuicBaaS server to bootstrap trust
+	// from. Required.
 	ServerURL string `json:"server_url,omitempty"`
+
+	// Hostname is the DNSSEC zone the server's TLSA records are published
+	// under (DANE).
+	Hostname string `json:"hostname,omitempty"`
+
+	// DNSServer optionally pins the resolver for the TLSA lookup, e.g.
+	// "8.8.8.8:53" (DANE).
+	DNSServer string `json:"dns_server,omitempty"`
+
+	// NoiseAddr is the explicit Noise bootstrap address ("host:port"); empty
+	// derives it from ServerURL (Noise).
+	NoiseAddr string `json:"noise_addr,omitempty"`
+
+	// NoiseStaticKey is the hex-encoded Curve25519 server public key for the
+	// Noise_NK suite (Noise).
+	NoiseStaticKey string `json:"noise_static_key,omitempty"`
+
+	// NoiseP256StaticKey is the hex-encoded uncompressed P-256 server public
+	// point for the approved suite (Noise).
+	NoiseP256StaticKey string `json:"noise_p256_static_key,omitempty"`
+
+	// NoiseSuite optionally pins the Noise suite: "noise_nk" or
+	// "p256_aesgcm"; empty selects by policy (Noise).
+	NoiseSuite string `json:"noise_suite,omitempty"`
+
+	// SPKIPin is the hex-encoded SHA-256 SPKI pin of the server certificate
+	// (SPKI).
+	SPKIPin string `json:"spki_pin,omitempty"`
 }
 
 // BootstrapAutoResponse is the JSON shape returned by
@@ -102,13 +150,81 @@ type BootstrapClientFactory func() (BootstrapClient, error)
 // the SDK-backed implementation; tests override this for injection.
 var bootstrapClientFactory BootstrapClientFactory = createSDKBootstrapClient
 
-// createSDKBootstrapClient returns a BootstrapClient. Until the SDK
-// exposes a first-class bootstrap surface, this returns a sentinel
-// pendingBootstrapClient that emits a typed "pending SDK" error so the
-// canonical CLI shape is locked even before the server-side handler
-// lands.
+// createSDKBootstrapClient returns the SDK-backed BootstrapClient, which runs
+// the trust bootstrap on this machine through go-xkms Fetch.
 func createSDKBootstrapClient() (BootstrapClient, error) {
-	return &pendingBootstrapClient{}, nil
+	return sdkBootstrapClient{}, nil
+}
+
+// bootstrapFetch is the seam onto the SDK's client-side trust bootstrap.
+// Tests replace it; production calls go-xkms Fetch through the SDK.
+var bootstrapFetch = trustbootstrap.Fetch
+
+// sdkBootstrapClient runs the bootstrap on this machine: it builds the
+// go-xkms config from the request and fetches the CA bundle before any
+// trust exists. It never talks to a QuicBaaS API.
+type sdkBootstrapClient struct{}
+
+// BootstrapAuto fetches the CA bundle with the request's method and material.
+func (sdkBootstrapClient) BootstrapAuto(ctx context.Context, req *BootstrapAutoRequest) (*BootstrapAutoResponse, error) {
+	if req.ServerURL == "" {
+		return nil, &BootstrapServerURLRequiredError{}
+	}
+	cfg := trustbootstrap.Config{
+		Mode:             trustbootstrap.Mode(req.Method),
+		ServerURL:        req.ServerURL,
+		PerMethodTimeout: globalTimeout,
+	}
+	if req.Hostname != "" {
+		cfg.DANE = &trustbootstrap.DANEConfig{Hostname: req.Hostname, DNSServer: req.DNSServer}
+	}
+	if req.NoiseStaticKey != "" || req.NoiseP256StaticKey != "" {
+		suite, err := bootstrapNoiseSuiteByte(req.NoiseSuite)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Noise = &trustbootstrap.NoiseConfig{
+			ServerAddr:          req.NoiseAddr,
+			ServerStaticKey:     req.NoiseStaticKey,
+			ServerP256StaticKey: req.NoiseP256StaticKey,
+			Suite:               suite,
+		}
+	}
+	if req.SPKIPin != "" {
+		cfg.SPKI = &trustbootstrap.SPKIConfig{Pin: req.SPKIPin}
+	}
+	if req.Method == string(trustbootstrap.ModeDirect) || req.Method == string(trustbootstrap.ModeAuto) {
+		cfg.Direct = &trustbootstrap.DirectConfig{}
+	}
+
+	bundle, err := bootstrapFetch(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if bundle == nil {
+		return nil, &BootstrapEmptyBundleError{Method: req.Method}
+	}
+	resp := &BootstrapAutoResponse{Method: req.Method, CABundlePEM: string(bundle.PEM)}
+	if req.Method == string(trustbootstrap.ModeSPKI) {
+		// The pin the bundle was verified against.
+		resp.SPKIPin = req.SPKIPin
+	}
+	return resp, nil
+}
+
+// bootstrapNoiseSuiteByte maps a --noise-suite name onto the go-xkms suite
+// byte; the empty name selects by policy (0).
+func bootstrapNoiseSuiteByte(name string) (byte, error) {
+	switch name {
+	case "":
+		return 0, nil
+	case bootstrapNoiseSuiteNK:
+		return trustbootstrap.SuiteNoiseNK, nil
+	case bootstrapNoiseSuiteP256:
+		return trustbootstrap.SuiteP256AESGCM, nil
+	default:
+		return 0, &BootstrapInvalidNoiseSuiteError{Got: name}
+	}
 }
 
 // =============================================================================
@@ -127,27 +243,36 @@ func (e *BootstrapInvalidMethodError) Error() string {
 		" (must be one of auto, dane, noise, spki, direct)"
 }
 
-// BootstrapPendingSDKError signals that the SDK BootstrapClient surface
-// has not yet been wired. The CLI shape is locked; the SDK call lands
-// in a follow-up phase.
-type BootstrapPendingSDKError struct {
-	Op string
+// BootstrapServerURLRequiredError is returned, before any fetch, when no
+// --server-url is given.
+type BootstrapServerURLRequiredError struct{}
+
+// Error returns a human-readable description.
+func (e *BootstrapServerURLRequiredError) Error() string {
+	return "bootstrap: --server-url is required (an https URL, e.g. https://quicbaas.example.com:8443)"
+}
+
+// BootstrapInvalidNoiseSuiteError is returned when --noise-suite is not
+// noise_nk or p256_aesgcm.
+type BootstrapInvalidNoiseSuiteError struct {
+	Got string
 }
 
 // Error returns a human-readable description.
-func (e *BootstrapPendingSDKError) Error() string {
-	return "bootstrap " + e.Op +
-		": SDK BootstrapClient not yet wired (track in plan Phase 12+)"
+func (e *BootstrapInvalidNoiseSuiteError) Error() string {
+	return "bootstrap: invalid --noise-suite " + e.Got +
+		" (must be " + bootstrapNoiseSuiteNK + " or " + bootstrapNoiseSuiteP256 + ", or empty for policy)"
 }
 
-// pendingBootstrapClient is the placeholder returned by
-// createSDKBootstrapClient until the SDK exposes a real
-// BootstrapClient. Every call returns BootstrapPendingSDKError.
-type pendingBootstrapClient struct{}
+// BootstrapEmptyBundleError is returned when the fetch reports success but
+// yields no CA bundle.
+type BootstrapEmptyBundleError struct {
+	Method string
+}
 
-// BootstrapAuto returns BootstrapPendingSDKError.
-func (p *pendingBootstrapClient) BootstrapAuto(_ context.Context, _ *BootstrapAutoRequest) (*BootstrapAutoResponse, error) {
-	return nil, &BootstrapPendingSDKError{Op: "auto"}
+// Error returns a human-readable description.
+func (e *BootstrapEmptyBundleError) Error() string {
+	return "bootstrap " + e.Method + ": the fetch returned no CA bundle"
 }
 
 // =============================================================================
@@ -163,12 +288,24 @@ func newBootstrapCommand() *cobra.Command {
 prior trust. The verb set mirrors xkmsctl bootstrap so operators have
 a single, consistent surface.
 
+The fetch runs on this machine, before any trust exists: it needs no
+running session or credentials, only --server-url and the chosen
+method's material.
+
 Verbs:
-  auto    Try methods in priority order (DANE, Noise, SPKI, Direct)`,
+  auto    Try methods in priority order (DANE, Noise, SPKI, Direct)
+  dane    Verify the server certificate against its DNSSEC TLSA records
+  noise   Fetch over Noise (Noise_NK or the approved P-256 suite)
+  spki    Verify the server certificate against a SHA-256 SPKI pin
+  direct  Fetch over plain HTTPS when the transport already enforces trust`,
 	}
 	cmd.PersistentFlags().StringVar(&bootstrapOutputFmt, "output", "table",
 		"Output format (json, yaml, table)")
 	cmd.AddCommand(newBootstrapAutoCommand())
+	cmd.AddCommand(newBootstrapMethodCommand("dane", "Bootstrap trust with DANE/TLSA (--hostname)"))
+	cmd.AddCommand(newBootstrapMethodCommand("noise", "Bootstrap trust over Noise (--noise-static-key or --noise-p256-static-key)"))
+	cmd.AddCommand(newBootstrapMethodCommand("spki", "Bootstrap trust with an SPKI pin (--spki-pin)"))
+	cmd.AddCommand(newBootstrapMethodCommand("direct", "Bootstrap trust with a direct HTTPS fetch"))
 	return cmd
 }
 
@@ -188,16 +325,53 @@ Direct in that order; dane/noise/spki/direct each pin their respective
 method).
 
 Example:
-  quicbaas bootstrap auto --method auto`,
+  quicbaas bootstrap auto --server-url https://quicbaas.example.com:8443 \
+    --hostname quicbaas.example.com --spki-pin <sha256-hex>`,
 		RunE: runBootstrapAutoCommand,
 	}
 	cmd.Flags().StringVar(&bootstrapMethod, "method", "auto",
 		"Bootstrap method: auto, dane, noise, spki, direct")
-	cmd.Flags().StringVar(&bootstrapServerURL, "server-url", "",
-		"Override the global --address for this call (optional)")
-	cmd.Flags().StringVar(&bootstrapBundleOut, "bundle-output", "",
-		"Path where the CA bundle PEM should be written (optional, prints to stdout when empty)")
+	addBootstrapFetchFlags(cmd)
 	return cmd
+}
+
+// newBootstrapMethodCommand builds 'quicbaas bootstrap <method>', which pins
+// one method and otherwise runs exactly like 'bootstrap auto --method <method>'.
+func newBootstrapMethodCommand(method, short string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   method,
+		Short: short,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			bootstrapMethod = method
+			return runBootstrapAutoCommand(cmd, args)
+		},
+	}
+	addBootstrapFetchFlags(cmd)
+	return cmd
+}
+
+// addBootstrapFetchFlags registers the server URL, output and per-method
+// material flags shared by every bootstrap verb.
+func addBootstrapFetchFlags(cmd *cobra.Command) {
+	f := cmd.Flags()
+	f.StringVar(&bootstrapServerURL, "server-url", "",
+		"QuicBaaS server URL to bootstrap trust from, e.g. https://quicbaas.example.com:8443 (required)")
+	f.StringVar(&bootstrapBundleOut, "bundle-output", "",
+		"Path where the CA bundle PEM should be written (optional, prints to stdout when empty)")
+	f.StringVar(&bootstrapHostname, "hostname", "",
+		"DANE: DNSSEC zone the server's TLSA records are published under")
+	f.StringVar(&bootstrapDNSServer, "dns-server", "",
+		"DANE: resolver for the TLSA lookup, e.g. 8.8.8.8:53 (optional)")
+	f.StringVar(&bootstrapNoiseAddr, "noise-addr", "",
+		"Noise: bootstrap address host:port (optional, derived from --server-url when empty)")
+	f.StringVar(&bootstrapNoiseStaticKey, "noise-static-key", "",
+		"Noise: server Curve25519 public key, hex, for the Noise_NK suite")
+	f.StringVar(&bootstrapNoiseP256StaticKey, "noise-p256-static-key", "",
+		"Noise: server P-256 public key (uncompressed point), hex, for the approved suite")
+	f.StringVar(&bootstrapNoiseSuite, "noise-suite", "",
+		"Noise: pin the suite, noise_nk or p256_aesgcm (empty selects by policy)")
+	f.StringVar(&bootstrapSPKIPin, "spki-pin", "",
+		"SPKI: SHA-256 SPKI pin of the server certificate, hex")
 }
 
 // runBootstrapAutoCommand executes 'bootstrap auto'.
@@ -215,8 +389,15 @@ func runBootstrapAutoCommand(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	resp, err := client.BootstrapAuto(ctx, &BootstrapAutoRequest{
-		Method:    bootstrapMethod,
-		ServerURL: bootstrapServerURL,
+		Method:             bootstrapMethod,
+		ServerURL:          bootstrapServerURL,
+		Hostname:           bootstrapHostname,
+		DNSServer:          bootstrapDNSServer,
+		NoiseAddr:          bootstrapNoiseAddr,
+		NoiseStaticKey:     bootstrapNoiseStaticKey,
+		NoiseP256StaticKey: bootstrapNoiseP256StaticKey,
+		NoiseSuite:         bootstrapNoiseSuite,
+		SPKIPin:            bootstrapSPKIPin,
 	})
 	if err != nil {
 		return formatError(err)

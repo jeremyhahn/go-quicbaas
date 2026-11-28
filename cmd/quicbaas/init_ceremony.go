@@ -389,6 +389,31 @@ func runInitOfficerStatusCommand(cmd *cobra.Command, _ []string) error {
 // count is reported so the operator can confirm the split happened, but the
 // shares themselves are not here and never will be — they are held in the
 // daemon until each officer claims theirs.
+// ceremonyInitializeSummary is the public view of a ceremony result that
+// --output json prints. It is an explicit allow-list: the raw
+// CeremonyInitializeResponse is never encoded, so a secret field go-qrdb adds
+// to it (the generated administrator's private key, Codex 7595 P1 1, #1927)
+// cannot reach stdout, where bootstrap and CI logs capture it. A field is
+// added here only when it is safe to print.
+type ceremonyInitializeSummary struct {
+	SPKIPin    string `json:"spki_pin"`
+	CACertPEM  string `json:"ca_cert_pem"`
+	TLSCertPEM string `json:"tls_cert_pem"`
+	State      string `json:"state"`
+	ShareCount int    `json:"share_count"`
+}
+
+// newCeremonyInitializeSummary copies the public fields of resp.
+func newCeremonyInitializeSummary(resp *qrdbtransport.CeremonyInitializeResponse) ceremonyInitializeSummary {
+	return ceremonyInitializeSummary{
+		SPKIPin:    resp.SPKIPin,
+		CACertPEM:  resp.CACertPEM,
+		TLSCertPEM: resp.TLSCertPEM,
+		State:      resp.State,
+		ShareCount: resp.ShareCount,
+	}
+}
+
 func formatCeremonyInitializeResponse(
 	resp *qrdbtransport.CeremonyInitializeResponse,
 	format string,
@@ -404,7 +429,7 @@ func formatCeremonyInitializeResponse(
 	if outputFormat == cli.OutputFormatJSON {
 		encoder := json.NewEncoder(w)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
+		return encoder.Encode(newCeremonyInitializeSummary(resp))
 	}
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)

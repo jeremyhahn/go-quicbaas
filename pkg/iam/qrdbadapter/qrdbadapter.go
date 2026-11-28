@@ -46,6 +46,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -397,6 +398,10 @@ func samePermissions(a, b []string) bool {
 type UserAdapter struct {
 	store *iam.IdentityStore
 
+	// adminEmail, when set, is the system-tenant admin's address in place
+	// of the synthetic one (#1827).
+	adminEmail string
+
 	// created is the user CreateUser most recently wrote. firstboot.Initialize
 	// calls Binder.BindAdminCert only in the same, single-threaded run that
 	// created the admin, so a plain field is the whole correlation needed.
@@ -412,6 +417,23 @@ var (
 // WrapUser adapts a quicbaas IdentityStore to the qrdb UserCreator and
 // CertBinder surfaces qrdbfirstboot.Initialize consumes.
 func WrapUser(store *iam.IdentityStore) *UserAdapter { return &UserAdapter{store: store} }
+
+// WithAdminEmail sets the address CreateUser gives a user it creates in the
+// system tenant, the first-boot platform admin (#1827). An empty address
+// keeps the synthetic "<username>@system.qrdb.local".
+func (a *UserAdapter) WithAdminEmail(email string) *UserAdapter {
+	a.adminEmail = strings.TrimSpace(email)
+	return a
+}
+
+// EmailFor returns the address CreateUser gives username in tenantID: the
+// configured admin address in the system tenant, else the synthetic one.
+func (a *UserAdapter) EmailFor(username, tenantID string) string {
+	if a != nil && a.adminEmail != "" && tenantID == qrdbsdk.SystemTenantID {
+		return a.adminEmail
+	}
+	return syntheticEmail(username, tenantID)
+}
 
 // CreateUser satisfies qrdbfirstboot.UserCreator. Synthesizes the email
 // quicbaas's validator requires (qrdb's CreateUserRequest has no Email
@@ -449,7 +471,7 @@ func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserReq
 	}
 	opts := iam.CreateUserOptions{
 		Username:  req.Username,
-		Email:     syntheticEmail(req.Username, tenantID),
+		Email:     a.EmailFor(req.Username, tenantID),
 		Name:      req.Username,
 		Roles:     req.RoleIDs,
 		Lifecycle: lifecycle,
