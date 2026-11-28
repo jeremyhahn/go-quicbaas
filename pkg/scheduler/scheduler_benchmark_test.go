@@ -99,7 +99,8 @@ func (b *benchmarkStorage) ListJobs(ctx context.Context, query *JobQuery) ([]*Jo
 	return result, "", nil
 }
 
-func (b *benchmarkStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, eligible DueJobFilter) ([]*Job, error) {
+func (b *benchmarkStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*Job, error) {
+	eligible := DueJobFilterFrom(ctx)
 	b.mu.RLock()
 	result := make([]*Job, 0, limit)
 	for _, job := range b.jobs {

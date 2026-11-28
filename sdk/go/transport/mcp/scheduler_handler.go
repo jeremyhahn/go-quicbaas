@@ -57,6 +57,9 @@ var schedulerJobArgs = map[string]schedulerJobArgsFunc{
 	"CancelJob":     cancelJobArgs,
 	"GetJobHistory": jobHistoryArgs,
 	"GetStatus":     statusArgs,
+
+	"ListRemoteRuns":    listRemoteRunsArgs,
+	"CompleteRemoteRun": completeRemoteRunArgs,
 }
 
 // schedulerJobResults maps each job method to its result decoder.
@@ -72,6 +75,9 @@ var schedulerJobResults = map[string]schedulerJobResultFunc{
 	"CancelJob":     decodeCancelJobResult,
 	"GetJobHistory": decodeJobHistoryResult,
 	"GetStatus":     decodeStatusResult,
+
+	"ListRemoteRuns":    decodeRemoteRunsResult,
+	"CompleteRemoteRun": decodeCompleteRemoteRunResult,
 }
 
 // transformRequest transforms an SDK scheduler request to MCP tool arguments.

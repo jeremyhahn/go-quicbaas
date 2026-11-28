@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,10 +32,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
-// DueJobFilter reports whether this node may run a due job. A nil filter
-// accepts every due job.
-type DueJobFilter func(job *Job) bool
-
 // JobStorage defines the interface for job persistence.
 type JobStorage interface {
 	CreateJob(ctx context.Context, job *Job) error
@@ -43,10 +40,10 @@ type JobStorage interface {
 	DeleteJob(ctx context.Context, id uint64, tenantID string) error
 	ListJobs(ctx context.Context, query *JobQuery) ([]*Job, string, error)
 
-	// GetJobsDueForExecution returns up to limit jobs due before before that
-	// eligible accepts. The limit counts only accepted jobs, so jobs this
-	// node cannot run never crowd out ones it can.
-	GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, eligible DueJobFilter) ([]*Job, error)
+	// GetJobsDueForExecution returns up to limit jobs due before before. A
+	// DueJobFilter carried by ctx (DueJobFilterFrom) narrows the scan, and
+	// the limit counts only the jobs it accepts.
+	GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*Job, error)
 
 	SaveExecution(ctx context.Context, exec *JobExecution) error
 	GetExecutions(ctx context.Context, jobID uint64, tenantID string, limit int) ([]*JobExecution, error)
@@ -58,6 +55,14 @@ type JobStorage interface {
 	// reissued ID overwrites the job that holds it. It is the store's open
 	// step, so a store also completes its one-time migrations here.
 	InitializeJobIDCounter(ctx context.Context) error
+}
+
+// ReconcileErrorReporter is a JobStorage whose due scan reconciles an index in
+// passing and reports a failed pass here instead of failing the scan.
+// TakeReconcileError returns the error of the last failed pass and clears it,
+// so the engine logs and counts each failed pass once.
+type ReconcileErrorReporter interface {
+	TakeReconcileError() error
 }
 
 // FiringClaimer arbitrates which node executes a given firing.
@@ -103,6 +108,31 @@ type SchedulerEngine struct {
 	// engine was built for a cluster; a single-node engine has no race to
 	// arbitrate and never consults it.
 	claims FiringClaimer
+
+	// concluder guards the conclusion of a run across nodes (#105). It is
+	// set when a clustered engine's storage provides it, and nil otherwise;
+	// a clustered engine without it refuses abandoned-run recovery.
+	concluder RunConcluder
+
+	// jobWriter guards every job change that is not a run conclusion across
+	// nodes: a clustered engine writes cancels, pauses, resumes, updates,
+	// system job repairs and the Running transition through it, so a write
+	// prepared before another node changed the record is re-decided. It is
+	// nil on a single-node engine, which writes as it always has.
+	jobWriter GuardedJobWriter
+
+	// startedRuns holds, per job (tenant and ID: two tenants' jobs can share
+	// an ID), the identity of the run this node moved to Running, so its
+	// outcome is concluded through the guard.
+	startedRuns sync.Map // runKey -> RunConclusion
+
+	// remoteRuns holds, per job (tenant and ID), the open run of a remote
+	// handler this node fired and is waiting on (see remote_handler.go).
+	remoteRuns sync.Map // runKey -> *remoteWaiter
+
+	// concludedElsewhere counts outcomes dropped because another writer
+	// concluded the run first.
+	concludedElsewhere atomic.Uint64
 
 	// Map-based dispatch for O(1) handler lookup
 	handlers   map[string]JobHandler
@@ -265,7 +295,14 @@ func NewWithClustering(config *SchedulerConfig, storage JobStorage, nodeID strin
 	if !ok {
 		return nil, ClaimUnsupportedError{Backend: fmt.Sprintf("%T", storage)}
 	}
-	return newEngine(config, storage, nodeID, leader, claimer), nil
+	engine := newEngine(config, storage, nodeID, leader, claimer)
+	if concluder, ok := storage.(RunConcluder); ok {
+		engine.concluder = concluder
+	}
+	if w, ok := storage.(GuardedJobWriter); ok {
+		engine.jobWriter = w
+	}
+	return engine, nil
 }
 
 // newEngine is the shared constructor behind New and NewWithClustering.
@@ -518,34 +555,33 @@ func (s *SchedulerEngine) CancelJob(ctx context.Context, jobID uint64) error {
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, "")
+	job, err := s.mutateJob(ctx, jobID, "", func(held *Job) (*Job, error) {
+		next := *held
+
+		// Only pending or paused jobs can be canceled
+		if next.Status == JobStatusRunning {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "cannot cancel a running job",
+			}
+		}
+
+		if next.Status == JobStatusCanceled || next.Status == JobStatusCompleted {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "job is already in terminal state",
+			}
+		}
+
+		next.Status = JobStatusCanceled
+		next.UpdatedAt = time.Now()
+		return &next, nil
+	})
 	if err != nil {
-		return ErrStorageError{Op: "GetJob", Cause: err}
+		return err
 	}
 	if job == nil {
 		return JobNotFoundError{JobID: jobID}
-	}
-
-	// Only pending or paused jobs can be canceled
-	if job.Status == JobStatusRunning {
-		return InvalidJobError{
-			Field:   "status",
-			Message: "cannot cancel a running job",
-		}
-	}
-
-	if job.Status == JobStatusCanceled || job.Status == JobStatusCompleted {
-		return InvalidJobError{
-			Field:   "status",
-			Message: "job is already in terminal state",
-		}
-	}
-
-	job.Status = JobStatusCanceled
-	job.UpdatedAt = time.Now()
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return nil
@@ -563,39 +599,38 @@ func (s *SchedulerEngine) CancelJobWithTenant(ctx context.Context, jobID uint64,
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, tenantID)
+	var oldStatus JobStatus
+	job, err := s.mutateJob(ctx, jobID, tenantID, func(held *Job) (*Job, error) {
+		next := *held
+		oldStatus = held.Status
+
+		// Only pending or paused jobs can be canceled
+		if next.Status == JobStatusRunning {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "cannot cancel a running job",
+			}
+		}
+
+		if next.Status == JobStatusCanceled || next.Status == JobStatusCompleted {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "job is already in terminal state",
+			}
+		}
+
+		next.Status = JobStatusCanceled
+		next.UpdatedAt = time.Now()
+		if reason != "" {
+			next.LastError = reason
+		}
+		return &next, nil
+	})
 	if err != nil {
-		return "", ErrStorageError{Op: "GetJob", Cause: err}
+		return oldStatus, err
 	}
 	if job == nil {
 		return "", JobNotFoundError{JobID: jobID}
-	}
-
-	oldStatus := job.Status
-
-	// Only pending or paused jobs can be canceled
-	if job.Status == JobStatusRunning {
-		return oldStatus, InvalidJobError{
-			Field:   "status",
-			Message: "cannot cancel a running job",
-		}
-	}
-
-	if job.Status == JobStatusCanceled || job.Status == JobStatusCompleted {
-		return oldStatus, InvalidJobError{
-			Field:   "status",
-			Message: "job is already in terminal state",
-		}
-	}
-
-	job.Status = JobStatusCanceled
-	job.UpdatedAt = time.Now()
-	if reason != "" {
-		job.LastError = reason
-	}
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return oldStatus, ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return oldStatus, nil
@@ -724,26 +759,25 @@ func (s *SchedulerEngine) PauseJob(ctx context.Context, jobID uint64, tenantID s
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, tenantID)
+	job, err := s.mutateJob(ctx, jobID, tenantID, func(held *Job) (*Job, error) {
+		next := *held
+
+		if next.Status != JobStatusPending {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "only pending jobs can be paused",
+			}
+		}
+
+		next.Status = JobStatusPaused
+		next.UpdatedAt = time.Now()
+		return &next, nil
+	})
 	if err != nil {
-		return ErrStorageError{Op: "GetJob", Cause: err}
+		return err
 	}
 	if job == nil {
 		return JobNotFoundError{JobID: jobID}
-	}
-
-	if job.Status != JobStatusPending {
-		return InvalidJobError{
-			Field:   "status",
-			Message: "only pending jobs can be paused",
-		}
-	}
-
-	job.Status = JobStatusPaused
-	job.UpdatedAt = time.Now()
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return nil
@@ -759,28 +793,27 @@ func (s *SchedulerEngine) PauseJobWithStatus(ctx context.Context, jobID uint64, 
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, tenantID)
+	var oldStatus JobStatus
+	job, err := s.mutateJob(ctx, jobID, tenantID, func(held *Job) (*Job, error) {
+		next := *held
+		oldStatus = held.Status
+
+		if next.Status != JobStatusPending {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "only pending jobs can be paused",
+			}
+		}
+
+		next.Status = JobStatusPaused
+		next.UpdatedAt = time.Now()
+		return &next, nil
+	})
 	if err != nil {
-		return "", ErrStorageError{Op: "GetJob", Cause: err}
+		return oldStatus, err
 	}
 	if job == nil {
 		return "", JobNotFoundError{JobID: jobID}
-	}
-
-	oldStatus := job.Status
-
-	if job.Status != JobStatusPending {
-		return oldStatus, InvalidJobError{
-			Field:   "status",
-			Message: "only pending jobs can be paused",
-		}
-	}
-
-	job.Status = JobStatusPaused
-	job.UpdatedAt = time.Now()
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return oldStatus, ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return oldStatus, nil
@@ -796,33 +829,32 @@ func (s *SchedulerEngine) ResumeJob(ctx context.Context, jobID uint64, tenantID 
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, tenantID)
+	job, err := s.mutateJob(ctx, jobID, tenantID, func(held *Job) (*Job, error) {
+		next := *held
+
+		if next.Status != JobStatusPaused {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "only paused jobs can be resumed",
+			}
+		}
+
+		next.Status = JobStatusPending
+		next.UpdatedAt = time.Now()
+
+		// Recalculate next run if needed
+		if next.NextRun.Before(time.Now()) {
+			if err := s.rescheduleResumed(&next); err != nil {
+				return nil, err
+			}
+		}
+		return &next, nil
+	})
 	if err != nil {
-		return ErrStorageError{Op: "GetJob", Cause: err}
+		return err
 	}
 	if job == nil {
 		return JobNotFoundError{JobID: jobID}
-	}
-
-	if job.Status != JobStatusPaused {
-		return InvalidJobError{
-			Field:   "status",
-			Message: "only paused jobs can be resumed",
-		}
-	}
-
-	job.Status = JobStatusPending
-	job.UpdatedAt = time.Now()
-
-	// Recalculate next run if needed
-	if job.NextRun.Before(time.Now()) {
-		if err := s.rescheduleResumed(job); err != nil {
-			return err
-		}
-	}
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return nil
@@ -838,35 +870,34 @@ func (s *SchedulerEngine) ResumeJobWithStatus(ctx context.Context, jobID uint64,
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, tenantID)
+	var oldStatus JobStatus
+	job, err := s.mutateJob(ctx, jobID, tenantID, func(held *Job) (*Job, error) {
+		next := *held
+		oldStatus = held.Status
+
+		if next.Status != JobStatusPaused {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "only paused jobs can be resumed",
+			}
+		}
+
+		next.Status = JobStatusPending
+		next.UpdatedAt = time.Now()
+
+		// Recalculate next run if needed
+		if next.NextRun.Before(time.Now()) {
+			if err := s.rescheduleResumed(&next); err != nil {
+				return nil, err
+			}
+		}
+		return &next, nil
+	})
 	if err != nil {
-		return "", ErrStorageError{Op: "GetJob", Cause: err}
+		return oldStatus, err
 	}
 	if job == nil {
 		return "", JobNotFoundError{JobID: jobID}
-	}
-
-	oldStatus := job.Status
-
-	if job.Status != JobStatusPaused {
-		return oldStatus, InvalidJobError{
-			Field:   "status",
-			Message: "only paused jobs can be resumed",
-		}
-	}
-
-	job.Status = JobStatusPending
-	job.UpdatedAt = time.Now()
-
-	// Recalculate next run if needed
-	if job.NextRun.Before(time.Now()) {
-		if err := s.rescheduleResumed(job); err != nil {
-			return oldStatus, err
-		}
-	}
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return oldStatus, ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return oldStatus, nil
@@ -906,68 +937,67 @@ func (s *SchedulerEngine) UpdateJob(ctx context.Context, jobID uint64, tenantID 
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, tenantID)
-	if err != nil {
-		return nil, ErrStorageError{Op: "GetJob", Cause: err}
-	}
-	if job == nil {
-		return nil, JobNotFoundError{JobID: jobID}
-	}
+	job, err := s.mutateJob(ctx, jobID, tenantID, func(held *Job) (*Job, error) {
+		next := *held
 
-	// Apply updates to mutable fields
-	if updates.Name != "" {
-		job.Name = updates.Name
-	}
-	if updates.Description != "" {
-		job.Description = updates.Description
-	}
-	if updates.Schedule != "" {
-		// Validate new cron schedule
-		if _, err := s.cronParser.Parse(updates.Schedule); err != nil {
-			return nil, InvalidScheduleError{Schedule: updates.Schedule, Cause: err}
+		// Apply updates to mutable fields
+		if updates.Name != "" {
+			next.Name = updates.Name
 		}
-		job.Schedule = updates.Schedule
-		// A recurring job's new schedule starts a new firing
-		if job.Type == JobTypeRecurring {
-			if err := s.startNextFiring(job); err != nil {
+		if updates.Description != "" {
+			next.Description = updates.Description
+		}
+		if updates.Schedule != "" {
+			// Validate new cron schedule
+			if _, err := s.cronParser.Parse(updates.Schedule); err != nil {
+				return nil, InvalidScheduleError{Schedule: updates.Schedule, Cause: err}
+			}
+			next.Schedule = updates.Schedule
+			// A recurring job's new schedule starts a new firing
+			if next.Type == JobTypeRecurring {
+				if err := s.startNextFiring(&next); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if !updates.ExecuteAt.IsZero() {
+			next.ExecuteAt = updates.ExecuteAt
+			if next.Type == JobTypeOneShot {
+				next.NextRun = updates.ExecuteAt
+			}
+		}
+		if updates.Handler != "" {
+			// Handler existence is validated at execution time, not update time
+			next.Handler = updates.Handler
+			// A tenant-owned job is never turned into a platform handler's job.
+			if err := checkPlatformHandler(&next); err != nil {
 				return nil, err
 			}
 		}
-	}
-	if !updates.ExecuteAt.IsZero() {
-		job.ExecuteAt = updates.ExecuteAt
-		if job.Type == JobTypeOneShot {
-			job.NextRun = updates.ExecuteAt
+		if updates.Payload != nil {
+			next.Payload = json.RawMessage(updates.Payload)
 		}
-	}
-	if updates.Handler != "" {
-		// Handler existence is validated at execution time, not update time
-		job.Handler = updates.Handler
-		// A tenant-owned job is never turned into a platform handler's job.
-		if err := checkPlatformHandler(job); err != nil {
-			return nil, err
+		if updates.Priority != 0 {
+			next.Priority = updates.Priority
 		}
-	}
-	if updates.Payload != nil {
-		job.Payload = json.RawMessage(updates.Payload)
-	}
-	if updates.Priority != 0 {
-		job.Priority = updates.Priority
-	}
-	if updates.Timeout != 0 {
-		job.Timeout = updates.Timeout
-	}
-	if updates.MaxRetries != 0 {
-		job.MaxRetries = updates.MaxRetries
-	}
-	if updates.Labels != nil {
-		job.Labels = updates.Labels
-	}
+		if updates.Timeout != 0 {
+			next.Timeout = updates.Timeout
+		}
+		if updates.MaxRetries != 0 {
+			next.MaxRetries = updates.MaxRetries
+		}
+		if updates.Labels != nil {
+			next.Labels = updates.Labels
+		}
 
-	job.UpdatedAt = time.Now()
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return nil, ErrStorageError{Op: "UpdateJob", Cause: err}
+		next.UpdatedAt = time.Now()
+		return &next, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if job == nil {
+		return nil, JobNotFoundError{JobID: jobID}
 	}
 
 	return job, nil
@@ -1027,6 +1057,18 @@ func (s *SchedulerEngine) GetJobHistory(ctx context.Context, jobID uint64, tenan
 	}
 	if job == nil {
 		return nil, JobNotFoundError{JobID: jobID}
+	}
+
+	// History left pending on the job is written first. A terminal job never
+	// runs again, so no execution would ever write it. A failed flush leaves
+	// it pending, and the read returns what storage holds.
+	if len(job.PendingHistory) > 0 {
+		lock := s.jobLock(job.ID)
+		lock.Lock()
+		if err := s.flushPendingHistory(ctx, job); err != nil {
+			s.logWarn("Job %d: pending history could not be written on read: %v; it stays pending on the job", job.ID, err)
+		}
+		lock.Unlock()
 	}
 
 	executions, err := s.storage.GetExecutions(ctx, jobID, tenantID, limit)
@@ -1151,11 +1193,32 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
 	defer cancel()
 
-	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs, s.dueJobFilter())
+	// The scan counts only jobs this node can dispatch, so jobs pinned to
+	// another node, or cluster-wide jobs on a follower, cannot fill the
+	// page and starve the ones this node can run.
+	filter, leaderErr := s.sweepDueFilterReporting(storageCtx)
+	storageCtx = WithDueJobFilter(storageCtx, filter)
+
+	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs)
+	// The filter refused the cluster-wide jobs a failed lookup left
+	// undecided, so they never reach shouldExecute: report it here, once
+	// per sweep, even when the scan itself also failed.
+	if lerr := leaderErr(); lerr != nil {
+		s.logWarn(sweepLogPrefix+" "+leaderCheckFailedReason+", cluster-wide jobs not dispatched: component=scheduler error=%q", lerr.Error())
+	}
 	if err != nil {
 		s.logError(sweepLogPrefix+" failed: component=scheduler error=%q", err.Error())
 		s.storageErrors.Add(1)
 		return
+	}
+
+	// A failed index reconcile does not fail the scan; it is logged and
+	// counted here, and the sweep goes on dispatching what it found.
+	if reporter, ok := s.storage.(ReconcileErrorReporter); ok {
+		if rerr := reporter.TakeReconcileError(); rerr != nil {
+			s.logError(sweepLogPrefix+" tenant job index reconcile failed: component=scheduler error=%q", rerr.Error())
+			s.storageErrors.Add(1)
+		}
 	}
 
 	// A sweep that finds nothing carries no information: the tick runs
@@ -1279,56 +1342,97 @@ func (s *SchedulerEngine) claimFiring(ctx context.Context, job *Job) bool {
 //     is disabled and affine jobs always fire — preserving
 //     pre-clustering behavior for single-node deployments.
 func (s *SchedulerEngine) shouldExecute(job *Job) bool {
+	ok, reason := s.canDispatch(job)
+	if ok {
+		return true
+	}
+	if strings.HasPrefix(reason, leaderCheckFailedReason) {
+		s.logWarn("Skipping job %d (%s): %s", job.ID, job.Name, reason)
+	} else {
+		s.logDebug("Skipping job %d (%s): %s", job.ID, job.Name, reason)
+	}
+	return false
+}
+
+// leaderCheckFailedReason prefixes the canDispatch reason for a failed
+// leadership check, which shouldExecute logs as a warning. The due sweep
+// also logs it, once per sweep, for the jobs its filter refused.
+const leaderCheckFailedReason = "leader check failed"
+
+// canDispatch reports whether this node can dispatch job and, when it
+// cannot, why. It does not log: the due scan calls it for every candidate.
+func (s *SchedulerEngine) canDispatch(job *Job) (bool, string) {
+	return s.canDispatchWith(job, s.isLeader)
+}
+
+// isLeader asks the leader checker whether this node leads. It is called only
+// when s.leader is non-nil.
+func (s *SchedulerEngine) isLeader() (bool, error) {
+	return s.leader.IsLeader()
+}
+
+// canDispatchWith is canDispatch with the leadership lookup supplied, so the
+// due scan can share one lookup across every candidate of a sweep.
+func (s *SchedulerEngine) canDispatchWith(job *Job, isLeader func() (bool, error)) (bool, string) {
 	if job.NodeAffinity != "" && s.nodeID != "" {
 		if job.NodeAffinity != s.nodeID {
-			s.logDebug("Skipping job %d (%s): NodeAffinity=%q, this node=%q",
-				job.ID, job.Name, job.NodeAffinity, s.nodeID)
-			return false
+			return false, fmt.Sprintf("NodeAffinity=%q, this node=%q", job.NodeAffinity, s.nodeID)
 		}
 		// Affinity matches: always execute regardless of leadership.
-		return true
+		return true, ""
 	}
 	// Cluster-wide job: gate on leadership.
 	if s.leader == nil {
-		return true
+		return true, ""
 	}
-	isLeader, err := s.leader.IsLeader()
+	leads, err := isLeader()
 	if err != nil {
-		s.logWarn("Skipping job %d (%s): leader check failed: %v",
-			job.ID, job.Name, err)
-		return false
+		return false, fmt.Sprintf("%s: %v", leaderCheckFailedReason, err)
 	}
-	if !isLeader {
-		s.logDebug("Skipping job %d (%s): not leader", job.ID, job.Name)
-		return false
+	if !leads {
+		return false, "not leader"
 	}
-	return true
+	return true, ""
 }
 
-// placementAllows is shouldExecute's decision, without logging, for a
-// leadership state sampled by the caller: a job with affinity runs only on
-// its node, any other job only on the leader.
-func (s *SchedulerEngine) placementAllows(job *Job, isLeader bool) bool {
-	if job.NodeAffinity != "" && s.nodeID != "" {
-		return job.NodeAffinity == s.nodeID
-	}
-	return isLeader
+// sweepDueFilter returns the due scan's filter for one sweep, as
+// sweepDueFilterReporting does, without the lookup error.
+func (s *SchedulerEngine) sweepDueFilter(ctx context.Context) DueJobFilter {
+	filter, _ := s.sweepDueFilterReporting(ctx)
+	return filter
 }
 
-// dueJobFilter returns the filter a due-job sweep hands its storage so the
-// batch limit counts only jobs this node may run. Leadership is sampled once
-// per sweep; shouldExecute re-checks it before each job fires.
-func (s *SchedulerEngine) dueJobFilter() DueJobFilter {
-	isLeader := true
-	if s.leader != nil {
-		leader, err := s.leader.IsLeader()
-		if err != nil {
-			s.logWarn("Due-job sweep treats this node as a follower: leader check failed: %v", err)
-			leader = false
+// sweepDueFilterReporting returns the due scan's filter for one sweep and a
+// func that gives the sweep's failed leadership lookup. Leadership does not
+// depend on the job, so the sweep asks the leader checker at most once, on
+// its first cluster-wide candidate, and reuses the answer (a failed lookup
+// included) for every other candidate: the scan never waits on one lookup per
+// rejected job. Once the sweep's context is done the filter admits nothing.
+// The filter refuses every cluster-wide job when the lookup fails, so those
+// jobs never reach shouldExecute: the sweep reports the error, which the
+// second func returns (nil when the sweep never asked or the lookup
+// succeeded). Read it only after the scan that calls the filter has returned.
+func (s *SchedulerEngine) sweepDueFilterReporting(ctx context.Context) (DueJobFilter, func() error) {
+	var (
+		asked    bool
+		leads    bool
+		leadsErr error
+	)
+	once := func() (bool, error) {
+		if !asked {
+			asked = true
+			leads, leadsErr = s.isLeader()
 		}
-		isLeader = leader
+		return leads, leadsErr
 	}
-	return func(job *Job) bool { return s.placementAllows(job, isLeader) }
+	filter := func(j *Job) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		ok, _ := s.canDispatchWith(j, once)
+		return ok
+	}
+	return filter, func() error { return leadsErr }
 }
 
 // triggerRequest is one queued manual trigger: the job, the scope it was
@@ -1395,8 +1499,17 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 
 	// Get handler
 	handler, ok := s.getHandler(job.Handler)
-	if !ok {
+	remote := !ok && IsRemoteHandler(job.Handler)
+	if !ok && !remote {
 		s.handleJobFailure(storageCtx, job, HandlerNotFoundError{Handler: job.Handler})
+		return
+	}
+
+	// A tenant-owned job of a platform handler is refused here too, whatever
+	// wrote it: the handler acts across every tenant, so it never runs for
+	// one. The job fails without being retried.
+	if err := checkPlatformHandler(job); err != nil {
+		s.handleJobFailure(storageCtx, job, err)
 		return
 	}
 
@@ -1406,71 +1519,105 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	// same lock so it cannot clobber a concurrent transition.
 	lock := s.jobLock(job.ID)
 	lock.Lock()
-	current, err := s.storage.GetJob(storageCtx, job.ID, JobTenantID(job))
-	if err != nil || current == nil {
+	var (
+		skip  string
+		stale bool
+	)
+	written, err := s.mutateJob(storageCtx, job.ID, JobTenantID(job), func(current *Job) (*Job, error) {
+		skip, stale = "", false
+		if current.Status == JobStatusCanceled || current.Status == JobStatusCompleted || current.Status == JobStatusPaused {
+			skip = fmt.Sprintf("Skipping job %d (%s): status is %s", current.ID, current.Name, current.Status)
+			return nil, errNoJobWrite
+		}
+		// A RUNNING JOB IS NEVER DOUBLE-RUN, whatever dispatched us. Claimed
+		// dispatches already require Pending below; this closes the manual and
+		// repair paths, whose TriggerJob-time precheck races the execution that
+		// can begin in between. Without it, a zero-firing dispatch would write
+		// Running over Running and invoke the handler concurrently with the
+		// live execution.
+		if current.Status == JobStatusRunning {
+			skip, stale = fmt.Sprintf("Skipping job %d (%s): already running", current.ID, current.Name), true
+			return nil, errNoJobWrite
+		}
+
+		// The claim authorised ONE firing. Between the due-list read and here the
+		// job may have moved on — completed and rescheduled, retried onto a new
+		// backoff time, or been updated — and the record now in front of us is a
+		// DIFFERENT firing that another node may already have claimed and be
+		// running. Executing it would double-fire through the back door: the claim
+		// was won honestly, for a firing that no longer exists.
+		//
+		// So the firing identity is re-checked here, under the same lock that
+		// guards the running-status write, and a mismatch declines. Found by
+		// review; the claim alone is not sufficient because claiming and executing
+		// are separated by a goroutine hop.
+		if !claimedFiring.IsZero() {
+			if current.Status != JobStatusPending || !current.NextRun.Equal(claimedFiring) {
+				skip = fmt.Sprintf("Skipping job %d (%s): claimed firing %s, record now %s at %s",
+					current.ID, current.Name, claimedFiring, current.Status, current.NextRun)
+				stale = true
+				return nil, errNoJobWrite
+			}
+		}
+
+		// Update job status to running
+		next := *current
+		next.Status = JobStatusRunning
+		next.UpdatedAt = time.Now()
+		next.RunStartedAt = next.UpdatedAt
+		return &next, nil
+	})
+	if errors.Is(err, errNoJobWrite) {
 		lock.Unlock()
-		if err != nil && !isJobNotFound(err) {
+		if stale {
+			s.staleDispatches.Add(1)
+		}
+		s.logDebug("%s", skip)
+		return
+	}
+	if err != nil {
+		lock.Unlock()
+		if !isJobNotFound(err) {
 			s.storageErrors.Add(1)
 		}
 		return
 	}
-	if current.Status == JobStatusCanceled || current.Status == JobStatusCompleted || current.Status == JobStatusPaused {
+	if written == nil {
 		lock.Unlock()
-		s.logDebug("Skipping job %d (%s): status is %s", current.ID, current.Name, current.Status)
 		return
 	}
-	// A RUNNING JOB IS NEVER DOUBLE-RUN, whatever dispatched us. Claimed
-	// dispatches already require Pending below; this closes the manual and
-	// repair paths, whose TriggerJob-time precheck races the execution that
-	// can begin in between. Without it, a zero-firing dispatch would write
-	// Running over Running and invoke the handler concurrently with the
-	// live execution.
-	if current.Status == JobStatusRunning {
-		lock.Unlock()
-		s.staleDispatches.Add(1)
-		s.logDebug("Skipping job %d (%s): already running", current.ID, current.Name)
-		return
-	}
-
-	// The claim authorised ONE firing. Between the due-list read and here the
-	// job may have moved on — completed and rescheduled, retried onto a new
-	// backoff time, or been updated — and the record now in front of us is a
-	// DIFFERENT firing that another node may already have claimed and be
-	// running. Executing it would double-fire through the back door: the claim
-	// was won honestly, for a firing that no longer exists.
-	//
-	// So the firing identity is re-checked here, under the same lock that
-	// guards the running-status write, and a mismatch declines. Found by
-	// review; the claim alone is not sufficient because claiming and executing
-	// are separated by a goroutine hop.
-	if !claimedFiring.IsZero() {
-		if current.Status != JobStatusPending || !current.NextRun.Equal(claimedFiring) {
-			lock.Unlock()
-			s.staleDispatches.Add(1)
-			s.logDebug("Skipping job %d (%s): claimed firing %s, record now %s at %s",
-				current.ID, current.Name, claimedFiring, current.Status, current.NextRun)
-			return
+	job = written
+	// From here the execution carries the run it started (its conclusion
+	// authority) through every outcome path.
+	ctx = s.noteRunStarted(ctx, job)
+	var waiter *remoteWaiter
+	var remoteRes *ownRunResult
+	if remote {
+		// The worker that reported the result is told whether it was
+		// recorded: the guarded conclusion's outcome on a clustered engine,
+		// and on every engine any failed write of the outcome or its history.
+		remoteRes = &ownRunResult{}
+		own, ok := ctx.Value(ownRunKey{}).(ownRun)
+		if !ok {
+			// A single-node engine has no guard: its write is the outcome.
+			remoteRes.won = true
 		}
+		own.result = remoteRes
+		ctx = withOwnRun(ctx, own)
+		// A remote worker runs this job: the execution waits for the
+		// result it reports (see remote_handler.go).
+		waiter = s.openRemoteRun(job)
+		handler = s.remoteHandler(waiter)
 	}
 
-	job = current
-
-	// A tenant-owned job of a platform handler is refused here too, whatever
-	// wrote it: the handler acts across every tenant, so it never runs for
-	// one. The job fails without being retried.
-	if err := checkPlatformHandler(job); err != nil {
-		lock.Unlock()
-		s.handleJobFailure(storageCtx, job, err)
-		return
-	}
-
-	// Update job status to running
-	job.Status = JobStatusRunning
-	job.UpdatedAt = time.Now()
-	if err := s.storage.UpdateJob(storageCtx, job); err != nil {
-		lock.Unlock()
-		s.storageErrors.Add(1)
-		return
+	// A recovered run's history left pending on the job is completed by the
+	// next execution, on whichever node it runs. The flush reads and writes
+	// the job, so it runs under the stripe lock: a concurrent update or
+	// force delete is never overwritten or undone.
+	if len(job.PendingHistory) > 0 {
+		if err := s.flushPendingHistory(storageCtx, job); err != nil {
+			s.logWarn("Job %d: a recovered run's history could not be written: %v; it stays pending on the job", job.ID, err)
+		}
 	}
 	lock.Unlock()
 
@@ -1518,25 +1665,33 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		result *JobResult
 		err    error
 	}) {
-		if res.err != nil {
+		interrupted := false
+		switch {
+		case res.err != nil && ctx.Err() != nil:
 			// A handler that honours cancellation returns its context's
 			// error the moment the engine stops, and that return races the
 			// Done case above. Either way the run was cut short by the
 			// shutdown, so it is the same outcome whichever case wins.
-			if ctx.Err() != nil {
-				s.handleInterruptedRun(ctx, job, exec)
-				return
-			}
+			interrupted = true
+			s.handleInterruptedRun(ctx, job, exec)
+		case res.err != nil:
 			s.handleJobError(ctx, job, exec, res.err)
-			return
+		default:
+			s.handleJobSuccess(ctx, job, exec, res.result)
 		}
-		s.handleJobSuccess(ctx, job, exec, res.result)
+		// Every delivered result is recorded here, so the completion that
+		// delivered it is always answered.
+		if waiter != nil && waiter.delivered() {
+			waiter.answer(remoteAnswer(waiter.ref, remoteRes, interrupted))
+		}
 	}
 	recordResultUnlessTimedOut := func(res struct {
 		result *JobResult
 		err    error
 	}) {
-		if execCtx.Err() == context.DeadlineExceeded {
+		// A remote result accepted before the deadline is the run's
+		// outcome, even when it is read after the deadline passed.
+		if execCtx.Err() == context.DeadlineExceeded && (waiter == nil || !waiter.delivered()) {
 			s.handleJobTimeout(ctx, job, exec, timeout)
 			return
 		}
@@ -1546,6 +1701,18 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	// Wait for result or timeout
 	select {
 	case <-execCtx.Done():
+		// End a remote run's wait here, before any outcome is recorded:
+		// left to the handler goroutine, a worker's result could still be
+		// accepted after the timeout was recorded, and then be lost. When
+		// close loses, the worker's result was accepted first and is the
+		// outcome; the handler returns it at once.
+		if waiter != nil {
+			waiter.close()
+			if waiter.delivered() {
+				recordResult(<-resultCh)
+				return
+			}
+		}
 		switch execCtx.Err() {
 		case context.DeadlineExceeded:
 			s.handleJobTimeout(ctx, job, exec, timeout)
@@ -1608,20 +1775,27 @@ func (s *SchedulerEngine) handleInterruptedRun(ctx context.Context, job *Job, ex
 	exec.Status = JobStatusCanceled
 	exec.Error = RunInterruptedError{JobID: job.ID}.Error()
 
-	job.Status = JobStatusPending
-	if job.NextRun.Before(now) {
-		job.NextRun = now
+	apply := func(j *Job) {
+		j.Status = JobStatusPending
+		if j.NextRun.Before(now) {
+			j.NextRun = now
+		}
+		j.UpdatedAt = now
 	}
-	job.UpdatedAt = now
+	apply(job)
 
 	storageCtx, cancel := s.outcomeContext(ctx)
 	defer cancel()
 
 	s.logWarn("Job %d (%s) interrupted by scheduler shutdown; re-armed for %s",
 		job.ID, job.Name, job.NextRun)
-	s.persistJobOutcome(storageCtx, job)
+	if !s.persistJobOutcome(storageCtx, job, apply) {
+		// Another writer concluded this run: its record and history stand.
+		return
+	}
 	if err := s.storage.SaveExecution(storageCtx, exec); err != nil {
 		s.storageErrors.Add(1)
+		s.historyWriteFailed(storageCtx, job, exec, err)
 	}
 }
 
@@ -1633,23 +1807,27 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 	exec.Status = JobStatusCompleted
 	if result != nil {
 		exec.Output = result.Message
+		exec.Result = result.Output
 	}
 
-	job.LastRun = now
-	job.RunCount++
-	job.FailCount = 0 // a successful run ends its firing's retry budget
-	job.UpdatedAt = now
+	apply := func(j *Job) {
+		j.LastRun = now
+		j.RunCount++
+		j.FailCount = 0 // a successful run ends its firing's retry budget
+		j.UpdatedAt = now
 
-	// For recurring jobs, move on to the next firing
-	if job.Type == JobTypeRecurring {
-		job.Status = JobStatusPending
-		if err := s.startNextFiring(job); err != nil {
-			job.Status = JobStatusFailed
-			job.LastError = err.Error()
+		// For recurring jobs, move on to the next firing
+		if j.Type == JobTypeRecurring {
+			j.Status = JobStatusPending
+			if err := s.startNextFiring(j); err != nil {
+				j.Status = JobStatusFailed
+				j.LastError = err.Error()
+			}
+		} else {
+			j.Status = JobStatusCompleted
 		}
-	} else {
-		job.Status = JobStatusCompleted
 	}
+	apply(job)
 
 	// The outcome is written even when the engine is stopping; see
 	// outcomeContext.
@@ -1658,9 +1836,13 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 
 	// Persist the outcome under the job's stripe lock so a concurrent
 	// cancel or delete cannot be clobbered by this write.
-	s.persistJobOutcome(storageCtx, job)
+	if !s.persistJobOutcome(storageCtx, job, apply) {
+		// Another writer concluded this run: its record and history stand.
+		return
+	}
 	if err := s.storage.SaveExecution(storageCtx, exec); err != nil {
 		s.storageErrors.Add(1)
+		s.historyWriteFailed(storageCtx, job, exec, err)
 	}
 	s.successCount.Add(1)
 }
@@ -1676,25 +1858,50 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 //     so completed executions never resurrect a deleted job.
 //
 // Writes remain best effort (errors are tracked via storageErrors),
-// matching the background-processing semantics of the callers.
-func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) {
+// matching the background-processing semantics of the callers. A failed
+// single-node write is reported to a caller waiting on the run.
+//
+// It reports whether this outcome concludes the run. False means another
+// writer concluded it (see concludeOwnRun), and the caller must write no
+// history either: the run's record and history are the winner's.
+func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job, apply runOutcome) bool {
 	lock := s.jobLock(job.ID)
 	lock.Lock()
 	defer lock.Unlock()
 
+	// On a clustered engine the stripe lock is this node's exclusivity only:
+	// a recovery on another node may have concluded this run as abandoned,
+	// or another node may have deleted the job. The outcome is written by
+	// the guarded transition itself, and a loss writes nothing.
+	if guarded, won := s.concludeOwnRun(ctx, job, apply); guarded {
+		return won
+	}
+
+	// The stripe lock serializes writers but does not refresh this run's
+	// snapshot: the outcome is applied to the record as it stands, so an
+	// update, or history another run left pending, is not overwritten.
+	write := job
 	current, getErr := s.storage.GetJob(ctx, job.ID, JobTenantID(job))
 	switch {
 	case isJobNotFound(getErr), getErr == nil && current == nil:
 		// Job was deleted concurrently; do not resurrect it.
-		return
-	case getErr == nil && (current.Status == JobStatusCanceled || current.Status == JobStatusCompleted):
-		// Preserve the terminal status set by a concurrent transition.
-		job.Status = current.Status
+		return true
+	case getErr == nil:
+		next := *current
+		apply(&next)
+		if current.Status == JobStatusCanceled || current.Status == JobStatusCompleted {
+			// Preserve the terminal status set by a concurrent transition.
+			next.Status = current.Status
+		}
+		job.Status = next.Status
+		write = &next
 	}
 
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
+	if err := s.storage.UpdateJob(ctx, write); err != nil {
 		s.storageErrors.Add(1)
+		runResultOf(ctx).noteWriteError(ErrStorageError{Op: "UpdateJob", Cause: err})
 	}
+	return true
 }
 
 // applyRunFailure records one failed run on job and decides whether it retries.
@@ -1772,7 +1979,9 @@ func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *Jo
 	exec.Status = JobStatusFailed
 	exec.Error = err.Error()
 
-	s.applyRunFailure(job, err.Error(), now)
+	reason := err.Error()
+	apply := func(j *Job) { s.applyRunFailure(j, reason, now) }
+	apply(job)
 
 	// The outcome is written even when the engine is stopping; see
 	// outcomeContext.
@@ -1781,9 +1990,13 @@ func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *Jo
 
 	// Persist the outcome under the job's stripe lock so a concurrent
 	// cancel or delete cannot be clobbered by this write.
-	s.persistJobOutcome(storageCtx, job)
+	if !s.persistJobOutcome(storageCtx, job, apply) {
+		// Another writer concluded this run: its record and history stand.
+		return
+	}
 	if storageErr := s.storage.SaveExecution(storageCtx, exec); storageErr != nil {
 		s.storageErrors.Add(1)
+		s.historyWriteFailed(storageCtx, job, exec, storageErr)
 	}
 	s.failureCount.Add(1)
 }
@@ -1797,10 +2010,14 @@ func (s *SchedulerEngine) handleJobTimeout(ctx context.Context, job *Job, exec *
 // handleJobFailure processes a job failure without execution context.
 func (s *SchedulerEngine) handleJobFailure(ctx context.Context, job *Job, err error) {
 	now := time.Now()
-	job.Status = JobStatusFailed
-	job.LastError = err.Error()
-	job.FailCount++
-	job.UpdatedAt = now
+	reason := err.Error()
+	apply := func(j *Job) {
+		j.Status = JobStatusFailed
+		j.LastError = reason
+		j.FailCount++
+		j.UpdatedAt = now
+	}
+	apply(job)
 
 	// The outcome is written even when the engine is stopping; see
 	// outcomeContext.
@@ -1809,7 +2026,7 @@ func (s *SchedulerEngine) handleJobFailure(ctx context.Context, job *Job, err er
 
 	// Persist the outcome under the job's stripe lock so a concurrent
 	// cancel or delete cannot be clobbered by this write.
-	s.persistJobOutcome(storageCtx, job)
+	s.persistJobOutcome(storageCtx, job, apply)
 	s.failureCount.Add(1)
 }
 

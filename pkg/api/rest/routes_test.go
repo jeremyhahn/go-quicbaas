@@ -159,9 +159,12 @@ import (
 // placement:read and placement:manage.
 // PLUS 2 for the fleet placement consents (GET /api/v1/fleet/placement-consents
 // and POST .../{id}/answer) under placement:read and placement:consent.
+// PLUS 2 for the scheduler's remote handlers (/api/v1/scheduler/remote-runs
+// and /remote-runs/complete, handlers_scheduler_remote.go, go-quicbaas#1955)
+// under scheduler:read and scheduler:trigger.
 // PLUS 1 for the capabilities report (GET /api/v1/server/capabilities,
 // handlers_capabilities.go), authenticated with no RBAC permission.
-const baseRouteTableSize = 680
+const baseRouteTableSize = 682
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

@@ -258,6 +258,11 @@ func JobHistoryResponseFromService(jobID uint64, resp *service.GetSchedulerJobHi
 		if exec == nil {
 			continue
 		}
+		// Older servers carry only the message; fall back to it.
+		result := exec.Result
+		if len(result) == 0 {
+			result = []byte(exec.Output)
+		}
 		out.Executions = append(out.Executions, JobExecution{
 			ExecutionID: exec.ID,
 			JobID:       exec.JobID,
@@ -266,7 +271,8 @@ func JobHistoryResponseFromService(jobID uint64, resp *service.GetSchedulerJobHi
 			CompletedAt: exec.EndedAt,
 			Duration:    exec.Duration,
 			Error:       exec.Error,
-			Result:      []byte(exec.Output),
+			Message:     exec.Output,
+			Result:      result,
 		})
 	}
 	out.TotalCount = len(out.Executions)

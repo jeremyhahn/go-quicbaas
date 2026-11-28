@@ -128,6 +128,30 @@ type Job struct {
 	FailCount uint64    `json:"fail_count"`
 	LastError string    `json:"last_error,omitempty"`
 
+	// RunStartedAt is the instant the engine moved the job to Running: the
+	// identity of the current run, with NextRun its firing. Unlike UpdatedAt,
+	// which every write restamps, nothing but the next Running transition
+	// changes it, so an update to a running job keeps its run's identity.
+	RunStartedAt time.Time `json:"run_started_at,omitempty"`
+
+	// ConcludedRunAt is the RunStartedAt of the last run whose conclusion a
+	// clustered engine wrote through its guarded transition (RunConcluder).
+	// It makes a run concludable once: a second writer of the same run finds
+	// it here and loses, even when the first conclusion kept the job's status
+	// (a cancel written while the run was executing).
+	ConcludedRunAt time.Time `json:"concluded_run_at,omitempty"`
+	// ConcludedBy names the writer of that conclusion (a node's recovery or
+	// execution), so a recovery retried on the node that concluded the run
+	// can finish the history record its first attempt failed to write.
+	ConcludedBy string `json:"concluded_by,omitempty"`
+	// PendingHistory holds history records whose write has not yet
+	// succeeded: those of runs a clustered recovery concluded, and those of
+	// remote runs whose history write failed after their outcome was written.
+	// They are written in the same guarded transition as the conclusion and
+	// removed once recorded, so a failed history write survives later runs
+	// and is completed by any node.
+	PendingHistory []*JobExecution `json:"pending_history,omitempty"`
+
 	// Metadata
 	Labels    map[string]string `json:"labels,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`
@@ -147,6 +171,9 @@ type JobExecution struct {
 	Duration  time.Duration `json:"duration,omitempty"`
 	Error     string        `json:"error,omitempty"`
 	Output    string        `json:"output,omitempty"`
+	// Result is the run's output bytes (JobResult.Output), kept with its
+	// history so a handler or remote worker reporting only bytes loses nothing.
+	Result []byte `json:"result,omitempty"`
 }
 
 // JobResult is returned by job handlers after execution.

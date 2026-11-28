@@ -183,6 +183,7 @@ type SchedulerJobExecutionRESTResponse struct {
 	Duration  time.Duration `json:"duration,omitempty"`
 	Error     string        `json:"error,omitempty"`
 	Output    string        `json:"output,omitempty"`
+	Result    []byte        `json:"result,omitempty"`
 }
 
 // GetSchedulerJobHistoryRESTResponse represents the JSON response for getting job history.
@@ -862,5 +863,6 @@ func schedulerExecutionToREST(exec *service.SchedulerJobExecution) *SchedulerJob
 		Duration:  exec.Duration,
 		Error:     exec.Error,
 		Output:    exec.Output,
+		Result:    exec.Result,
 	}
 }

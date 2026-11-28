@@ -578,6 +578,8 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "POST", Pattern: "/api/v1/scheduler/jobs/{id}/resume", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleResumeSchedulerJob }},
 		{Method: "POST", Pattern: "/api/v1/scheduler/jobs/{id}/trigger", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleTriggerSchedulerJob }},
 		{Method: "GET", Pattern: "/api/v1/scheduler/status", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetSchedulerStatus }},
+		{Method: "GET", Pattern: "/api/v1/scheduler/remote-runs", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleListRemoteRuns }},
+		{Method: "POST", Pattern: "/api/v1/scheduler/remote-runs/complete", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCompleteRemoteRun }},
 		{Method: "POST", Pattern: "/api/v1/scheduler/nodes", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRegisterPlacementNode }},
 		{Method: "GET", Pattern: "/api/v1/scheduler/nodes", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleListPlacementNodes }},
 		{Method: "GET", Pattern: "/api/v1/scheduler/nodes/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetPlacementNode }},

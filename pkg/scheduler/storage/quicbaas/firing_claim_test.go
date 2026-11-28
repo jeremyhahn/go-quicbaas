@@ -53,7 +53,7 @@ func node(t *testing.T) *qrdbnode.Node {
 func newClusteredFixture(t *testing.T) *ClusteredStorage {
 	t.Helper()
 	n := node(t)
-	storage, err := NewClusteredStorage(newMockKVStore(), n.Transaction, n.KV)
+	storage, err := NewClusteredStorage(&swappingKV{mockKVStore: newMockKVStore()}, n.Transaction, n.KV)
 	if err != nil {
 		t.Fatalf("NewClusteredStorage: %v", err)
 	}
@@ -556,7 +556,7 @@ func TestClaimFiring_AdvancedJobIsNotCountedAsStranded(t *testing.T) {
 func TestDeleteJob_JobDeletionFailureLeavesTheMark(t *testing.T) {
 	kv := newMockKVStore()
 	n := node(t)
-	storage, err := NewClusteredStorage(kv, n.Transaction, n.KV)
+	storage, err := NewClusteredStorage(&swappingKV{mockKVStore: kv}, n.Transaction, n.KV)
 	if err != nil {
 		t.Fatalf("NewClusteredStorage: %v", err)
 	}

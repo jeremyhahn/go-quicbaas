@@ -855,6 +855,8 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.scheduler.v1.SchedulerService/CancelJob":          {"scheduler", "cancel"},
 	"/quicbaas.scheduler.v1.SchedulerService/GetJobHistory":      {"scheduler", "history"},
 	"/quicbaas.scheduler.v1.SchedulerService/GetSchedulerStatus": {"scheduler", "status"},
+	"/quicbaas.scheduler.v1.SchedulerService/ListRemoteRuns":     {"scheduler", "read"},
+	"/quicbaas.scheduler.v1.SchedulerService/CompleteRemoteRun":  {"scheduler", "trigger"},
 
 	// Workload placement rides the SchedulerService but carries its own
 	// "placement" family: qrdb owns "scheduler" (see pkg/permission).

@@ -165,6 +165,7 @@ func (j *Jobs) GetJobHistory(_ context.Context, req *service.GetSchedulerJobHist
 		Executions: []*service.SchedulerJobExecution{{
 			ID: 7, JobID: req.JobID, Status: service.SchedulerJobStatusCompleted,
 			StartedAt: j.stamp(), EndedAt: j.stamp().Add(time.Second), Duration: time.Second, Output: "ok",
+			Result: []byte{0x00, 0x01, 'o', 'k'},
 		}},
 		Timestamp: j.stamp(),
 	}, nil

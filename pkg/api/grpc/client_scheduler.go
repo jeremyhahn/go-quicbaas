@@ -446,6 +446,7 @@ func convertProtoJobExecution(pe *pb.JobExecution) *service.SchedulerJobExecutio
 		Duration:  time.Duration(pe.DurationMs) * time.Millisecond,
 		Error:     pe.Error,
 		Output:    pe.Output,
+		Result:    pe.Result,
 	}
 
 	if pe.EndedAt > 0 {

@@ -630,8 +630,9 @@ func TestRecoverAbandonedRun_HistoryIsWrittenFirstAndNeverLost(t *testing.T) {
 // TestRecoverAbandonedRun_RefusesAClusteredEngine is the mode gate: on a
 // clustered engine the stripe mutex is one node's exclusivity, not the
 // fleet's, and recovery's unconditional write could overwrite a run another
-// node concurrently completed. The capability is refused by name until a
-// guarded storage transition exists.
+// node concurrently completed. A clustered store that provides no guarded
+// run transition (RunConcluder) is refused by name; one that does recovers
+// (run_conclusion_test.go).
 //
 // Mutation evidence: removing the claims gate lets the clustered engine
 // conclude the run and fails the status assertion.

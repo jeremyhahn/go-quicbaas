@@ -270,6 +270,8 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"GET /api/v1/scheduler/jobs/{id}":                                                  {auth: RouteAuthPermission, resource: "scheduler", action: "read"},
 	"GET /api/v1/scheduler/jobs/{id}/history":                                          {auth: RouteAuthPermission, resource: "scheduler", action: "history"},
 	"GET /api/v1/scheduler/status":                                                     {auth: RouteAuthPermission, resource: "scheduler", action: "status"},
+	"GET /api/v1/scheduler/remote-runs":                                                {auth: RouteAuthPermission, resource: "scheduler", action: "read"},
+	"POST /api/v1/scheduler/remote-runs/complete":                                      {auth: RouteAuthPermission, resource: "scheduler", action: "trigger"},
 	"POST /api/v1/scheduler/nodes":                                                     {auth: RouteAuthPermission, resource: "placement", action: "manage"},
 	"GET /api/v1/scheduler/nodes":                                                      {auth: RouteAuthPermission, resource: "placement", action: "read"},
 	"GET /api/v1/scheduler/nodes/{id}":                                                 {auth: RouteAuthPermission, resource: "placement", action: "read"},

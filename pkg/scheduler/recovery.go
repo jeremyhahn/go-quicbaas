@@ -17,6 +17,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // =============================================================================
@@ -100,6 +102,12 @@ const (
 	// the double-fire failure inverted — killing live work instead of
 	// duplicating it.
 	RefusedFiringMoved RecoveryRefusal = "firing_moved"
+
+	// RefusedConcluded: on a clustered engine, another writer concluded this
+	// run first — the executing node recorded its outcome, or another
+	// node's recovery won the guard. The run is no longer this caller's to
+	// conclude, and nothing was written.
+	RefusedConcluded RecoveryRefusal = "concluded_elsewhere"
 )
 
 // String implements fmt.Stringer.
@@ -150,6 +158,9 @@ func (e RecoveryRefusedError) Error() string {
 		return fmt.Sprintf("job %d is running the firing at %s, not the attested %s: the job "+
 			"moved on between the observation and this call",
 			e.JobID, e.Found.UTC().Format(time.RFC3339Nano), e.Attested.UTC().Format(time.RFC3339Nano))
+	case RefusedConcluded:
+		return fmt.Sprintf("job %d: the run was concluded by another writer before this "+
+			"recovery took the guard; nothing was written", e.JobID)
 	default:
 		return fmt.Sprintf("job %d recovery refused: %s", e.JobID, e.Refusal)
 	}
@@ -194,17 +205,16 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 	job *Job,
 	att AbandonedRunAttestation,
 ) (JobStatus, error) {
-	// A CLUSTERED ENGINE REFUSES, at the gate rather than in a comment. The
-	// guards below run under a stripe mutex local to THIS engine and persist
-	// with an unconditional UpdateJob; a second node can complete or advance
-	// the same run between this node's read and its write, and recovery
-	// would overwrite that newer state. On a single-node engine (claims are
-	// nil exactly when New built it) in-process exclusivity is the COMPLETE
-	// answer, and the mutex is that exclusivity. On a clustered engine
-	// (NewWithClustering, which requires the claim plane) safe recovery
-	// needs a storage-level guarded transition that does not exist yet —
-	// so the capability is refused by name, never run with a known race.
-	if s.claims != nil {
+	// A CLUSTERED ENGINE CONCLUDES THROUGH A GUARD, or refuses. The guards
+	// below run under a stripe mutex local to THIS engine; a second node can
+	// complete or recover the same run between this node's read and its
+	// write. On a single-node engine (claims are nil exactly when New built
+	// it) in-process exclusivity is the COMPLETE answer, and the mutex is
+	// that exclusivity. On a clustered engine the run is concluded through
+	// the storage-level guarded transition (RunConcluder, go-quicbaas#105):
+	// exactly one writer per run wins. A clustered store without it refuses
+	// by name, never runs with a known race.
+	if s.claims != nil && s.concluder == nil {
 		return "", RecoveryUnsupportedClusteredError{
 			Missing: "a storage-level guarded (compare-and-swap) job transition",
 		}
@@ -256,6 +266,21 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 		return "", JobNotFoundError{JobID: job.ID}
 	}
 
+	// On a clustered engine a run that was concluded says so on the job, so a
+	// recovery of it is refused as concluded whatever status the conclusion
+	// left — or, retried on the node whose recovery concluded it, finishes
+	// the history record that attempt failed to write.
+	// Every recovery attempt first completes the history a clustered
+	// recovery left pending on the job, on whichever node it runs.
+	if s.concluder != nil && len(current.PendingHistory) > 0 {
+		if err := s.flushPendingHistory(storageCtx, current); err != nil {
+			return "", err
+		}
+	}
+	if s.concluder != nil && runConcluded(current) {
+		return s.revisitConcludedRun(storageCtx, current, att)
+	}
+
 	if current.Status != JobStatusRunning {
 		return current.Status, RecoveryRefusedError{
 			JobID:   job.ID,
@@ -277,7 +302,7 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 	// StartedAt is the running transition, which is the best start time that
 	// survives the node that died: the execution record it would have written
 	// was never saved, so UpdatedAt is the only evidence of when the run began.
-	startedAt := current.UpdatedAt
+	startedAt := runStartedAt(current)
 
 	// An unset observation resolves HERE, from the same stable instant — not
 	// from the clock inside the renderer. The evidence string is the identity
@@ -288,6 +313,14 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 	// this is the production path, not an edge.
 	if att.ObservedAt.IsZero() {
 		att.ObservedAt = startedAt
+	}
+
+	evidence := renderAttestation(att)
+
+	// A CLUSTERED ENGINE CONCLUDES THROUGH THE GUARDED TRANSITION, which is
+	// the job write itself; see recoverThroughGuard.
+	if s.concluder != nil {
+		return s.recoverThroughGuard(storageCtx, current, att, evidence, startedAt, now)
 	}
 
 	// THE HISTORY RECORD IS WRITTEN BEFORE THE TRANSITION, and the order is
@@ -302,7 +335,6 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 	// record — same firing evidence, same StartedAt, which is stable because
 	// the record it derives from has not changed while the job stays Running
 	// — and does not write a second one.
-	evidence := renderAttestation(att)
 	already, err := s.abandonedRunRecorded(storageCtx, current.ID, JobTenantID(current), startedAt, evidence)
 	if err != nil {
 		s.storageErrors.Add(1)
@@ -339,6 +371,187 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 	s.failureCount.Add(1)
 
 	return current.Status, nil
+}
+
+// recoverThroughGuard concludes an abandoned run on a clustered engine.
+//
+// THE TRANSITION IS THE GUARD. The failure is applied to the job as storage
+// holds it at the guarded write, and written only while that record still
+// runs this run, unconcluded, at the attested firing. A concurrent outcome,
+// another node's recovery and a force delete each leave a record the write no
+// longer matches, so this recovery writes nothing and is refused: a deleted
+// job is never recreated. Nothing is decided before the job is written, so no
+// crash can strand a run decided but not written.
+//
+// THE HISTORY RECORD FOLLOWS THE TRANSITION here, the reverse of the
+// single-node order: a record written first by a recovery that then lost the
+// write would put a failure on record for a run another writer concluded. A
+// SaveExecution failure after the write is reported, and a retry on this node
+// finishes it (revisitConcludedRun): the job names this node's recovery as
+// the run's conclusion and carries the evidence in LastError.
+func (s *SchedulerEngine) recoverThroughGuard(
+	ctx context.Context,
+	current *Job,
+	att AbandonedRunAttestation,
+	evidence string,
+	startedAt, now time.Time,
+) (JobStatus, error) {
+	run := RunConclusion{JobID: current.ID, TenantID: JobTenantID(current), Firing: current.NextRun, StartedAt: startedAt}
+	owner := s.recoveryOwner()
+	id, err := stableExecutionID(now)
+	if err != nil {
+		return "", ErrStorageError{Op: "ExecutionID", Cause: err}
+	}
+	exec := &JobExecution{
+		ID:        id,
+		TenantID:  JobTenantID(current),
+		JobID:     current.ID,
+		Status:    JobStatusFailed,
+		StartedAt: startedAt,
+		EndedAt:   now,
+		Duration:  now.Sub(startedAt),
+		Error:     evidence,
+	}
+	var written *Job
+	won, err := s.concluder.ConcludeRun(ctx, &run, func(held *Job) (*Job, bool) {
+		written = nil
+		if held.Status != JobStatusRunning || !runOpen(held, &run) || !held.NextRun.Equal(att.Firing) {
+			return nil, false
+		}
+		next := *held
+		s.applyRunFailure(&next, evidence, now)
+		// The write stamps UpdatedAt, so the run's identity is pinned in
+		// RunStartedAt for a record that only carried it in UpdatedAt.
+		next.RunStartedAt, next.ConcludedRunAt, next.ConcludedBy = startedAt, startedAt, owner
+		// The run's history record is written with its conclusion, so a
+		// failed history write leaves it on the job for any node to finish.
+		next.PendingHistory = append(append([]*JobExecution(nil), held.PendingHistory...), exec)
+		written = &next
+		return &next, true
+	})
+	if err != nil {
+		s.storageErrors.Add(1)
+		return "", ErrStorageError{Op: "ConcludeRun", Cause: err}
+	}
+	if !won {
+		return current.Status, RecoveryRefusedError{
+			JobID:   current.ID,
+			Refusal: RefusedConcluded,
+			Status:  current.Status,
+		}
+	}
+	s.failureCount.Add(1)
+	if err := s.flushPendingHistory(ctx, written); err != nil {
+		return "", err
+	}
+	return written.Status, nil
+}
+
+// runConcluded reports whether the job's current run was concluded through
+// the guarded transition.
+func runConcluded(job *Job) bool {
+	return !job.ConcludedRunAt.IsZero() && job.ConcludedRunAt.Equal(runStartedAt(job))
+}
+
+// revisitConcludedRun answers a recovery of a run that was already concluded.
+// It is refused as concluded, unless this node's recovery concluded it with
+// the same evidence: that is a retry of a recovery whose history write
+// failed after its transition. Its history record was kept on the job in
+// PendingHistory, and the caller has already completed it from there.
+func (s *SchedulerEngine) revisitConcludedRun(ctx context.Context, current *Job, att AbandonedRunAttestation) (JobStatus, error) {
+	startedAt := runStartedAt(current)
+	if att.ObservedAt.IsZero() {
+		att.ObservedAt = startedAt
+	}
+	evidence := renderAttestation(att)
+	if current.ConcludedBy != s.recoveryOwner() || current.LastError != evidence {
+		return current.Status, RecoveryRefusedError{
+			JobID:   current.ID,
+			Refusal: RefusedConcluded,
+			Status:  current.Status,
+		}
+	}
+	return current.Status, nil
+}
+
+// flushPendingHistory writes each of job's pending history records unless it
+// is already recorded (same evidence, same StartedAt), then removes the
+// written records from the job through a guarded write. A record that could
+// not be written stays pending on the job. Each record is written under its
+// stable ID, so two nodes flushing the same record write one history entry.
+// Callers hold the job's stripe lock.
+func (s *SchedulerEngine) flushPendingHistory(ctx context.Context, job *Job) error {
+	var flushed []*JobExecution
+	for _, rec := range job.PendingHistory {
+		if rec == nil {
+			continue
+		}
+		already, err := s.abandonedRunRecorded(ctx, job.ID, JobTenantID(job), rec.StartedAt, rec.Error)
+		if err != nil {
+			s.storageErrors.Add(1)
+			return ErrStorageError{Op: "GetExecutions", Cause: err}
+		}
+		if !already {
+			exec := *rec
+			if exec.ID == 0 {
+				id, err := stableExecutionID(exec.EndedAt)
+				if err != nil {
+					s.storageErrors.Add(1)
+					return ErrStorageError{Op: "SaveExecution", Cause: err}
+				}
+				exec.ID = id
+			}
+			if err := s.storage.SaveExecution(ctx, &exec); err != nil {
+				s.storageErrors.Add(1)
+				return ErrStorageError{Op: "SaveExecution", Cause: err}
+			}
+		}
+		flushed = append(flushed, rec)
+	}
+	written, err := s.mutateJob(ctx, job.ID, JobTenantID(job), func(held *Job) (*Job, error) {
+		next := *held
+		next.PendingHistory = withoutRecords(held.PendingHistory, flushed)
+		return &next, nil
+	})
+	if err != nil {
+		return err
+	}
+	if written == nil {
+		job.PendingHistory = nil
+		return nil
+	}
+	job.PendingHistory = written.PendingHistory
+	return nil
+}
+
+// stableExecutionID is the history ID of a record kept pending on a job. It
+// is derived from the run, not from the write, so every flush of the record
+// (on any node, any number of times) writes the same history entry instead
+// of a new one per attempt.
+func stableExecutionID(endedAt time.Time) (uint64, error) {
+	return conv.SafeInt64ToUint64(endedAt.UnixNano())
+}
+
+// withoutRecords returns the held records that no flushed record matches on
+// StartedAt and Error, or nil when none remain.
+func withoutRecords(held, flushed []*JobExecution) []*JobExecution {
+	var kept []*JobExecution
+	for _, rec := range held {
+		if rec == nil {
+			continue
+		}
+		matched := false
+		for _, done := range flushed {
+			if done.StartedAt.Equal(rec.StartedAt) && done.Error == rec.Error {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			kept = append(kept, rec)
+		}
+	}
+	return kept
 }
 
 // abandonedRunRecorded reports whether a previous recovery attempt already
@@ -386,12 +599,12 @@ func renderAttestation(att AbandonedRunAttestation) string {
 }
 
 // RecoveryUnsupportedClusteredError reports RecoverAbandonedRun called on a
-// clustered engine, where the recovery's read-modify-write is not safe.
+// clustered engine whose storage provides no guarded run transition
+// (RunConcluder), where the recovery's read-modify-write is not safe.
 //
-// The refusal is the enforcement of a limitation that used to be prose in the
-// doc-comment. It is lifted by giving JobStorage a guarded transition and
-// routing the recovery through it; until then a clustered deployment must not
-// be able to reach the race.
+// The quicbaas ClusteredStorage provides the guard, so a clustered engine
+// built over it recovers; a clustered store without it must not be able to
+// reach the race.
 type RecoveryUnsupportedClusteredError struct {
 	// Missing names the capability whose absence forces the refusal.
 	Missing string

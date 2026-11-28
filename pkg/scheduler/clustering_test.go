@@ -15,6 +15,7 @@ package scheduler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -201,7 +202,9 @@ func TestDueJobFilter_MatchesShouldExecute(t *testing.T) {
 			for _, affinity := range []string{"", "node-a", "node-b"} {
 				s := mustCluster(t, DefaultConfig(), nodeID, leader())
 				job := &Job{ID: 1, Name: "j", NodeAffinity: affinity}
-				if got, want := s.dueJobFilter()(job), s.shouldExecute(job); got != want {
+				filter := s.sweepDueFilter(context.Background())
+				got := filter == nil || filter(job)
+				if want := s.shouldExecute(job); got != want {
 					t.Errorf("node=%q leader=%s affinity=%q: filter=%v, shouldExecute=%v",
 						nodeID, leaderName, affinity, got, want)
 				}

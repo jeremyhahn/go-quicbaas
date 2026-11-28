@@ -288,6 +288,20 @@ func TestSchedulerJobHistory(t *testing.T) {
 	assert.Equal(t, "ok", exec.Output)
 }
 
+func TestSchedulerJobHistory_ShowsMessageAndResultBytes(t *testing.T) {
+	withSchedulerCLI(t, "acme")
+
+	out, err := runScheduler(t, "job", "history", "42", "--output", "json")
+	require.NoError(t, err)
+
+	var view schedulerJobHistoryView
+	require.NoError(t, json.Unmarshal([]byte(out), &view))
+	require.Len(t, view.Executions, 1)
+	exec := view.Executions[0]
+	assert.Equal(t, "ok", exec.Output)
+	assert.Equal(t, []byte{0x00, 0x01, 'o', 'k'}, exec.Result)
+}
+
 func TestSchedulerJobHistory_NoCursorFlag(t *testing.T) {
 	withSchedulerCLI(t, "acme")
 	_, err := runScheduler(t, "job", "history", "42", "--cursor", "c1")

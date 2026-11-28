@@ -14,6 +14,7 @@
 package schedulertest
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -164,6 +165,8 @@ func RunJobConformance(t *testing.T, client scheduler.Client, jobs *Jobs) {
 	}
 	if len(history.Executions) != 1 || history.Executions[0].ExecutionID != 7 || history.Executions[0].Status != scheduler.JobStatusCompleted {
 		t.Errorf("GetJobHistory decoded %+v", history)
+	} else if want := []byte{0x00, 0x01, 'o', 'k'}; !bytes.Equal(history.Executions[0].Result, want) {
+		t.Errorf("GetJobHistory result %q, want the run's output bytes %q", history.Executions[0].Result, want)
 	}
 
 	st, err := client.GetStatus(ctx)

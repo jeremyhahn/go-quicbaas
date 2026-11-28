@@ -14,6 +14,7 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	stderrors "errors"
 	"testing"
@@ -124,8 +125,8 @@ func TestDispatch_ErrorsAndAbsentHalves(t *testing.T) {
 	if _, err := Dispatch(ctx, Backends{}, "ListNodes", &ListNodesRequest{}); errors.Code(err) != errors.CodeUnavailable {
 		t.Errorf("placement half absent: %v", err)
 	}
-	if len(Methods()) != 23 {
-		t.Errorf("Methods() = %d, want the 11 job and 12 placement methods", len(Methods()))
+	if len(Methods()) != 25 {
+		t.Errorf("Methods() = %d, want the 11 job, 2 remote-run and 12 placement methods", len(Methods()))
 	}
 }
 
@@ -192,5 +193,28 @@ func TestConversions_NilAndEmptyInputs(t *testing.T) {
 	st := SchedulerStatusFromService(&service.GetSchedulerStatusResponse{Running: true, Stats: &service.SchedulerStats{StartedAt: started}}, started.Add(time.Hour))
 	if st.UptimeDuration != time.Hour {
 		t.Errorf("uptime = %v", st.UptimeDuration)
+	}
+}
+
+func TestJobHistoryResponseFromService_KeepsMessageAndResult(t *testing.T) {
+	r := JobHistoryResponseFromService(1, &service.GetSchedulerJobHistoryResponse{
+		Executions: []*service.SchedulerJobExecution{{ID: 1, Output: "done", Result: []byte{0x00, 0x01}}},
+	})
+	if len(r.Executions) != 1 {
+		t.Fatalf("executions = %d, want 1", len(r.Executions))
+	}
+	if got := r.Executions[0]; got.Message != "done" || !bytes.Equal(got.Result, []byte{0x00, 0x01}) {
+		t.Fatalf("got Message %q Result %v, want \"done\" [0 1]", got.Message, got.Result)
+	}
+
+	// An older server sends only the message: Result falls back to it.
+	r = JobHistoryResponseFromService(2, &service.GetSchedulerJobHistoryResponse{
+		Executions: []*service.SchedulerJobExecution{{ID: 2, Output: "legacy"}},
+	})
+	if len(r.Executions) != 1 {
+		t.Fatalf("executions = %d, want 1", len(r.Executions))
+	}
+	if got := r.Executions[0]; got.Message != "legacy" || !bytes.Equal(got.Result, []byte("legacy")) {
+		t.Fatalf("got Message %q Result %q, want \"legacy\" \"legacy\"", got.Message, got.Result)
 	}
 }

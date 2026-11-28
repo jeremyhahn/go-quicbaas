@@ -256,6 +256,14 @@ resume that skips a missed firing, and a system job re-armed at install. A run
 abandoned by a dead node (`RecoverAbandonedRun`) spends the budget exactly like
 a handler error. `LastError` keeps the last failure after a reset.
 
+On a clustered engine a run is concluded through a guarded write: the
+clustered store keeps one forward-only conclusion mark per job, swapped by
+compare-and-swap on the transaction plane that decides firings. The executing
+node and any recovering node must win it before writing the run's outcome, so
+exactly one of them concludes the run; the loser writes nothing (a recovery
+gets the `concluded_elsewhere` refusal). A clustered store without this guard
+refuses recovery with `RecoveryUnsupportedClusteredError`.
+
 A recurring job resumed after its scheduled run passed is rescheduled to the
 schedule's next occurrence strictly after the resume — never from `LastRun`,
 which for a long pause is an instant already in the past and would fire the job
@@ -812,3 +820,38 @@ non-draining node gets its placement back with `existing: true`. A workload on
 a dead or draining node is refused (`PlacementConflictError`); the caller
 releases it and places it again. `DrainNode` cordons and marks a node draining
 and returns its placements; it releases nothing.
+
+## Remote handlers
+
+A handler registers in-process, so a client that reaches the scheduler over
+the wire has nothing to register on. A job whose handler is named
+`remote:<name>` is run by a worker that **pulls** its runs instead
+(go-quicbaas#1955). The engine fires it as any job, with the same firing
+claim, `Running` transition and timeout, and then waits for the run's result:
+
+- `ListRemoteRuns(tenant, handlers)` returns the open runs of the named
+  handlers from the job store, so a worker may ask any node. Each run carries
+  its `RemoteRunRef` (job, firing, running transition), payload and deadline.
+- `CompleteRemoteRun(ref, result, err)` reports one run. On the firing node the
+  waiting execution records it as a local handler's outcome. On another node
+  of a cluster it is concluded through the run guard (`RunConcluder`) and
+  recorded there; the firing node's timeout then loses the guard and writes
+  nothing. A standalone engine accepts only runs it is waiting on.
+- A result for another run of the job, after the deadline or after the run was
+  concluded is refused with `ErrRemoteRunNotOpen` and records nothing.
+
+Limits: when the result lands on another node, the firing node still waits
+out the timeout before it can fire the job again. Workers polling the same
+handler name may each run a firing, though only one outcome is recorded, so
+give each worker its own handler name (for example, one per node).
+
+The service layer serves both calls as `service.RemoteRunService`, in the
+caller's tenant only. In the Go SDK, `scheduler.NewWorker` takes a
+`RemoteRunClient` and a function per `remote:` handler. It polls, runs each
+open run once with its context ending at the run's deadline, and reports the
+result: a returned error or a panic fails the run. Every transport serves the
+two calls: gRPC and Unix (`ListRemoteRuns`, `CompleteRemoteRun`), REST and QUIC
+(`GET /api/v1/scheduler/remote-runs`, `POST .../remote-runs/complete`), MCP
+(`quicbaas_scheduler_list_remote_runs`, `_complete_remote_run`) and embedded,
+under `scheduler:read` and `scheduler:trigger`. Run times travel with
+nanoseconds, so a reported run matches the started one exactly.

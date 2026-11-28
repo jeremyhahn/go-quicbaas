@@ -45,6 +45,17 @@ func copyJob(job *Job) *Job {
 			cp.Labels[k] = v
 		}
 	}
+	// Deep copy pending history
+	if job.PendingHistory != nil {
+		cp.PendingHistory = make([]*JobExecution, 0, len(job.PendingHistory))
+		for _, rec := range job.PendingHistory {
+			if rec != nil {
+				recCopy := *rec
+				rec = &recCopy
+			}
+			cp.PendingHistory = append(cp.PendingHistory, rec)
+		}
+	}
 	return &cp
 }
 
@@ -248,7 +259,8 @@ func (m *mockJobStorage) ListJobs(ctx context.Context, query *JobQuery) ([]*Job,
 	return result, "", nil
 }
 
-func (m *mockJobStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, eligible DueJobFilter) ([]*Job, error) {
+func (m *mockJobStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*Job, error) {
+	eligible := DueJobFilterFrom(ctx)
 	m.getJobsDueForExecutionCount.Add(1)
 	m.errMu.RLock()
 	getJobsDueForExecutionErr := m.getJobsDueForExecutionErr
@@ -300,8 +312,17 @@ func (m *mockJobStorage) SaveExecution(ctx context.Context, exec *JobExecution) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Store a copy
+	// Store a copy, keyed by ID as the store keys it: saving a record whose
+	// ID is already stored for the job replaces it.
 	cp := *exec
+	if cp.ID != 0 {
+		for i, stored := range m.executions {
+			if stored.JobID == cp.JobID && stored.ID == cp.ID {
+				m.executions[i] = &cp
+				return nil
+			}
+		}
+	}
 	m.executions = append(m.executions, &cp)
 	return nil
 }
@@ -4306,77 +4327,43 @@ func TestStopWithContextTimeout(t *testing.T) {
 
 // TestTriggerJobContextCancellation tests trigger channel behavior with context cancellation.
 func TestTriggerJobContextCancellation(t *testing.T) {
-	t.Run("trigger job returns context error when cancelled", func(t *testing.T) {
+	// The engine is marked running but never Started, so no drainer reads
+	// triggerCh: the test, not a goroutine racing it, decides how full the
+	// queue is (#147). The scheduler used to be Started here, and its drain
+	// emptied the queue while the test filled it, so the test could only
+	// accept either outcome and proved nothing about cancellation.
+	newEngine := func(t *testing.T) *SchedulerEngine {
+		t.Helper()
 		storage := newMockJobStorage()
-		scheduler := New(nil, storage)
-		ctx := context.Background()
-
-		err := scheduler.Start(ctx)
-		require.NoError(t, err)
-		defer func() {
-			stopCtx, cancel := context.WithTimeout(ctx, time.Second)
-			defer cancel()
-			_ = scheduler.Stop(stopCtx)
-		}()
-
+		engine := New(DefaultConfig(), storage)
+		engine.running.Store(true) // queue semantics only; nothing drains
 		storage.mu.Lock()
-		storage.jobs[1] = &Job{
-			ID:     1,
-			Name:   "test-job",
-			Status: JobStatusPending,
-			// NOT due, so the scheduler's own tick leaves it alone.
-			//
-			// The mock's GetJobsDueForExecution selects on
-			// `Status == Pending && !NextRun.After(before)`, and a zero NextRun
-			// is not after now — so a job written with no NextRun is DUE
-			// IMMEDIATELY. New(nil, storage) ticks every second (types.go
-			// DefaultConfig), so a runner that stalls this goroutine past one
-			// tick lets the scheduler execute job 1 on its own, move it off
-			// JobStatusPending, and TriggerJob's status gate then returns
-			// InvalidJobError — the same failure the filler ids below caused by
-			// a faster route. Only TriggerJob is under test here and it does
-			// not consult NextRun, so putting the job beyond the tick's reach
-			// costs the test nothing.
-			NextRun: time.Now().Add(time.Hour),
-		}
+		storage.jobs[1] = &Job{ID: 1, Name: "test-job", Status: JobStatusPending}
 		storage.mu.Unlock()
+		return engine
+	}
 
-		// Create a context that's already cancelled
-		cancelledCtx, cancel := context.WithCancel(ctx)
+	t.Run("a cancelled context is refused when the queue is full", func(t *testing.T) {
+		engine := newEngine(t)
+		for i := 0; i < cap(engine.triggerCh); i++ {
+			engine.triggerCh <- triggerRequest{jobID: uint64(1000 + i)}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		// Pressure the trigger channel with ids that CANNOT be the job under
-		// test.
-		//
-		// This loop used to start at 0, so it enqueued a trigger for job 1 —
-		// the job this test then triggers. The scheduler is running and drains
-		// the channel concurrently, so it would execute job 1 and move it off
-		// JobStatusPending; TriggerJob's status gate then refused with
-		// InvalidJobError, which is neither outcome asserted below. On an idle
-		// machine the test's own TriggerJob usually won that race, so it passed;
-		// on a loaded runner the drain won and the job reddened lanes whose
-		// diffs never touched the scheduler (#308). Measured under load before
-		// the fix, InvalidJobError appeared in roughly 1 run in 60.
-		const fillerBase = 1000 // above any id this test registers
-		for i := 0; i < 100; i++ {
-			select {
-			case scheduler.triggerCh <- triggerRequest{jobID: uint64(fillerBase + i)}:
-			default:
-			}
-		}
+		// The send cannot proceed and ctx.Done() is ready, so the select
+		// takes the cancellation arm: never the default (queue full) arm.
+		err := engine.TriggerJob(ctx, 1, "")
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Len(t, engine.triggerCh, cap(engine.triggerCh), "a refused trigger enqueues nothing")
+	})
 
-		err = scheduler.TriggerJob(cancelledCtx, 1, "")
-
-		// Both outcomes are legitimate, and NOT because the buffer may or may
-		// not be full: TriggerJob selects over the send, ctx.Done() and a
-		// default. With an already-cancelled context ctx.Done() is always
-		// ready, so the default arm is unreachable here and the queue-full
-		// refusal cannot occur. When the buffer also has room, two arms are
-		// ready at once and Go picks between them UNIFORMLY AT RANDOM — that
-		// randomness, not timing, is why this accepts either answer.
-		if err != nil {
-			assert.Equal(t, context.Canceled, err)
-		}
+	t.Run("a live context queues the trigger with the job's scope", func(t *testing.T) {
+		engine := newEngine(t)
+		require.NoError(t, engine.TriggerJob(context.Background(), 1, ""))
+		require.Len(t, engine.triggerCh, 1)
+		req := <-engine.triggerCh
+		assert.Equal(t, uint64(1), req.jobID)
 	})
 }
 

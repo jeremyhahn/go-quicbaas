@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -98,7 +99,7 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 		return nil, err
 	}
 
-	if err := schedulerRefuseReservedHandler("CreateJob", req.Handler); err != nil {
+	if err := schedulerRefuseInternalHandler("CreateJob", req.Handler); err != nil {
 		return nil, err
 	}
 
@@ -163,23 +164,23 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 		return nil, err
 	}
 
-	// A job run by a reserved handler (a platform handler, or a KMS grace
-	// job) is written only by the service that owns the handler: its handler and payload are not
+	// A job run by an internal handler (a KMS grace job) is written only by
+	// the service that owns the handler: its handler and payload are not
 	// user-editable, and no job is turned into one.
-	if err := schedulerRefuseReservedHandler("UpdateJob", req.Handler); err != nil {
+	if err := schedulerRefuseInternalHandler("UpdateJob", req.Handler); err != nil {
 		return nil, err
 	}
-	if req.Handler != "" || len(req.Payload) > 0 {
-		current, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
-		if err != nil {
-			return nil, err
-		}
-		if err := schedulerTenantEnforceAccess(tenantID, current.TargetTenantID, "UpdateJob"); err != nil {
-			return nil, err
-		}
-		if err := schedulerRefuseReservedHandler("UpdateJob", current.Handler); err != nil {
-			return nil, err
-		}
+	// Every update loads the current job: an internal job is not
+	// reschedulable either (moving its ExecuteAt would run it early).
+	current, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if err := schedulerTenantEnforceAccess(tenantID, current.TargetTenantID, "UpdateJob"); err != nil {
+		return nil, err
+	}
+	if err := schedulerRefuseInternalHandler("UpdateJob", current.Handler); err != nil {
+		return nil, err
 	}
 
 	// Convert request to scheduler.JobUpdateParams
@@ -321,6 +322,12 @@ func (a *SchedulerAdapter) TriggerJob(ctx context.Context, req *TriggerScheduler
 		return nil, err
 	}
 
+	// A job run by an internal handler (a KMS grace job) runs only when its
+	// owner scheduled it: scheduler permissions cannot run it early.
+	if err := schedulerRefuseInternalHandler("TriggerJob", job.Handler); err != nil {
+		return nil, err
+	}
+
 	if err := a.scheduler.TriggerJob(ctx, req.JobID, tenantID); err != nil {
 		return nil, err
 	}
@@ -422,6 +429,7 @@ func (a *SchedulerAdapter) GetJobHistory(ctx context.Context, req *GetSchedulerJ
 			Duration:  exec.Duration,
 			Error:     exec.Error,
 			Output:    exec.Output,
+			Result:    exec.Result,
 		}
 	}
 
@@ -531,19 +539,22 @@ type gracePeriodPayload struct {
 	Version uint64 `json:"version"`
 }
 
-// schedulerServiceInternalHandler is the handler whose jobs only its owning
-// service writes (KMSService.RotateKey files kms.grace_period through
-// ScheduleJob). Its jobs are tenant-owned and run bound to that tenant.
-const schedulerServiceInternalHandler = "kms.grace_period"
+// schedulerInternalHandlers are the handlers whose jobs only their owning
+// service creates and writes (KMSService.RotateKey files kms.grace_period).
+var schedulerInternalHandlers = map[string]bool{
+	schedulerhandlers.HandlerKMSGracePeriod: true,
+	// The platform's system sweeps run with platform authority across every
+	// tenant (KMS rotation scans and rotates every tenant's keys; the ledger
+	// pricing sweep prices every tenant's entries). Each runs only as its
+	// reserved system job, whose firing claim lets one node run each sweep.
+	schedulerhandlers.HandlerKMSRotation:   true,
+	schedulerhandlers.HandlerLedgerPricing: true,
+}
 
-// schedulerRefuseReservedHandler refuses a scheduler API write that names, or
-// would edit a job of, a reserved handler: a platform-owned handler
-// (scheduler.IsPlatformHandler), which acts across every tenant and is
-// scheduled only by its owning service's internal registration, or the
-// service-internal kms.grace_period. It applies to every caller, the system
-// tenant included.
-func schedulerRefuseReservedHandler(operation, handler string) error {
-	if handler != schedulerServiceInternalHandler && !scheduler.IsPlatformHandler(handler) {
+// schedulerRefuseInternalHandler refuses a scheduler API write that names, or
+// would edit a job of, an internal handler.
+func schedulerRefuseInternalHandler(operation, handler string) error {
+	if !schedulerInternalHandlers[handler] && !scheduler.IsPlatformHandler(handler) {
 		return nil
 	}
 	return NewError(errors.ErrForbidden, "scheduler."+operation,

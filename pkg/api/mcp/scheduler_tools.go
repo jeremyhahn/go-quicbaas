@@ -363,6 +363,8 @@ func (r *ToolRegistry) registerSchedulerTools() {
 			"properties": map[string]interface{}{},
 		},
 	})
+
+	r.registerSchedulerRemoteTools()
 }
 
 // =============================================================================
@@ -847,7 +849,7 @@ func isSchedulerTool(name string) bool {
 		"quicbaas_scheduler_status":
 		return true
 	default:
-		return false
+		return isSchedulerRemoteTool(name)
 	}
 }
 
@@ -876,6 +878,10 @@ func (r *ToolRegistry) executeSchedulerTool(ctx context.Context, name string, ar
 		return r.executeSchedulerJobHistory(ctx, args)
 	case "quicbaas_scheduler_status":
 		return r.executeSchedulerStatus(ctx, args)
+	case toolSchedulerListRemoteRuns:
+		return r.executeSchedulerListRemoteRuns(ctx, args)
+	case toolSchedulerCompleteRemoteRun:
+		return r.executeSchedulerCompleteRemoteRun(ctx, args)
 	default:
 		return nil, api.NewUnknownToolError(name)
 	}
