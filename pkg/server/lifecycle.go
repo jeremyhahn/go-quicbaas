@@ -44,19 +44,16 @@ import (
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
-	_ "github.com/jeremyhahn/go-quicbaas/pkg/barrier" // side-effect import: registers barrier package init
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cluster"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/crypto"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
-	quicbaasseal "github.com/jeremyhahn/go-quicbaas/pkg/seal"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
@@ -110,8 +107,6 @@ var (
 	newKMSServiceFn       = kms.NewKMSService
 	// Seam for cache.NewManager in startService.
 	newCacheManagerFn = cache.NewManager
-	// Seam for grpcapi.InitializeDefaultSealManager in startGRPCServer.
-	initSealManagerFn = grpcapi.InitializeDefaultSealManager
 	// Seam for watchbridge.New in startWatchBridge.
 	newWatchBridgeFn = watchbridge.NewWatchBridge
 	// Seams for IAM init, reencrypt path, routing, and worker management.
@@ -130,8 +125,6 @@ var (
 	watchBridgeStartFn = func(b *watchbridge.WatchBridge, ctx context.Context) error { return b.Start(ctx) }
 	// Seam for CA construction.
 	newCAFn = xkmssdk.NewTrustedCA
-	// Seam for barrier manager construction.
-	newBarrierManagerFn = defaultNewBarrierManager
 	// Seam for CA initialization (allows tests to bypass full CA setup).
 	initializeCAFn = func(s *Server) error { return s.initializeCA() }
 )
@@ -965,68 +958,9 @@ func saveServerCert(issued *xkmssdk.TrustedCAIssuedCertificate, certPath string)
 	return nil
 }
 
-// defaultNewBarrierManager constructs a disk-persistent barrier manager that
-// satisfies interfaces.BarrierManager. Initialization state is stored under
-// <dataDir>/barrier/seal_state.json so that initialized=true survives daemon
-// restarts. Production deployments can replace this via newBarrierManagerFn to
-// inject a real BarrierClient-backed manager.
-func defaultNewBarrierManager(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.BarrierManager, error) {
-	barrierDir := filepath.Join(dataDir, "barrier")
-	mgr, err := grpcapi.NewPersistentDefaultSealManager(cfg, barrierDir)
-	if err != nil {
-		log.WithError(err).Warn("Failed to create persistent seal manager; falling back to in-memory (initialized state will not survive restart)")
-		return grpcapi.NewDefaultSealManager(cfg), nil
-	}
-	return mgr, nil
-}
-
-// initBarrier initializes the seal manager and encrypting KV store when seal is enabled.
-// When seal is disabled, this method is a no-op and GetKVStore returns raw storage.
-func (s *Server) initBarrier() error {
-	if !s.config.Seal.Enabled {
-		s.logger.Info("Seal is disabled, skipping barrier initialization")
-		return nil
-	}
-
-	s.logger.Info("Initializing seal barrier...")
-
-	// Determine barrier directory
-	barrierDir := s.config.Seal.BarrierDir
-	if barrierDir == "" {
-		barrierDir = filepath.Join(s.config.Storage.DataDir, "barrier")
-	}
-
-	// Create seal manager with barrier
-	sealCfg := &quicbaasseal.Config{
-		Mode:                quicbaasseal.SealMode(s.config.Seal.Mode),
-		Threshold:           s.config.Seal.Threshold,
-		TotalShares:         s.config.Seal.TotalShares,
-		RecoveryKeysEnabled: s.config.Seal.RecoveryEnabled,
-		RecoveryThreshold:   s.config.Seal.RecoveryThreshold,
-		RecoveryTotalKeys:   s.config.Seal.RecoveryTotal,
-	}
-
-	mgr, err := newBarrierManagerFn(sealCfg, s.logger, s.config.Storage.DataDir)
-	if err != nil {
-		return api.NewOperationFailedError("create seal manager", err)
-	}
-
-	s.barrierManager = mgr
-
-	s.logger.WithFields(map[string]interface{}{
-		"barrier_dir":  barrierDir,
-		"mode":         s.config.Seal.Mode,
-		"threshold":    s.config.Seal.Threshold,
-		"total_shares": s.config.Seal.TotalShares,
-	}).Info("Seal barrier initialized")
-
-	return nil
-}
-
 // initDataPlaneEncryptor builds the canonical data-plane StorageBarrier and
-// derives the single atrest.Encryptor from it. This must run after
-// initBarrier (so the data directory exists) and BEFORE initVectorStorage and
-// initTimeSeriesStorage, which need the encryptor to open their Pebble stores
+// derives the single atrest.Encryptor from it. This must run BEFORE
+// initVectorStorage and initTimeSeriesStorage, which need the encryptor to open their Pebble stores
 // with FS-level AES-256-GCM encryption.
 //
 // The encryptor is stored on s.dataPlaneEncryptor. When the data-plane barrier
@@ -2434,13 +2368,6 @@ func (s *Server) startGRPCServer() error {
 	}
 
 	s.logger.Info("Initializing gRPC server...")
-
-	// Initialize seal manager for gRPC endpoints
-	if s.barrierManager == nil {
-		if err := initSealManagerFn(s.logger); err != nil {
-			s.logger.Warnf("Failed to initialize seal manager: %v (seal operations will be unavailable)", err)
-		}
-	}
 
 	// TLS is always enabled
 	var grpcOpts []ggrpc.ServerOption

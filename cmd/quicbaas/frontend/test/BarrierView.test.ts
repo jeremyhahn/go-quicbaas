@@ -191,9 +191,9 @@ describe('BarrierView strategy-aware rendering', () => {
   it('shamir init posts to /api/v1/barrier/shamir/initialize', async () => {
     spy = makeFetchSpy({
       '/api/v1/barrier/shamir/initialize': () => ({
-        shares: ['s1', 's2', 's3'],
         threshold: 2,
         total_shares: 3,
+        share_count: 3,
       }),
       '/api/v1/barrier/status': () => ({
         sealed: true,
@@ -214,6 +214,33 @@ describe('BarrierView strategy-aware rendering', () => {
       expect(hits[0].method).toBe('POST');
     });
     expect(spy.calls.every((c) => !c.url.includes('/api/v1/seal/'))).toBe(true);
+  });
+
+  it('shamir init shows the share-free result: counts only, no share material', async () => {
+    spy = makeFetchSpy({
+      '/api/v1/barrier/shamir/initialize': () => ({
+        threshold: 2,
+        total_shares: 3,
+        share_count: 3,
+      }),
+      '/api/v1/barrier/status': () => ({
+        sealed: true,
+        strategy: 'shamir',
+      }),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+
+    render(BarrierView);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Initialize Shamir barrier/i })).toBeInTheDocument();
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /Initialize Shamir barrier/i }));
+
+    const result = await screen.findByTestId('shamir-init-result');
+    expect(result).toHaveTextContent('3 shares sealed to enrolled officers');
+    expect(result).toHaveTextContent('2 of 3 unseal the barrier');
+    expect(result).toHaveTextContent(/claims their share/);
+    expect(screen.queryAllByTestId('shamir-share-result')).toHaveLength(0);
   });
 
   it('software unseal posts to /api/v1/barrier/unseal', async () => {

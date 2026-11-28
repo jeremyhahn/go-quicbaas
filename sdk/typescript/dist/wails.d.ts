@@ -33,7 +33,6 @@ export declare class WailsClient implements Client {
     readonly tenantBarrier: any;
     readonly ceremony: any;
     readonly cluster: any;
-    readonly seal: any;
     /**
      * sshKeys is the legacy backward-compat accessor.
      * Points to ssh.keys — the same WailsSSHKeysClient instance.

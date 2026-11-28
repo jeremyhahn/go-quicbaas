@@ -985,14 +985,14 @@ func TestSharesFileErrorsNameTheInvokingVerb(t *testing.T) {
 		"barrier recovery recover",
 	} {
 		t.Run(op, func(t *testing.T) {
-			_, err := readSharesFile("/nonexistent/shares.txt", op)
+			_, _, err := readSharesFile("/nonexistent/shares.txt", op)
 			require.Error(t, err)
 			var missing *BarrierSharesFileError
 			require.ErrorAs(t, err, &missing)
 			assert.True(t, strings.HasPrefix(missing.Error(), op+": "),
 				"unreadable-file error names the wrong verb: %q", missing.Error())
 
-			_, err = readSharesFile(empty, op)
+			_, _, err = readSharesFile(empty, op)
 			require.Error(t, err)
 			var blank *BarrierSharesFileEmptyError
 			require.ErrorAs(t, err, &blank)

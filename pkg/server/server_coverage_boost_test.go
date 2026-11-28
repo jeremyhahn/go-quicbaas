@@ -42,7 +42,6 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -75,7 +74,6 @@ func TestBoost_Start_StandaloneModeBlocksUntilShutdown(t *testing.T) {
 	// Stub IAM and CA so initialize() succeeds without external dependencies.
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	validateRoutingFn = func(_ []uint64, _ map[string]uint64) error { return nil }
 	initializeCAFn = func(_ *Server) error { return nil }
 	seamMu.Unlock()

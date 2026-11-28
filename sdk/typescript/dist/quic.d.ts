@@ -63,7 +63,6 @@ export declare class QuicClient implements Client {
     readonly tenantBarrier: any;
     readonly ceremony: CeremonyClient;
     readonly cluster: any;
-    readonly seal: any;
     readonly sshKeys: any;
     readonly ssh: any;
     constructor(endpoint: string, _config?: ClientConfig);

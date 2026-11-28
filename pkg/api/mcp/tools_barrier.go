@@ -681,7 +681,7 @@ func executeBarrierStatus(ctx context.Context, svc service.BarrierServicer, _ ma
 	if err != nil {
 		return nil, err
 	}
-	return barrierStatusToMap(info), nil
+	return info, nil
 }
 
 // executeBarrierInitialize implements qrdb_barrier_initialize.
@@ -733,7 +733,7 @@ func executeBarrierShamirInitialize(ctx context.Context, svc service.BarrierServ
 	if err != nil {
 		return nil, err
 	}
-	return shamirInitToMap(info), nil
+	return info, nil
 }
 
 // executeBarrierShamirUnsealShare implements qrdb_barrier_shamir_unseal_share.
@@ -746,7 +746,7 @@ func executeBarrierShamirUnsealShare(ctx context.Context, svc service.BarrierSer
 	if err != nil {
 		return nil, err
 	}
-	return unsealShareProgressToMap(progress), nil
+	return progress, nil
 }
 
 // executeBarrierShamirUnsealShares implements
@@ -775,7 +775,7 @@ func executeBarrierRekey(ctx context.Context, svc service.BarrierServicer, args 
 	if err != nil {
 		return nil, err
 	}
-	return shamirInitToMap(info), nil
+	return info, nil
 }
 
 // executeBarrierRecoveryGenerate implements qrdb_barrier_recovery_generate.
@@ -789,7 +789,7 @@ func executeBarrierRecoveryGenerate(ctx context.Context, svc service.BarrierServ
 	if err != nil {
 		return nil, err
 	}
-	return recoveryKeysToMap(info), nil
+	return info, nil
 }
 
 // executeBarrierRecoveryRecover implements qrdb_barrier_recovery_recover.
@@ -831,7 +831,7 @@ func executeBarrierRootToken(ctx context.Context, svc service.BarrierServicer, a
 	if err != nil {
 		return nil, err
 	}
-	return rootTokenToMap(info), nil
+	return info, nil
 }
 
 // executeBarrierEnableEncryption implements qrdb_barrier_enable_encryption.
@@ -1055,75 +1055,9 @@ func parseBarrierShareSlice(args map[string]interface{}, key string) []string {
 	return out
 }
 
-// barrierTimeFormat is the ONE rendering every barrier timestamp uses on
-// every transport. It is RFC3339Nano, not RFC3339, because go-qrdb's own
-// qrdb.v1 gRPC barrier surface — which quicbaas's unix and gRPC transports
-// reach through the platform-shard servicer adapter — already renders
-// InitializedAt at nanosecond precision. Rendering the same instant at
-// second precision here made `barrier status` answer
-// "2026-08-25T04:40:05Z" over REST/MCP and "2026-08-25T04:40:05.727835519Z"
-// over unix/gRPC for one barrier: not a contradiction, but not
-// byte-comparable either, and go-quicbaas#405 requires an operator
-// diffing two transports to get the same answer.
-const barrierTimeFormat = time.RFC3339Nano
-
-// barrierStatusToMap renders a BarrierStatusInfo as the JSON wire shape
-// shared with handlers_barrier.go.
-func barrierStatusToMap(info *service.BarrierStatusInfo) map[string]interface{} {
-	resp := map[string]interface{}{
-		"sealed":          info.Sealed,
-		"strategy":        info.Strategy,
-		"hardware_backed": info.HardwareBacked,
-	}
-	if !info.InitializedAt.IsZero() {
-		resp["initialized_at"] = info.InitializedAt.UTC().Format(barrierTimeFormat)
-	}
-	return resp
-}
-
-// shamirInitToMap renders a ShamirInitInfo as the JSON wire shape shared with
-// handlers_barrier.go. Share material is never present; officers claim shares
-// via the qrdb share-claim flow.
-func shamirInitToMap(info *service.ShamirInitInfo) map[string]interface{} {
-	return map[string]interface{}{
-		"threshold":    info.Threshold,
-		"total_shares": info.TotalShares,
-		"share_count":  info.ShareCount,
-	}
-}
-
-// unsealShareProgressToMap renders an UnsealShareProgress as the JSON wire
-// shape shared with handlers_barrier.go.
-func unsealShareProgressToMap(p *service.UnsealShareProgress) map[string]interface{} {
-	return map[string]interface{}{
-		"required":  p.Required,
-		"submitted": p.Submitted,
-		"complete":  p.Complete,
-	}
-}
-
-// recoveryKeysToMap renders a RecoveryKeysInfo as the JSON wire shape shared
-// with handlers_barrier.go. Recovery share material is never present;
-// officers claim shares via the qrdb recovery share-claim flow.
-func recoveryKeysToMap(info *service.RecoveryKeysInfo) map[string]interface{} {
-	return map[string]interface{}{
-		"threshold":   info.Threshold,
-		"total":       info.Total,
-		"share_count": info.ShareCount,
-	}
-}
-
-// rootTokenToMap renders a RootTokenInfo as the JSON wire shape shared with
-// handlers_barrier.go.
-func rootTokenToMap(info *service.RootTokenInfo) map[string]interface{} {
-	resp := map[string]interface{}{
-		"token": info.Token,
-	}
-	if !info.CreatedAt.IsZero() {
-		resp["created_at"] = info.CreatedAt.UTC().Format(barrierTimeFormat)
-	}
-	return resp
-}
+// Every barrier tool answers with go-qrdb's transport response as it is: its
+// JSON tags are the wire shape REST and go-qrdb's own MCP tools serve, so no
+// local mapping can drop or reformat a field (#1559, go-quicbaas#405).
 
 // credentialArg reads the barrier credential argument name and copies it into
 // a slice the caller wipes after use. It is the one place MCP turns a

@@ -35,7 +35,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
-	quicbaasseal "github.com/jeremyhahn/go-quicbaas/pkg/seal"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
@@ -51,26 +50,6 @@ type covPushError struct {
 }
 
 func (e *covPushError) Error() string { return e.msg }
-
-// =============================================================================
-// defaultNewBarrierManager (lifecycle.go:407) - currently 0%
-// =============================================================================
-
-func TestCovPush_DefaultNewSealManager(t *testing.T) {
-	t.Parallel()
-	cfg := &quicbaasseal.Config{Threshold: 2, TotalShares: 3}
-	mgr, err := defaultNewBarrierManager(cfg, mustCreateLogger(), t.TempDir())
-	assert.NoError(t, err)
-	assert.NotNil(t, mgr)
-}
-
-func TestCovPush_DefaultNewSealManager_ZeroValues(t *testing.T) {
-	t.Parallel()
-	cfg := &quicbaasseal.Config{}
-	mgr, err := defaultNewBarrierManager(cfg, mustCreateLogger(), t.TempDir())
-	assert.NoError(t, err)
-	assert.NotNil(t, mgr)
-}
 
 // =============================================================================
 // stopWorkerManager (lifecycle.go:860) - currently 25%

@@ -37,7 +37,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/embedding"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
@@ -77,7 +76,6 @@ func TestCovP7_FullLifecycle_StandaloneMemory(t *testing.T) {
 	// Stub IAM to avoid complex auth setup
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	validateRoutingFn = func(_ []uint64, _ map[string]uint64) error { return nil }
 	seamMu.Unlock()
 
@@ -114,7 +112,6 @@ func TestCovP7_FullLifecycle_StandaloneMemory_EmbeddedMode(t *testing.T) {
 	// Stub IAM
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	seamMu.Unlock()
 
 	srv, err := NewServer(cfg)
@@ -600,7 +597,6 @@ func TestP9_FullLifecycle_EmbeddedMode(t *testing.T) {
 
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	seamMu.Unlock()
 
 	srv, err := NewServer(cfg)
@@ -775,7 +771,6 @@ func TestP10_Initialize_StartGRPCError(t *testing.T) {
 
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	validateRoutingFn = func(_ []uint64, _ map[string]uint64) error { return nil }
 	listenFunc = func(network, address string) (net.Listener, error) {
 		return nil, errors.New("injected listen error")
@@ -909,7 +904,6 @@ func TestP10_FullLifecycle_WithREST_GRPC(t *testing.T) {
 
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	validateRoutingFn = func(_ []uint64, _ map[string]uint64) error { return nil }
 	seamMu.Unlock()
 
@@ -969,7 +963,6 @@ func TestP10_StartGRPCServer_ListenerError(t *testing.T) {
 	mockSvc.On("Project").Return(nil)
 
 	seamMu.Lock()
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	validateRoutingFn = func(_ []uint64, _ map[string]uint64) error { return nil }
 	// Override listen function to fail
 	listenFunc = func(network, address string) (net.Listener, error) {
@@ -1077,7 +1070,6 @@ func TestP15_Initialize_StartSecretsError(t *testing.T) {
 
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	newSecretsMgr = func(_ *secrets.ManagerOptions) (*secrets.Manager, error) {
 		return nil, errors.New("injected secrets manager error")
 	}
@@ -1107,7 +1099,6 @@ func TestP15_Initialize_StartCatalogManagerError(t *testing.T) {
 
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	newCatalogStore = func(_ *catalog.PebbleStorageConfig) (catalog.PebbleStorage, error) {
 		return nil, errors.New("injected catalog storage error")
 	}
@@ -1140,7 +1131,6 @@ func TestP15_Initialize_IAMComponentsFailureAbortsBoot(t *testing.T) {
 	cfg.Server.Embedded = true
 
 	seamMu.Lock()
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) {
 		return nil, errors.New("injected IAM initialization error")
 	}
@@ -1208,7 +1198,6 @@ func TestP15_Shutdown_StopTimeSeriesError(t *testing.T) {
 
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	seamMu.Unlock()
 
 	srv, err := NewServer(cfg)
@@ -1273,7 +1262,6 @@ func TestP15_StartService_FileStorageCreationError(t *testing.T) {
 
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	seamMu.Unlock()
 
 	srv, err := NewServer(cfg)
@@ -1326,7 +1314,6 @@ func TestP15_StartService_CacheManagerPath(t *testing.T) {
 
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	seamMu.Unlock()
 
 	srv, err := NewServer(cfg)
@@ -1383,35 +1370,6 @@ func TestP15_StopRAG_NilSystem(t *testing.T) {
 	srv.ragSystem = nil
 	err = srv.stopRAG()
 	assert.NoError(t, err)
-}
-
-// TestP15_Initialize_SealManagerInitError covers initSealManagerFn returning error.
-// This triggers the seal manager initialization failure at lifecycle.go L234-236.
-func TestP15_Initialize_SealManagerInitError(t *testing.T) {
-	saveAndRestoreSeams(t)
-	cfg := createFTConfig(t)
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendMemory
-	cfg.Security.TLSEnabled = false
-	cfg.Server.Embedded = true
-
-	seamMu.Lock()
-	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error {
-		return errors.New("injected seal manager init error")
-	}
-	seamMu.Unlock()
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	err = srv.initialize()
-	// The seal manager init error should be propagated
-	// Note: initSealManagerFn is called inside startGRPCServer
-	// If embedded mode, gRPC may not start so this may succeed.
-	if err != nil {
-		t.Logf("initialize error (may be expected): %v", err)
-	}
 }
 
 // =============================================================================

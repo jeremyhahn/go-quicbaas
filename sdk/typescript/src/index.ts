@@ -36,8 +36,6 @@ export type {
   CeremonyClient,
   BootstrapClient,
   ClusterClient,
-  /** @deprecated Use BarrierClient. */
-  SealClient,
   SecretsClient,
   UpdateUserRequest,
   UpdateTenantRequest,

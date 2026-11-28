@@ -852,19 +852,6 @@ type (
 )
 
 // =============================================================================
-// Seal Types
-// =============================================================================
-
-type (
-	GenerateRecoveryKeyRequest  = pkgservice.GenerateRecoveryKeyRequest
-	GenerateRecoveryKeyResponse = pkgservice.GenerateRecoveryKeyResponse
-	DeleteRecoveryKeyRequest    = pkgservice.DeleteRecoveryKeyRequest
-	DeleteRecoveryKeyResponse   = pkgservice.DeleteRecoveryKeyResponse
-	GenerateRootTokenRequest    = pkgservice.GenerateRootTokenRequest
-	GenerateRootTokenResponse   = pkgservice.GenerateRootTokenResponse
-)
-
-// =============================================================================
 // DEK Types and Constants
 // =============================================================================
 
@@ -1544,15 +1531,6 @@ type (
 type (
 	MFAManager      = pkgservice.MFAManager
 	WebAuthnManager = pkgservice.WebAuthnManager
-)
-
-// =============================================================================
-// KMS Root Key Rotation
-// =============================================================================
-
-type (
-	RotateRootKeyRequest  = pkgservice.RotateRootKeyRequest
-	RotateRootKeyResponse = pkgservice.RotateRootKeyResponse
 )
 
 // =============================================================================

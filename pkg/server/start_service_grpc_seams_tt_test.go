@@ -24,17 +24,14 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
 // TestServer_StartService_TT_CacheManagerFailureTolerated covers the
@@ -56,29 +53,4 @@ func TestServer_StartService_TT_CacheManagerFailureTolerated(t *testing.T) {
 	require.NoError(t, srv.startService(),
 		"a cache-manager failure must be tolerated, not abort startService")
 	assert.Nil(t, srv.cacheManager, "no cache manager may be attached on failure")
-}
-
-// TestServer_StartGRPCServer_TT_SealManagerInitFailureTolerated covers the
-// seal-manager init error branch of startGRPCServer: when the default seal
-// manager cannot be initialised it is logged (seal operations become
-// unavailable) but the gRPC server start is NOT aborted.
-func TestServer_StartGRPCServer_TT_SealManagerInitFailureTolerated(t *testing.T) {
-	saveAndRestoreSeams(t)
-	srv := withTempServer(t)
-	srv.config.Server.Embedded = false
-
-	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
-	t.Cleanup(func() { _ = srv.stopQRDBNode() })
-	require.NoError(t, srv.startService())
-
-	// Force the seam to run by ensuring no seal manager is already present.
-	srv.barrierManager = nil
-	initSealManagerFn = func(*logger.Logger) error { return errors.New("seal manager init failed") }
-
-	require.NoError(t, srv.startGRPCServer(),
-		"a seal-manager init failure must be tolerated, not abort startGRPCServer")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(ctx)
 }

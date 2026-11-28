@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,7 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -287,6 +289,87 @@ func TestBarrierClient_EmptyResponseIsAnError(t *testing.T) {
 	t.Run("BarrierUnseal/204", func(t *testing.T) {
 		if err := emptyBarrier(t, http.StatusNoContent).BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{}); err != nil {
 			t.Fatalf("BarrierUnseal on an empty 204 body: %v", err)
+		}
+	})
+}
+
+// TestBarrierClient_ErrorKeepsVerbAndStatus pins the refusal shape the CLI
+// prints: a barrier verb refused over REST reads "<verb>: status <code>:
+// <server message>", as go-qrdb's REST sub-client returned. The CLI
+// integration suite's token-less seal asserts both "401" and the server's
+// message (TestBarrierAuthPosture_DefaultDeny), and a 501 stays the
+// capability refusal every other transport returns.
+func TestBarrierClient_ErrorKeepsVerbAndStatus(t *testing.T) {
+	ctx := context.Background()
+	const msg = "Missing or invalid authorization header"
+
+	refusing := func(t *testing.T, status int) *BarrierClient {
+		t.Helper()
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/health" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+		}))
+		t.Cleanup(srv.Close)
+
+		tr, err := New(&transport.Config{Address: srv.URL, TLSConfig: trustServer(srv), MaxRetries: 0})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		t.Cleanup(func() { _ = tr.Close() })
+		return tr.Barrier()
+	}
+
+	cases := []struct {
+		verb string
+		call func(b *BarrierClient) error
+	}{
+		{"BarrierSeal", func(b *BarrierClient) error { return b.BarrierSeal(ctx) }},
+		{"BarrierStatus", func(b *BarrierClient) error {
+			_, err := b.BarrierStatus(ctx)
+			return err
+		}},
+		{"OfficerList", func(b *BarrierClient) error {
+			_, err := b.OfficerList(ctx)
+			return err
+		}},
+		{"RecoveryShareClaimBegin", func(b *BarrierClient) error {
+			_, err := b.RecoveryShareClaimBegin(ctx, &qrdbtransport.ShareClaimBeginRequest{Username: "ro1"})
+			return err
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.verb+"/401", func(t *testing.T) {
+			err := tc.call(refusing(t, http.StatusUnauthorized))
+			var reqErr *qrdbtransport.RequestError
+			if !errors.As(err, &reqErr) {
+				t.Fatalf("got %T (%v), want *qrdbtransport.RequestError", err, err)
+			}
+			if reqErr.Method != tc.verb || reqErr.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("got method %q status %d, want %q 401", reqErr.Method, reqErr.StatusCode, tc.verb)
+			}
+			for _, want := range []string{"401", msg} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q does not contain %q", err.Error(), want)
+				}
+			}
+			var qbErr *sdkerrors.QBError
+			if !errors.As(err, &qbErr) || qbErr.Code != sdkerrors.CodeUnauthorized {
+				t.Fatalf("got %v, want the SDK's unauthorized error inside", err)
+			}
+		})
+	}
+
+	t.Run("BarrierSeal/501", func(t *testing.T) {
+		err := refusing(t, http.StatusNotImplemented).BarrierSeal(ctx)
+		var capErr *qrdbtransport.CapabilityUnsupportedError
+		if !errors.As(err, &capErr) || capErr.Message != msg {
+			t.Fatalf("got %v, want a CapabilityUnsupportedError carrying %q", err, msg)
 		}
 	})
 }

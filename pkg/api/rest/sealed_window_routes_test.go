@@ -25,6 +25,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -55,8 +56,8 @@ func newRealSealedWindowRESTServer(t *testing.T) (*Server, *reachedHandler) {
 		Status: service.HealthStatusHealthy,
 		NodeID: 1,
 	}, nil).Maybe()
-	s.SetBarrierService(&fakeBarrierService{statusFn: func(context.Context) (*service.BarrierStatusInfo, error) {
-		return &service.BarrierStatusInfo{Sealed: true, Strategy: "shamir"}, nil
+	s.SetBarrierService(&fakeBarrierService{statusFn: func(context.Context) (*qrdbtransport.BarrierStatusResponse, error) {
+		return &qrdbtransport.BarrierStatusResponse{Sealed: true, Strategy: "shamir"}, nil
 	}})
 	s.SetSealedWindowGate(probe, &restCeremonyStateProbe{}, sealedwindow.RESTAllowlist())
 	h := &reachedHandler{next: qrdbsdk.NewSealedWindowHandler(nil, nil, nil, qrdbsdk.NewSealedWindowListenerProbe(probe, nil))}

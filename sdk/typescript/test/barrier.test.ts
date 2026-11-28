@@ -304,9 +304,9 @@ describe('RestBarrierClient Shamir strategy', () => {
   it('initialises the barrier with Shamir secret sharing', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
-        shares: ['share-1', 'share-2', 'share-3'],
         threshold: 2,
         total_shares: 3,
+        share_count: 3,
       }),
     );
 
@@ -317,7 +317,8 @@ describe('RestBarrierClient Shamir strategy', () => {
       total_shares: 3,
     });
 
-    expect(result.shares).toHaveLength(3);
+    expect(result.share_count).toBe(3);
+    expect(result).not.toHaveProperty('shares');
     expect(result.threshold).toBe(2);
     expect(result.total_shares).toBe(3);
 
@@ -370,9 +371,9 @@ describe('RestBarrierClient operator flows', () => {
   it('rekeys the barrier', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
-        shares: ['new-1', 'new-2'],
         threshold: 1,
         total_shares: 2,
+        share_count: 2,
       }),
     );
 
@@ -381,6 +382,7 @@ describe('RestBarrierClient operator flows', () => {
 
     expect(result.threshold).toBe(1);
     expect(result.total_shares).toBe(2);
+    expect(result.share_count).toBe(2);
 
     const [url] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/barrier/rekey');
@@ -389,16 +391,17 @@ describe('RestBarrierClient operator flows', () => {
   it('generates recovery keys', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
-        keys: ['rec-1', 'rec-2', 'rec-3'],
         threshold: 2,
         total: 3,
+        share_count: 3,
       }),
     );
 
     const client = new RestClient('http://localhost');
     const result = await client.barrier.generateRecoveryKeys({ threshold: 2, total: 3 });
 
-    expect(result.keys).toHaveLength(3);
+    expect(result.share_count).toBe(3);
+    expect(result).not.toHaveProperty('keys');
     expect(result.total).toBe(3);
 
     const [url] = fetchMock.mock.calls[0];
@@ -541,34 +544,5 @@ describe('McpBarrierClient.seal', () => {
     );
 
     await expect(new McpClient(tlsEndpoint).barrier.seal({ so_pin: 'wrong' })).rejects.toBeInstanceOf(McpError);
-  });
-});
-
-// =============================================================================
-// Deprecated SealClient still works and warns once
-// =============================================================================
-
-describe('Deprecated SealClient alias', () => {
-  it('routes legacy seal calls to the legacy /api/v1/seal endpoints', async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({
-        sealed: true,
-        initialized: true,
-        threshold: 2,
-        total_shares: 3,
-        shares_provided: 0,
-        version: 1,
-      }),
-    );
-
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const client = new RestClient('http://localhost');
-    const status = await client.seal.status();
-    warnSpy.mockRestore();
-
-    expect(status.sealed).toBe(true);
-
-    const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/seal/status');
   });
 });

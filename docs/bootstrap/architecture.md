@@ -52,7 +52,7 @@ The following local packages were removed and replaced by QRDB SDK operations:
 
 **Only allowed QRDB import:** `github.com/jeremyhahn/go-qrdb/sdk/go/**`
 
-No direct imports from `go-quicraft` or `go-qrdb/pkg/**` are permitted in production or test code. The single exception is `pkg/seal/barrier_qcseal.go`, which wraps the go-quicraft cryptographic Barrier behind a local interface.
+No direct imports from `go-quicraft` or `go-qrdb/pkg/**` are permitted in production or test code.
 
 ## QRDB Client
 
@@ -81,5 +81,3 @@ The node routes shards and Raft proposals itself.
 3. **Local interfaces** -- `pkg/interfaces/raft.go`, `pkg/interfaces/timeseries.go`, and `pkg/interfaces/statemachine.go` define local type aliases so QuicBaaS does not import QRDB internal types.
 
 4. **Mock infrastructure** -- `pkg/testutil/MockQuicBaaS` with `svcBoostMockQRDBProvider` provides test coverage without requiring a running QRDB instance.
-
-5. **Seal adapter exception** -- `pkg/seal/barrier_qcseal.go` is the only file that imports go-quicraft directly, wrapping the cryptographic Barrier behind a local interface.

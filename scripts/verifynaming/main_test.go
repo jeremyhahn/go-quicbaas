@@ -63,9 +63,9 @@ func TestRunPassesACompliantTree(t *testing.T) {
 		// The English verb is a different word and is left alone.
 		"pkg/mint/mint.go": "package mint\n\n// We " + allowedInflection + "e nothing here.\n",
 		// Seal* on the documented alias surface.
-		"pkg/seal/types.go":      "package seal\n\ntype SealMode int\n",
-		"cmd/quicbaas/seal.go":   "package main\n\nvar _ SealClient\n",
-		"pkg/barrier/barrier.go": "package barrier\n\ntype BarrierManager struct{}\n",
+		"pkg/api/grpc/client_seal.go": "package grpc\n\nvar _ SealClient\n",
+		"cmd/quicbaas/seal.go":        "package main\n\nvar _ SealClient\n",
+		"pkg/barrier/barrier.go":      "package barrier\n\ntype BarrierManager struct{}\n",
 	})
 
 	var stdout, stderr strings.Builder
@@ -188,8 +188,10 @@ func TestOnAliasSurfaceAcceptsOnlyTheDocumentedPaths(t *testing.T) {
 		path string
 		want bool
 	}{
-		{path: "pkg/seal/types.go", want: true},         // enumerated file
-		{path: "pkg/seal/anything_else.go", want: true}, // enumerated tree
+		{path: "pkg/api/grpc/client_seal.go", want: true},  // enumerated file
+		{path: "pkg/service/anything_else.go", want: true}, // enumerated tree
+		// The removed seal package is no longer on the alias surface.
+		{path: "pkg/seal/types.go", want: false},
 		{path: "cmd/quicbaas/factories_mcp_seal.go", want: true},
 		{path: "sdk/go/client/seal/client.go", want: true},
 		{path: "pkg/testutil/mocks.go", want: true},

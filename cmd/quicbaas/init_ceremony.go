@@ -114,8 +114,8 @@ Register each officer first so their CSR is signed and bound:
 
 Example:
   quicbaas init initialize \
-      --so-pin "$SO_PIN" \
-      --user-pin "$USER_PIN" \
+      --so-pin-file /run/secrets/so-pin \
+      --user-pin-file /run/secrets/user-pin \
       --threshold 2 \
       --so alice:alice.csr \
       --so bob:bob.csr \
@@ -124,10 +124,7 @@ Example:
 	}
 	cmd.Flags().StringVar(&initServer, "server", "",
 		"Override the global --address for this call (optional)")
-	cmd.Flags().StringVar(&initSOPin, "so-pin", "",
-		"Security Officer PIN (required)")
-	cmd.Flags().StringVar(&initUserPin, "user-pin", "",
-		"User PIN (required)")
+	addPINFlags(cmd, "required; ", soPINInput(&initSOPin), userPINInput(&initUserPin))
 	cmd.Flags().IntVar(&initThreshold, "threshold", 0,
 		"Shamir M-of-N threshold. Omit or set below 2 for single-admin mode")
 	cmd.Flags().StringSliceVar(&initOfficerSpec, "so", nil,
@@ -143,11 +140,19 @@ Example:
 
 // runInitInitializeCommand executes 'init initialize'.
 func runInitInitializeCommand(cmd *cobra.Command, _ []string) error {
-	if initSOPin == "" {
-		return errors.Newf(errors.ErrInvalidInput, "init.initialize", "--so-pin is required")
+	pins, release, err := resolvePINs(cmd, "init.initialize",
+		soPINInput(&initSOPin), userPINInput(&initUserPin))
+	if err != nil {
+		return err
 	}
-	if initUserPin == "" {
-		return errors.Newf(errors.ErrInvalidInput, "init.initialize", "--user-pin is required")
+	defer release()
+	if !pins.has(0) {
+		return errors.Newf(errors.ErrInvalidInput, "init.initialize",
+			"--so-pin is required (or --so-pin-file, or set "+soPINEnv+")")
+	}
+	if !pins.has(1) {
+		return errors.Newf(errors.ErrInvalidInput, "init.initialize",
+			"--user-pin is required (or --user-pin-file, or set "+userPINEnv+")")
 	}
 
 	officers, err := parseCeremonyOfficers(initOfficerSpec)
@@ -167,10 +172,15 @@ func runInitInitializeCommand(cmd *cobra.Command, _ []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
+	ctx, releaseSO, err := bindSOPIN(ctx, "init.initialize", pins[0])
+	if err != nil {
+		return formatError(err)
+	}
+	defer releaseSO()
 
 	resp, err := client.CeremonyInitialize(ctx, &qrdbtransport.CeremonyInitializeRequest{
-		SOPin:                  initSOPin,
-		UserPin:                initUserPin,
+		SOPin:                  pins.field(0),
+		UserPin:                pins.field(1),
 		CredentialSealStrategy: initCredSeal,
 		Threshold:              initThreshold,
 		Officers:               officers,

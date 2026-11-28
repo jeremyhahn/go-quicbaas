@@ -1,4 +1,4 @@
-import type { AuthClient, Client, ConnectionClient, DataClient, IAMClient, KMSClient, ObjectsClient, BarrierClient, TenantBarrierClient, CeremonyClient, BootstrapClient, ClusterClient, SealClient, SecretsClient, SSHKeysClient, SSHKnownHostsClient, SSHAuthorizedKeysClient, SSHClient, TimeSeriesClient, VectorsClient, OrchestratorClient } from './interfaces.js';
+import type { AuthClient, Client, ConnectionClient, DataClient, IAMClient, KMSClient, ObjectsClient, BarrierClient, TenantBarrierClient, CeremonyClient, BootstrapClient, ClusterClient, SecretsClient, SSHKeysClient, SSHKnownHostsClient, SSHAuthorizedKeysClient, SSHClient, TimeSeriesClient, VectorsClient, OrchestratorClient } from './interfaces.js';
 import type { RAGClient } from './rag.js';
 import type { EmbeddingsClient } from './embedding_sdk.js';
 import type { MessagingClient } from './messaging_sdk.js';
@@ -268,8 +268,6 @@ export declare class RestClient implements Client {
     readonly ceremony: CeremonyClient;
     readonly bootstrap: BootstrapClient;
     readonly cluster: ClusterClient;
-    /** @deprecated Use barrier. The legacy seal accessor is kept for one release. */
-    readonly seal: SealClient;
     /**
      * sshKeys is the legacy backward-compat accessor.
      * Points to the same RestSSHKeysClient instance as ssh.keys.

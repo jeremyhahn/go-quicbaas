@@ -120,7 +120,13 @@ func TestRunInitInitialize_SendsThePlanToTheServer(t *testing.T) {
 	dir := t.TempDir()
 
 	fc := &fakeCeremonyClient{
-		initializeFunc: func(_ context.Context, _ *qrdbtransport.CeremonyInitializeRequest) (*qrdbtransport.CeremonyInitializeResponse, error) {
+		initializeFunc: func(ctx context.Context, _ *qrdbtransport.CeremonyInitializeRequest) (*qrdbtransport.CeremonyInitializeResponse, error) {
+			// The SO PIN is bound to the call so the SDK's TLS and
+			// redirect guard runs for it.
+			pin, ok, err := qrdbtransport.SOPINFromContext(ctx)
+			assert.NoError(t, err)
+			assert.True(t, ok, "the SO PIN must be bound to the call context")
+			assert.Equal(t, "so-pin", string(pin))
 			return &qrdbtransport.CeremonyInitializeResponse{
 				State:      "enrolling",
 				SPKIPin:    "abc123",

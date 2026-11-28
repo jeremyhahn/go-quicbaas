@@ -13,7 +13,7 @@ import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
-import type { AgentBackendInfo, JobRunnerInfo, AuthTokenResponse, DeployFleetNodeResult, DeployFleetNodeSpec, InferenceRequest, InferenceResponse, InferenceChunk, PublicKeyCredentialJSON, WebAuthnLoginChallenge, SSHKey, SSHScope, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, SSHPublicKey, SignRequest, SignResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse, FleetNode, SessionStatusResponse, CloseSessionRequest, CloseSessionResponse, CreateKeyRequest, CreateKeyResponse, CreateTenantRequest, CreateTenantResponse, CreateTaskRequest, CreateTaskResponse, CreateUserRequest, CreateUserResponse, CreateWorkflowRequest, CreateWorkflowResponse, DecomposeTaskRequest, DecomposeTaskResponse, GetFleetNodeRequest, GetSecretResponse, GetSessionHistoryRequest, GetSessionConversationRequest, GetSessionConversationResponse, GetSpendReportRequest, GetSpendReportResponse, GetTenantSpendPolicyRequest, SetTenantSpendPolicyRequest, TenantSpendPolicy, GetCostSettingsRequest, SetCostSettingsRequest, CostSettings, WorkerImageStatus, GetSessionHistoryResponse, HealthCheckReport, IAMRole, IAMPolicy, IAMTenant, IAMUser, JobEvent, JobStatus, KMSDecryptRequest, KMSDecryptResponse, KMSEncryptRequest, KMSEncryptResponse, ListFleetNodesRequest, ListFleetNodesResponse, ListKeysResponse, ListPoliciesResponse, ListRolesResponse, ListSecretsResponse, ListSessionsRequest, ListSessionsResponse, ListTenantsResponse, ListUsersResponse, ListWorkflowsResponse, PromptSessionRequest, PromptSessionResponse, ReconcileRolesResponse, RegisterFleetNodeRequest, RegisterFleetNodeResponse, RemoveFleetNodeRequest, DisableFleetNodeRequest, DisableFleetNodeResponse, EnableFleetNodeRequest, EnableFleetNodeResponse, RekeyRequest, RekeyResponse, RotateKeyResponse, RotateRootKeyResponse, RotateSecretResponse, RotateSessionAccountRequest, RotateSessionAccountResponse, ListSecretVersionsResponse, SetDefaultKeyResponse, SealStatus, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierSealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, ListClusterNodesResponse, SessionEventEnvelope, SessionInfo, SpawnSessionRequest, SpawnSessionResponse, ClaimTaskRequest, CompleteTaskRequest, DeleteTaskRequest, DeleteTaskResponse, StartJobRequest, StartJobResponse, StoreSecretRequest, SubscribeSessionEventsRequest, Task, UnsealRequest, UnsealResponse, WorkflowDefinition, AttentionItem, AttentionResolveRequest } from './types.js';
+import type { AgentBackendInfo, JobRunnerInfo, AuthTokenResponse, DeployFleetNodeResult, DeployFleetNodeSpec, InferenceRequest, InferenceResponse, InferenceChunk, PublicKeyCredentialJSON, WebAuthnLoginChallenge, SSHKey, SSHScope, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, SSHPublicKey, SignRequest, SignResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse, FleetNode, SessionStatusResponse, CloseSessionRequest, CloseSessionResponse, CreateKeyRequest, CreateKeyResponse, CreateTenantRequest, CreateTenantResponse, CreateTaskRequest, CreateTaskResponse, CreateUserRequest, CreateUserResponse, CreateWorkflowRequest, CreateWorkflowResponse, DecomposeTaskRequest, DecomposeTaskResponse, GetFleetNodeRequest, GetSecretResponse, GetSessionHistoryRequest, GetSessionConversationRequest, GetSessionConversationResponse, GetSpendReportRequest, GetSpendReportResponse, GetTenantSpendPolicyRequest, SetTenantSpendPolicyRequest, TenantSpendPolicy, GetCostSettingsRequest, SetCostSettingsRequest, CostSettings, WorkerImageStatus, GetSessionHistoryResponse, HealthCheckReport, IAMRole, IAMPolicy, IAMTenant, IAMUser, JobEvent, JobStatus, KMSDecryptRequest, KMSDecryptResponse, KMSEncryptRequest, KMSEncryptResponse, ListFleetNodesRequest, ListFleetNodesResponse, ListKeysResponse, ListPoliciesResponse, ListRolesResponse, ListSecretsResponse, ListSessionsRequest, ListSessionsResponse, ListTenantsResponse, ListUsersResponse, ListWorkflowsResponse, PromptSessionRequest, PromptSessionResponse, ReconcileRolesResponse, RegisterFleetNodeRequest, RegisterFleetNodeResponse, RemoveFleetNodeRequest, DisableFleetNodeRequest, DisableFleetNodeResponse, EnableFleetNodeRequest, EnableFleetNodeResponse, RotateKeyResponse, RotateSecretResponse, RotateSessionAccountRequest, RotateSessionAccountResponse, ListSecretVersionsResponse, SetDefaultKeyResponse, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierSealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, ListClusterNodesResponse, SessionEventEnvelope, SessionInfo, SpawnSessionRequest, SpawnSessionResponse, ClaimTaskRequest, CompleteTaskRequest, DeleteTaskRequest, DeleteTaskResponse, StartJobRequest, StartJobResponse, StoreSecretRequest, SubscribeSessionEventsRequest, Task, WorkflowDefinition, AttentionItem, AttentionResolveRequest } from './types.js';
 export interface ConnectionClient {
     connect(address: string, transport?: string, tenantID?: string): Promise<void>;
     disconnect(): Promise<void>;
@@ -293,24 +293,6 @@ export interface TenantBarrierClient {
     tenantBarrierSeal(tenantId: string): Promise<void>;
     tenantBarrierStatus(tenantId: string): Promise<TenantBarrierStatusResponse>;
 }
-/**
- * SealClient is the legacy alias for BarrierClient. Its surface is preserved
- * for one release so existing callers continue to compile. New code must use
- * BarrierClient directly.
- *
- * The runtime RestSealClient wraps RestBarrierClient and emits a single
- * deprecation warning per construction. See rest.ts for the implementation.
- *
- * @deprecated Use BarrierClient. The Seal* surface will be removed one
- *   release after the Barrier unification ships.
- */
-export interface SealClient {
-    status(): Promise<SealStatus>;
-    unseal(req: UnsealRequest): Promise<UnsealResponse>;
-    seal(): Promise<void>;
-    rekey(req: RekeyRequest): Promise<RekeyResponse>;
-    rotateRootKey(): Promise<RotateRootKeyResponse>;
-}
 export interface CeremonyClient {
     initialize(req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse>;
     status(): Promise<CeremonyStatusResponse>;
@@ -429,7 +411,7 @@ export interface Client {
     readonly dynamicSecrets: DynamicSecretsClient;
     /**
      * barrier is the canonical surface for sealed-storage operations.
-     * Replaces the legacy seal accessor; new code must use barrier.
+     * The barrier is go-qrdb's; there is no separate seal accessor.
      */
     readonly barrier: BarrierClient;
     /**
@@ -448,11 +430,6 @@ export interface Client {
      * and rebalance writes when a caller needs them). Path: /api/v1/cluster.
      */
     readonly cluster: ClusterClient;
-    /**
-     * @deprecated Use barrier. Kept for one release so existing callers
-     * continue to compile. The seal accessor proxies to barrier.
-     */
-    readonly seal: SealClient;
     /**
      * sshKeys is the legacy flat accessor for backward compatibility.
      * Existing callers using client.sshKeys.list()/create()/get()/remove()

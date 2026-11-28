@@ -72,8 +72,8 @@ type CeremonyServices struct {
 // strategy (in-memory, blocking retrieval) and a software-strategy
 // StorageBarrier over a brand-new in-memory backend.
 //
-// The bootstrap barrier is separate from the data-plane barrier wired by
-// initBarrier. Its sole purpose is to back the ceremony service's officer
+// The bootstrap barrier is separate from the data-plane barrier. Its sole
+// purpose is to back the ceremony service's officer
 // registry, share store, and pending-cert state during the init ceremony.
 // Once the operator completes the ceremony and unseals the data plane, this
 // bootstrap barrier remains in memory and is discarded on next restart.

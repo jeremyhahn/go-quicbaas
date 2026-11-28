@@ -20,14 +20,3 @@ func TestLifecycle_StopBackupManager_Nil(t *testing.T) {
 		assert.NoError(t, err)
 	})
 }
-
-func TestLifecycle_SetSealManager(t *testing.T) {
-	t.Run("sets seal manager", func(t *testing.T) {
-		srv := withTempServer(t)
-		assert.Nil(t, srv.GetBarrierManager())
-
-		// SetBarrierManager is a simple setter
-		srv.SetBarrierManager(nil)
-		assert.Nil(t, srv.GetBarrierManager())
-	})
-}

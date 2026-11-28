@@ -98,9 +98,11 @@ func (s *qrdbBarrierClientServicer) BarrierStatus(ctx context.Context) (*qrdbsdk
 		return nil, err
 	}
 	info := &qrdbsdk.BarrierStatusInfo{
-		Sealed:         resp.Sealed,
-		Strategy:       resp.Strategy,
-		HardwareBacked: resp.HardwareBacked,
+		Sealed:          resp.Sealed,
+		Strategy:        resp.Strategy,
+		HardwareBacked:  resp.HardwareBacked,
+		ShamirThreshold: resp.ShamirThreshold,
+		ShamirTotal:     resp.ShamirTotal,
 	}
 	if resp.InitializedAt != "" {
 		if t, parseErr := time.Parse(time.RFC3339, resp.InitializedAt); parseErr == nil {

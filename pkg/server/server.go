@@ -488,10 +488,6 @@ type Server struct {
 	// Created by initializeCA() and used by all transport layers.
 	tlsConfig *tls.Config
 
-	// Barrier management - uses the interfaces.BarrierManager abstraction
-	// backed by qrdb's StorageBarrier via the BarrierSealManager adapter.
-	barrierManager interfaces.BarrierManager
-
 	// dataPlaneBarrier is the concrete StorageBarrier used to encrypt the
 	// data-plane stores (KV, time-series, vector). Set during startService()
 	// when buildDataPlaneBarrierService succeeds. Nil when seal is disabled or
@@ -1976,18 +1972,6 @@ func (s *Server) UpdateCA(ca xkmssdk.TrustedCA) error {
 	}
 	s.adoptCA(ca)
 	return nil
-}
-
-// GetBarrierManager returns the barrier manager (nil if seal is not enabled).
-func (s *Server) GetBarrierManager() interfaces.BarrierManager {
-	return s.barrierManager
-}
-
-// SetBarrierManager sets the barrier manager on the server. This is used by
-// integration points that construct barrier managers externally (e.g., gRPC
-// seal service initialization).
-func (s *Server) SetBarrierManager(mgr interfaces.BarrierManager) {
-	s.barrierManager = mgr
 }
 
 // GetQRDBClient returns the sharded qrdb client (nil if not initialized).

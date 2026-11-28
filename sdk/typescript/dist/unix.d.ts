@@ -33,7 +33,6 @@ export declare class UnixClient implements Client {
     readonly tenantBarrier: any;
     readonly ceremony: any;
     readonly cluster: any;
-    readonly seal: any;
     readonly sshKeys: any;
     readonly ssh: any;
     constructor(socketPath: string, _config?: ClientConfig);

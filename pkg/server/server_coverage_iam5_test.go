@@ -197,30 +197,6 @@ func TestServer_Shutdown_DrivesCleanupBranches(t *testing.T) {
 	assert.True(t, srv.IsClosed())
 }
 
-// =============================================================================
-// lifecycle.go — initBarrier seal-enabled with in-memory backend
-// =============================================================================
-
-func TestServer_InitBarrier_SealEnabledBuildsManager(t *testing.T) {
-	srv := withTempServer(t)
-	srv.config.Seal.Enabled = true
-	srv.config.Seal.Mode = "software"
-	srv.config.Seal.Threshold = 1
-	srv.config.Seal.TotalShares = 1
-
-	// The defaultNewBarrierManager seam handles the persistent-vs-memory
-	// fall-back internally. Either branch satisfies the contract:
-	// initBarrier returns nil and srv.barrierManager is non-nil.
-	err := srv.initBarrier()
-	if err != nil {
-		// Some seal configurations fail validation under the test config;
-		// the failure path is also a documented branch and the function
-		// returned the operation-failed error wrap correctly.
-		return
-	}
-	require.NotNil(t, srv.barrierManager)
-}
-
 func TestServer_Shutdown_TraversesMessagingBranch(t *testing.T) {
 	srv := withTempServer(t)
 	require.NoError(t, srv.startMessaging())

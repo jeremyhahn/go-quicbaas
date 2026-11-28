@@ -48,6 +48,7 @@
   } from '@quicbaas/svelte-security';
   import type {
     BarrierClient,
+    BarrierInitResponse,
     BarrierStatus,
     BarrierStrategy,
   } from '@quicbaas/svelte-security';
@@ -146,7 +147,13 @@
           threshold: req.threshold,
           total_shares: req.total_shares,
         });
-        return { shares: resp.shares };
+        // go-qrdb seals each share to an enrolled officer and returns only
+        // the counts; officers claim their shares, the view never sees one.
+        return {
+          threshold: resp.threshold,
+          total_shares: resp.total_shares,
+          share_count: resp.share_count,
+        };
       },
       async unseal(req) {
         const resp = await sdk.unsealWithShare({ share: req.share });
@@ -175,7 +182,7 @@
   let initThreshold = $state(2);
   let initTotal = $state(3);
   let initing = $state(false);
-  let initShares: string[] | null = $state(null);
+  let initResult: BarrierInitResponse | null = $state(null);
   let initError: string | null = $state(null);
 
   async function loadStatus(): Promise<void> {
@@ -218,10 +225,10 @@
         threshold: initThreshold,
         total_shares: initTotal,
       });
-      initShares = resp.shares;
+      initResult = resp;
       showToast({
-        message: 'Barrier initialized — store your Shamir shares securely!',
-        type: 'warning',
+        message: 'Barrier initialized — officers claim their sealed shares.',
+        type: 'success',
       });
       void loadStatus();
     } catch (e) {
@@ -327,21 +334,20 @@
             <div class="space-y-3" data-testid="barrier-strategy-shamir-init">
               <p class="text-sm text-base-content/70">
                 Initialize the Shamir barrier. Choose how many shares to mint and
-                the threshold required to unseal. Shares are returned exactly once.
+                the threshold required to unseal. Each share is sealed to an enrolled
+                officer, who claims it; no share is shown here.
               </p>
               {#if initError !== null}
                 <div class="alert alert-error text-sm" role="alert">{initError}</div>
               {/if}
-              {#if initShares !== null}
-                <div class="alert alert-warning text-sm" role="alert">
+              {#if initResult !== null}
+                <div class="alert alert-info text-sm" role="status" data-testid="shamir-init-result">
                   <div>
-                    <div class="font-semibold mb-2">New shares — store securely!</div>
-                    <div class="space-y-1">
-                      {#each initShares as share, i}
-                        <div class="font-mono text-xs break-all" data-testid="shamir-share-result">
-                          <span class="text-base-content/50">#{i + 1}</span> {share}
-                        </div>
-                      {/each}
+                    <div class="font-semibold mb-1">Barrier initialized</div>
+                    <div>
+                      {initResult.share_count} shares sealed to enrolled officers;
+                      {initResult.threshold} of {initResult.total_shares} unseal the barrier.
+                      Each officer claims their share.
                     </div>
                   </div>
                 </div>
