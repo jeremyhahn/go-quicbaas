@@ -64,11 +64,20 @@ func (c *QRDBEmbeddingClient) call(ctx context.Context, op, tool string, args ma
 	if err != nil {
 		return err
 	}
+	return decodeQRDBToolResult(op, result, out)
+}
+
+// decodeQRDBToolResult decodes a tool's JSON result, a JSON string or an already
+// decoded value, into out.
+func decodeQRDBToolResult(op string, result interface{}, out interface{}) error {
 	var raw []byte
 	if s, ok := result.(string); ok {
 		raw = []byte(s)
-	} else if raw, err = json.Marshal(result); err != nil {
-		return fmt.Errorf("%s: encode result: %w", op, err)
+	} else {
+		var err error
+		if raw, err = json.Marshal(result); err != nil {
+			return fmt.Errorf("%s: encode result: %w", op, err)
+		}
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("%s: decode result: %w", op, err)

@@ -75,6 +75,11 @@ type SecurityService interface {
 	RBAC() RBACClient
 	SealStore() (QRDBSealStoreClient, error)
 
+	// TenantDEK exposes go-qrdb's per-tenant DEK keyring for the caller's
+	// tenant (status, rotate, retire, encrypt, decrypt, rewrap). Key
+	// material never leaves the server.
+	TenantDEK() (QRDBDEKClient, error)
+
 	// ACME exposes server-side challenge verifiers and the ACME protocol
 	// client (RFC 8555 + ARI + cross-sign + TPM enrollment).
 	ACME() ACMEService
@@ -444,6 +449,14 @@ func (c *client) credentialClient() (QRDBCredentialClient, error) {
 		return &qrdbBearerCredentialClient{inner: cc, bearer: "Bearer " + c.opts.authToken}, nil
 	}
 	return cc, nil
+}
+
+// TenantDEK returns the QRDB per-tenant DEK keyring client for the
+// caller's tenant. Every call carries the configured bearer, and an
+// embedded client binds the tenant named by WithTenant (see
+// client.qrdbTenantDEK).
+func (s *securityService) TenantDEK() (QRDBDEKClient, error) {
+	return s.c.qrdbTenantDEK()
 }
 
 // SecretResolver returns the unified secret resolver registry injected via

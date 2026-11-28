@@ -1,13 +1,38 @@
 # Data Encryption Keys — Engineering
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-11-24
 > Implementation contract for the DEK surface. Feature folder:
 > `docs/data-encryption-keys/`.
 
 ## Exported surface
 
-The SDK service is `quicbaas.DEK` (`sdk/go/client/dek`), reached through the
-composed client. Eleven methods:
+Two DEK surfaces reach users through `sdk/go`:
+
+- **go-qrdb's per-tenant keyring** — the DEK service. go-qrdb's
+  `transport.DEKClient` is re-exported as `quicbaas.QRDBDEKClient` (a type
+  alias, with its `QRDBTenantDEK*` request and response types), reached by
+  `Security().TenantDEK()` on every transport. On the embedded transport the
+  node's own keyring is wired in (`QRDBEmbeddedServicers.DEK`, from
+  `Server.GetQRDBDEKServicer`). Status, rotate, retire, encrypt, decrypt and
+  rewrap; every call acts on the caller's own tenant. The CLI is
+  `quicbaas dek tenant`, and `kms://` secret references resolve through it.
+  Over REST (`sdk/go/transport/rest/qrdb_dek_client.go`) every verb carries
+  the tenant bearer-hop guard: the platform bearer is never sent on a non-https
+  hop, nor across a redirect to http or to another host:port. Encrypt, decrypt
+  and rewrap also carry the secret-hop guard: their only allowed hop is the
+  configured https origin, and no redirect is followed. A refusal is a
+  non-retryable `CodeForbidden` error, and nothing reaches the network.
+  MCP (`sdk/go/transport/mcp/qrdb_dek_client.go`) holds the same rules. Every
+  verb sends the platform bearer, on the session's initialize too, so every
+  verb refuses a non-https endpoint before the session starts, and every hop of
+  its initialize, authenticate and tool call must be https to the configured
+  host. Encrypt, decrypt and rewrap follow no redirect, even to the same host.
+  A refusal is a non-retryable `CodeForbidden` error wrapping
+  `*mcp.DEKHopError`, which names the verb and the reason, never the data.
+- **QuicBaaS's own path-addressed DEK store** — `quicbaas.DEKClient`
+  (`sdk/go/client/dek`), reached by `Security().DEK()`. It is a **parallel
+  implementation** of the keyring above and is removed on the owner's word;
+  until then the bare name `DEKClient` keeps naming it. Eleven methods:
 
 | Method | Purpose |
 |---|---|
@@ -16,12 +41,14 @@ composed client. Eleven methods:
 | `ListDEKs` | Enumerate DEKs |
 | `DeleteDEK` | Remove a DEK |
 | `RotateDEK` | Generate a new version of a DEK |
-| `GetDEKStatus` | Report a DEK's state |
+| `GetDEKStatus` | Report a DEK's state and AEAD usage |
 | `SetDefaultDEK` | Nominate the DEK used when none is named |
-| `SetDEKSafety` | Engage the safety interlock |
-| `ClearDEKSafety` | Release the safety interlock |
+| `SetDEKSafety` | Engage the safety interlock (AEAD usage limits) |
+| `ClearDEKSafety` | Release the per-DEK limits |
 | `StartReencryption` | Begin re-encrypting data under a new DEK version |
 | `GetReencryptionProgress` | Poll that operation |
+
+The rest of this page is about the path-addressed store.
 
 A DEK is addressed by **path**, not by id. Every CLI verb but `list` takes a
 `<path>` positional (`cmd/quicbaas/dek.go:180-717`), and the REST routes are
@@ -29,15 +56,33 @@ mounted as a wildcard subtree under `/api/v1/kms/deks/*` for the same reason.
 
 ## The safety interlock
 
-`SetDEKSafety` / `ClearDEKSafety` exist because the destructive operations in
-this feature are irreversible in a way that ordinary confirmation prompts do not
-adequately guard: deleting or rotating away a DEK makes data encrypted under it
-unreadable, and there is no undo.
+An AEAD key is only safe for a bounded number of encryptions (nonce reuse and
+the bytes-per-key bound). `SetDEKSafety` sets that bound for one DEK —
+`max_operations`, `max_bytes` and a `warning_percent` — in the server's AEAD
+safety tracker (`pkg/service/aead_safety.go`); `ClearDEKSafety` drops the
+per-DEK bound back to the server default.
 
-The interlock is state on the server, not a CLI flag. That is deliberate — a
-flag protects against a typo in one shell, while server state protects against
-every path to the operation, including the API. Treat clearing the safety as its
-own audited action, not a step in a longer procedure.
+- Each use the tracker counts against the DEK (`RecordDEKEncrypt`) counts
+  against the bound. Past the warning percentage a warning is logged and
+  counted; the use that reaches the bound is **refused** (`AEAD limit
+  exceeded`), and every later use is refused too.
+- **Rotation is the remedy, not one of the guarded uses.** `RotateDEK` gives a
+  new key version whose usage starts at zero, so the DEK is usable again under
+  the same bound. Rotating is never refused by the interlock.
+- `GetDEKStatus` reports the usage the interlock counts (`usage_count`,
+  `bytes_used`).
+
+The interlock is state on the server, not a CLI flag, so it holds against
+every path to the key, the API included. What it bounds today:
+
+- **It is `AEADSafetyTracker`'s per-DEK bound for a path-addressed DEK.**
+- **No QuicBaaS verb encrypts under a path-addressed DEK.** The store
+  (`pkg/service/kms.go`) has no encrypt verb, and no production path calls
+  `RecordDEKEncrypt`, so nothing counts a use against the bound today.
+- **go-qrdb's tenant keyring, which does the real encryption, has no
+  per-version use cap.** Its encrypt and rewrap are served by go-qrdb (by the
+  node itself on the network transports), so a cap there is go-qrdb's to add;
+  a QuicBaaS-side cap would not cover those transports.
 
 ## Re-encryption is asynchronous
 
@@ -64,9 +109,9 @@ never stored in the clear.
 
 - A DEK operation against a **sealed** barrier fails; it does not queue and does
   not degrade to an unencrypted path.
-- A destructive operation with the safety interlock **engaged** is refused. The
-  refusal is a distinct error from a permission denial — do not treat them
-  alike, because the remedy is different.
+- A use past a path-addressed DEK's safety bound is refused with an AEAD-limit error. It is a
+  distinct error from a permission denial — do not treat them alike, because
+  the remedy (rotate the DEK) is different.
 - Re-encryption failure leaves records under their existing version. It does not
   half-write a record.
 
@@ -79,8 +124,37 @@ one explicit list of environment variables and no DEK key appears in it.
 
 ## Test strategy
 
-- Unit tests cover the safety interlock's refusal paths and the path-addressing
-  rules.
+- `pkg/service/kms_dek_interlock_test.go` proves the tracker's accounting:
+  set-safety, refusal at the bound, rotation back to zero usage and
+  clear-safety. It drives the tracker calls an encrypt path would make; it
+  does not prove a refused encryption, because no QuicBaaS verb encrypts
+  under a path-addressed DEK.
+- The REST hop guards are proven by
+  `sdk/go/transport/rest/qrdb_dek_client_test.go`
+  (`TestQRDBDEKClient_SecretVerbsRefusePlaintext`,
+  `TestQRDBDEKClient_BearerNeverSentOverPlaintext`,
+  `TestQRDBDEKClient_RefusesRedirects`, `TestQRDBDEKClient_HTTPSRoundTrip`)
+  and by `TestTenantDEK_REST_SendsPlatformBearer` (over TLS) and
+  `TestTenantDEK_REST_RefusesPlaintextHTTP` in `sdk/go/qrdb_dek_client_test.go`.
+- The MCP hop guard is proven by
+  `sdk/go/transport/mcp/qrdb_dek_hop_test.go` (`TestDEKHop_PlainEndpointRefused`,
+  `TestDEKHop_RedirectToPlainRefused`, `TestDEKHop_RedirectToForeignHostRefused`,
+  `TestDEKHop_DataVerbSameHostRedirectRefused`, `TestDEKHop_HTTPSRoundTrip`,
+  `TestDEKHop_RefusalIsForbidden`), each over all six verbs where it applies,
+  and by `TestTenantDEK_MCP_SendsBearer` (over TLS) and
+  `TestTenantDEK_MCP_RefusesPlaintextHTTP` in `sdk/go/qrdb_dek_client_test.go`.
+- `make integration-test-dek` drives create, get, list, rotate, delete, status,
+  set default, set and clear safety (rotating under the bound), start
+  re-encryption and progress over REST, gRPC and the unix socket.
+- The keyring re-export is proven by `sdk/go/qrdb_dek_reexport_test.go`,
+  `sdk/go/qrdb_embedded_dek_test.go` and `cmd/quicbaas/embedded_qrdb_test.go`
+  (rotation on a real node's keyring).
+- `TestDEKTenantKeyring` (`test/integration/cli/dek_tenant_test.go`) drives
+  `quicbaas dek tenant` on every enabled transport as a fresh tenant's admin.
+  It proves rotate, encrypt, decrypt and rewrap against the node's own
+  keyring; that a wrong AAD is refused and the current version cannot be
+  retired; and that after retirement a ciphertext under the retired version is
+  unreadable while its rewrapped copy opens.
 - The re-encryption progress path needs an integration test with a real barrier;
   a unit test cannot exercise the asynchronous handoff meaningfully.
 - Any test that deletes a DEK must assert that data encrypted under it becomes
