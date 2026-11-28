@@ -54,8 +54,9 @@ const (
 	// refs/heads/main and a same-repository pull_request take the variable or
 	// bigdisk, since the Dells' runner image's job hook refuses every other
 	// event: workflow_dispatch, schedule, pull_request_target and a push to
-	// another ref take ubuntu-latest.
-	preflightRunner = `${{ github.server_url == 'https://github.com' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
+	// another ref take ubuntu-latest. Since v1.63 a push to main takes the
+	// CI_MAIN_RUNNER_LABEL runner first when both main labels are set.
+	preflightRunner = `${{ github.server_url == 'https://github.com' && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CI_MAIN_RUNNER_LABEL && vars.CI_MAIN_RUNNER_LABEL_DOCKER && fromJSON(format('["self-hosted","linux","x64","{0}"]', vars.CI_MAIN_RUNNER_LABEL)) || github.server_url == 'https://github.com' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
 	// selfHostedWaiver opens the waiver a job that leaves hostedRunner
 	// carries in its runs-on line comment, followed by a category and a
 	// measured reason.
