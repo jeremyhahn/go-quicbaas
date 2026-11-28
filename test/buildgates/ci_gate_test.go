@@ -417,14 +417,37 @@ var cancelsInProgress = regexp.MustCompile(`(?m)^\s*cancel-in-progress:\s*true\s
 
 // mainRunKey is the group-key term that gives each main commit of the other
 // workflows its own group, so a literal cancel-in-progress never cancels a
-// main run. ciMainRunKey is ci.yml's ci-template v1.53 form, main-{event}: a
-// newer main run of the same event cancels the older one, while a schedule
-// run keeps schedule-{repository} and a dispatch run keeps
-// main-workflow_dispatch.
+// main run. ciMainRunKey is ci.yml's ci-template v1.61 form: a push to main
+// is grouped by its sha, main-push-{sha}, so no main push cancels another,
+// and any other main event keeps main-{event}, while a schedule run keeps
+// schedule-{repository} and a dispatch run keeps main-workflow_dispatch.
 const (
-	mainRunKey   = "github.ref == 'refs/heads/main' && github.sha"
-	ciMainRunKey = "github.ref == 'refs/heads/main' && format('main-{0}', github.event_name)"
+	mainRunKey    = "github.ref == 'refs/heads/main' && github.sha"
+	ciMainPushKey = "github.ref == 'refs/heads/main' && github.event_name == 'push' && format('main-push-{0}', github.sha)"
+	ciMainRunKey  = ciMainPushKey + " || github.ref == 'refs/heads/main' && format('main-{0}', github.event_name)"
 )
+
+// concurrencyBlock returns a workflow's top-level concurrency block with its
+// comment lines dropped, so the ci-template's notes inside the block do not
+// change what the block says.
+func concurrencyBlock(body string) string {
+	_, rest, ok := strings.Cut(body, "\nconcurrency:\n")
+	if !ok {
+		return ""
+	}
+	block := "concurrency:\n"
+	for _, line := range strings.SplitAfter(rest, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, "  ") {
+			break
+		}
+		block += line
+	}
+	return block
+}
 
 func TestPullRequestWorkflowsCancelSupersededRuns(t *testing.T) {
 	// The DS-3161 block: Gitea does not evaluate an expression in
@@ -433,22 +456,21 @@ func TestPullRequestWorkflowsCancelSupersededRuns(t *testing.T) {
 	const want = "concurrency:\n" +
 		"  group: ${{ github.workflow }}-${{ github.ref }}-${{ " + mainRunKey + " || 'latest' }}\n" +
 		"  cancel-in-progress: true\n"
-	// ci.yml carries the ci-template's canonical block (v1.53): one group per
-	// main event, one per schedule repository, one per other ref.
+	// ci.yml carries the ci-template's canonical block (v1.61): one group per
+	// main push commit, one per other main event, one per schedule
+	// repository, one per other ref.
 	const ciWant = "concurrency:\n" +
 		"  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || " + ciMainRunKey + " || github.ref }}\n" +
 		"  cancel-in-progress: true\n"
 	for _, path := range workflowFiles(t) {
 		body := readFile(t, path)
 		if path == ciWorkflowPath {
-			if !strings.Contains(body, "\n"+ciWant) {
-				t.Errorf("%s lacks the ci-template's concurrency block:\n%s", path, ciWant)
+			block := concurrencyBlock(body)
+			if block != ciWant {
+				t.Errorf("%s lacks the ci-template's concurrency block:\n%s\ngot:\n%s", path, ciWant, block)
 			}
-			if _, rest, ok := strings.Cut(body, "\nconcurrency:\n"); ok {
-				group, _, _ := strings.Cut(rest, "\n")
-				if strings.Contains(group, "github.sha") {
-					t.Errorf("%s's main concurrency group must be per event, not per commit (ci-template v1.53): %s", path, group)
-				}
+			if !strings.Contains(block, ciMainPushKey) {
+				t.Errorf("%s's concurrency group must give each push to main its own group, main-push-{sha} (ci-template v1.61): %s", path, block)
 			}
 			continue
 		}

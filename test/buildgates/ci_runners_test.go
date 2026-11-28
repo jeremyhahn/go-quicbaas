@@ -54,8 +54,9 @@ const (
 	// refs/heads/main and a same-repository pull_request take the variable or
 	// bigdisk, since the Dells' runner image's job hook refuses every other
 	// event: workflow_dispatch, schedule, pull_request_target and a push to
-	// another ref take ubuntu-latest.
-	preflightRunner = `${{ github.server_url == 'https://github.com' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
+	// another ref take ubuntu-latest. Since v1.63 a push to main takes the
+	// CI_MAIN_RUNNER_LABEL runner first when both main labels are set.
+	preflightRunner = `${{ github.server_url == 'https://github.com' && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CI_MAIN_RUNNER_LABEL && vars.CI_MAIN_RUNNER_LABEL_DOCKER && fromJSON(format('["self-hosted","linux","x64","{0}"]', vars.CI_MAIN_RUNNER_LABEL)) || github.server_url == 'https://github.com' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
 	// selfHostedWaiver opens the waiver a job that leaves hostedRunner
 	// carries in its runs-on line comment, followed by a category and a
 	// measured reason.
@@ -518,13 +519,17 @@ func (p *ghParser) primary(eval bool) (any, error) {
 				break
 			}
 		}
-		want := map[string]int{"fromjson": 1, "startswith": 2, "always": 0, "cancelled": 0}
+		// format takes a format string and any number of arguments (-1).
+		want := map[string]int{"fromjson": 1, "startswith": 2, "always": 0, "cancelled": 0, "format": -1}
 		name := strings.ToLower(t.text)
 		n, ok := want[name]
 		if !ok {
 			return nil, fmt.Errorf("unsupported function %s", t.text)
 		}
-		if len(args) != n {
+		if n < 0 && len(args) < 1 {
+			return nil, fmt.Errorf("%s: want a format string", t.text)
+		}
+		if n >= 0 && len(args) != n {
 			return nil, fmt.Errorf("%s: want %d arguments, got %d", t.text, n, len(args))
 		}
 		if !eval {
@@ -537,6 +542,8 @@ func (p *ghParser) primary(eval bool) (any, error) {
 			return ghTruthy(p.ctx["__cancelled"]), nil
 		case "startswith":
 			return strings.HasPrefix(strings.ToLower(ghString(args[0])), strings.ToLower(ghString(args[1]))), nil
+		case "format":
+			return ghFormat(ghString(args[0]), args[1:])
 		}
 		s, ok := args[0].(string)
 		if !ok {
@@ -567,6 +574,35 @@ func (p *ghParser) primary(eval bool) (any, error) {
 		return v, nil
 	}
 	return nil, fmt.Errorf("unexpected %q", t.text)
+}
+
+// ghFormat is GitHub's format: {N} is argument N as a string, and {{ and }}
+// are literal braces.
+func ghFormat(f string, args []any) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(f); i++ {
+		switch {
+		case strings.HasPrefix(f[i:], "{{"), strings.HasPrefix(f[i:], "}}"):
+			b.WriteByte(f[i])
+			i++
+		case f[i] == '{':
+			end := strings.IndexByte(f[i:], '}')
+			if end < 0 {
+				return "", fmt.Errorf("format(%q): unclosed {", f)
+			}
+			n, err := strconv.Atoi(f[i+1 : i+end])
+			if err != nil || n < 0 || n >= len(args) {
+				return "", fmt.Errorf("format(%q): bad index %q", f, f[i+1:i+end])
+			}
+			b.WriteString(ghString(args[n]))
+			i += end
+		case f[i] == '}':
+			return "", fmt.Errorf("format(%q): unmatched }", f)
+		default:
+			b.WriteByte(f[i])
+		}
+	}
+	return b.String(), nil
 }
 
 // ghTruthy is GitHub's truthiness: null, false, 0 and ” are falsy.
@@ -662,6 +698,9 @@ func TestGHEval(t *testing.T) {
 		{"${{ !cancelled() }}", "true", nil},
 		{"${{ e && always() || !cancelled() }}", "true", nil},
 		{"${{ !cancelled() }}", "false", map[string]any{"__cancelled": true}},
+		{"${{ format('[\"{0}\",\"{1}\"]', a.b, 'y') }}", `"[\"X\",\"y\"]"`, nil},
+		{"${{ format('{{{0}}}', a.b) }}", `"{X}"`, nil},
+		{"${{ fromJSON(format('[\"{0}\"]', a.b)) }}", `["X"]`, nil},
 	} {
 		cx := ctx
 		if c.ctx != nil {
@@ -681,6 +720,8 @@ func TestGHEval(t *testing.T) {
 		{"${{ startsWith('a') }}", "startsWith"},
 		{"${{ fromJSON('1', '2') }}", "fromJSON"},
 		{"${{ always(1) }}", "always"},
+		{"${{ format() }}", "format"},
+		{"${{ format('{1}', 'a') }}", "bad index"},
 	} {
 		_, err := ghEval(c.expr, ctx)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -750,6 +791,38 @@ func TestCIPreflightRunsOn(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			v, err := ghEval(runsOn.Value, ghContext(c.server, c.event, c.ref, c.head, c.varv))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := json.Marshal(v); string(got) != c.want {
+				t.Errorf("preflight runs on %s, want %s", got, c.want)
+			}
+		})
+	}
+	// v1.63: a push to main with CI_MAIN_RUNNER_LABEL and
+	// CI_MAIN_RUNNER_LABEL_DOCKER both set runs on the main-only label; with
+	// either unset, or on any other event, the rows above hold.
+	mainOnly := `["self-hosted","linux","x64","main-l"]`
+	for _, c := range []struct {
+		name, event, ref, head, ml, mld, want string
+	}{
+		{"push to main, both main labels set", "push", mainRef, "", "main-l", "main-ld", mainOnly},
+		{"push to main, only the main label set", "push", mainRef, "", "main-l", "", bigdiskJSON},
+		{"push to main, only the docker main label set", "push", mainRef, "", "", "main-ld", bigdiskJSON},
+		{"same-repository pull request, both main labels set", "pull_request", prRef, "o/r", "main-l", "main-ld", bigdiskJSON},
+		{"fork pull request, both main labels set", "pull_request", prRef, "fork/r", "main-l", "main-ld", `"ubuntu-latest"`},
+		{"push to another branch, both main labels set", "push", "refs/heads/feature", "", "main-l", "main-ld", `"ubuntu-latest"`},
+	} {
+		t.Run("main label: "+c.name, func(t *testing.T) {
+			ctx := ghContext(githubCom, c.event, c.ref, c.head, "")
+			vars := ctx["vars"].(map[string]any)
+			if c.ml != "" {
+				vars["CI_MAIN_RUNNER_LABEL"] = c.ml
+			}
+			if c.mld != "" {
+				vars["CI_MAIN_RUNNER_LABEL_DOCKER"] = c.mld
+			}
+			v, err := ghEval(runsOn.Value, ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1135,6 +1208,12 @@ func TestRunnerSelect(t *testing.T) {
 		"SERVER": "https://github.com", "API": selectAPI, "RUN_ID": strconv.Itoa(runID), "JOB_TOKEN": "job-token",
 		"HS": strconv.Itoa(hs), "C1": strconv.Itoa(units), "C2": strconv.Itoa(units),
 		"EVENT": "push", "REF": "refs/heads/main", "REPO": "o/r", "HEAD_REPO": "",
+		// v1.62: a private repository never overflows to hosted, so the cases
+		// below keep the v1.60 choice.
+		"PRIVATE": "true", "WAIT_LIMIT": "600",
+		// v1.63: with neither main-only label set, a push to main keeps the
+		// v1.62 choice.
+		"ML": "", "MLD": "",
 	}
 	// #2427: the notice of an event the Dells' runner image refuses.
 	const refused = "which the Dells' runner image refuses"
@@ -1210,25 +1289,26 @@ func TestRunnerSelect(t *testing.T) {
 		notCall  string // no called URL contains it
 		noCall   bool
 	}{
-		// Both pools below their limit: the lower use wins, a tie goes hosted.
-		{name: "an idle repository: a tie goes hosted", fix: load(), notice: "use hosted 0/12, bigdisk 0/4, bigdisk-docker 0/4; " + toHosted},
+		// Both pools below their limit: the lower use wins, a tie goes to the Dells.
+		{name: "an idle repository: a tie goes to the Dells", fix: load(), overflow: true, notice: "use hosted 0/12, bigdisk 0/4, bigdisk-docker 0/4; " + toDells},
 		{name: "hosted busier than the Dells", fix: load(h(3, "in_progress")), overflow: true, notice: "use hosted 3/12, bigdisk 0/4, bigdisk-docker 0/4; " + toDells},
-		{name: "equal use: a tie goes hosted", fix: load(h(3, "in_progress"), s1(1, "in_progress")), notice: toHosted},
+		{name: "equal use: a tie goes to the Dells", fix: load(h(3, "in_progress"), s1(1, "in_progress")), overflow: true, notice: toDells},
 		{name: "the Dells busier than hosted", fix: load(h(1, "in_progress"), s1(1, "in_progress")), notice: toHosted},
 		{name: "both kinds below hosted use", fix: load(h(6, "in_progress"), s1(1, "in_progress"), s2(1, "in_progress")), overflow: true, notice: toDells},
-		{name: "bigdisk-docker alone at hosted use", fix: load(h(6, "in_progress"), s2(2, "in_progress")), notice: toHosted},
+		{name: "bigdisk-docker alone at hosted use: a tie goes to the Dells", fix: load(h(6, "in_progress"), s2(2, "in_progress")), overflow: true, notice: toDells},
+		{name: "bigdisk-docker alone above hosted use", fix: load(h(6, "in_progress"), s2(3, "in_progress")), notice: toHosted},
 		{name: "queued jobs count as use", fix: load(h(3, "queued")), overflow: true, notice: "use hosted 3/12"},
-		{name: "completed jobs are not counted", fix: load(h(hs, "completed"), s1(units, "completed")), notice: "use hosted 0/12, bigdisk 0/4"},
+		{name: "completed jobs are not counted", fix: load(h(hs, "completed"), s1(units, "completed")), overflow: true, notice: "use hosted 0/12, bigdisk 0/4"},
 		{name: "a self-hosted job off bigdisk is not counted", fix: load(h(1, "in_progress"), repeatJob(units, selJob(4, "in_progress", time.Minute, "self-hosted", "ci-gate"))), overflow: true, notice: "bigdisk 0/4, bigdisk-docker 0/4"},
-		{name: "this run's own jobs are not counted", fix: load(repeatJob(hs, selJob(runID, "queued", time.Hour, hosted))), notice: "use hosted 0/12", notCall: "/runs/1000/jobs"},
+		{name: "this run's own jobs are not counted", fix: load(repeatJob(hs, selJob(runID, "queued", time.Hour, hosted))), overflow: true, notice: "use hosted 0/12", notCall: "/runs/1000/jobs"},
 		// One pool full: the other pool.
 		{name: "the hosted pool full", fix: hostedFull, overflow: true, notice: "the hosted pool is full (12 of 12); " + toDells},
 		{name: "bigdisk full", fix: load(h(11, "in_progress"), s1(units, "in_progress")), notice: "the self-hosted pool is full (bigdisk 4 of 4, bigdisk-docker 0 of 4); " + toHosted},
 		{name: "bigdisk-docker full", fix: load(h(11, "in_progress"), s2(units, "in_progress")), notice: "the self-hosted pool is full (bigdisk 0 of 4, bigdisk-docker 4 of 4)"},
-		// Both full: fewer queued wins, a tie goes hosted.
+		// Both full: fewer queued wins, a tie goes to the Dells.
 		{name: "both full, hosted more queued", fix: load(h(hs, "in_progress"), h(2, "queued"), s1(units, "in_progress"), s2(1, "queued")), overflow: true, notice: "both pools full: hosted 2 queued, self-hosted 1 queued; " + toDells},
 		{name: "both full, the Dells more queued", fix: load(h(hs, "in_progress"), h(1, "queued"), s1(units, "in_progress"), s1(1, "queued"), s2(2, "queued")), notice: "both pools full: hosted 1 queued, self-hosted 3 queued; " + toHosted},
-		{name: "both full, a tie goes hosted", fix: load(h(hs, "in_progress"), s1(units, "in_progress")), notice: "both pools full: hosted 0 queued, self-hosted 0 queued"},
+		{name: "both full, a tie goes to the Dells", fix: load(h(hs, "in_progress"), s1(units, "in_progress")), overflow: true, notice: "both pools full: hosted 0 queued, self-hosted 0 queued"},
 		// The limits.
 		{name: "CI_HOSTED_SHARE unset is 12", env: map[string]string{"HS": ""}, fix: hostedFull, overflow: true, warning: "CI_HOSTED_SHARE='' is unset, 0 or not a whole number; HS=12", notice: "the hosted pool is full (12 of 12)"},
 		{name: "CI_HOSTED_SHARE with a leading zero is decimal", env: map[string]string{"HS": "08"}, fix: load(h(8, "in_progress")), overflow: true, notice: "the hosted pool is full (8 of 8)"},
@@ -1240,7 +1320,7 @@ func TestRunnerSelect(t *testing.T) {
 		{name: "a run list over two pages", fix: paged, overflow: true, call: "page=2", notice: "the hosted pool is full"},
 		// v1.59: a listing short of its total_count is a lower bound, named in a
 		// ::notice, and the choice still uses it; only a failed call goes hosted.
-		{name: "a run list short of its total_count is a lower bound", fix: short, notice: "runs?status=in_progress: 100 of 150 entries); the counts are a lower bound", notice2: "use hosted 0/12, bigdisk 0/4, bigdisk-docker 0/4; " + toHosted},
+		{name: "a run list short of its total_count is a lower bound", fix: short, notice: "runs?status=in_progress: 100 of 150 entries); the counts are a lower bound", overflow: true, notice2: "use hosted 0/12, bigdisk 0/4, bigdisk-docker 0/4; " + toDells},
 		{name: "a short run list at the hosted share goes to the Dells", fix: shortRunsHostedFull, overflow: true, notice: "runs?status=in_progress: 1 of 2 entries", notice2: "the hosted pool is full (12 of 12); " + toDells},
 		{name: "a short job list at the hosted share goes to the Dells", fix: shortJobsHostedFull, overflow: true, notice: "runs/1/jobs?filter=latest: 12 of 17 entries", notice2: "the hosted pool is full (12 of 12); " + toDells},
 		{name: "a short run list below every limit still chooses", fix: shortRunsBelow, overflow: true, notice: "1 of 2 entries", notice2: "use hosted 3/12, bigdisk 0/4, bigdisk-docker 0/4; " + toDells},
