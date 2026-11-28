@@ -1,7 +1,7 @@
 # QuicBaaS FIPS 140-3 image: Go's GOFIPS140 for FIPS-validated cryptography.
 
 # Build arguments
-ARG GO_VERSION=1.27
+ARG GO_VERSION=1.27.4
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown

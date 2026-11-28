@@ -7,3 +7,4 @@ self-hosted-runner:
     - codex-task
     - claude
     - code-review
+    - qwen  # the opencode review host (runs-on of review-opencode in code-review.yml)

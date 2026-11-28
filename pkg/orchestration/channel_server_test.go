@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"runtime"
@@ -921,6 +922,55 @@ func TestChannelServer_StartAfterStop(t *testing.T) {
 
 	if !errors.Is(err, ErrChannelConnectionClosed) {
 		t.Errorf("error = %v, want ErrChannelConnectionClosed", err)
+	}
+}
+
+// debugRecordingLogger records Debug messages with their key/value args.
+type debugRecordingLogger struct {
+	channelTestLogger
+	mu     sync.Mutex
+	debugs []string
+}
+
+func (l *debugRecordingLogger) Debug(msg string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.debugs = append(l.debugs, fmt.Sprint(append([]any{msg}, args...)...))
+}
+
+func (l *debugRecordingLogger) entries() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.debugs...)
+}
+
+// TestChannelServer_Start_LogsSecondLoopError covers the read-loop-first
+// branch of Start: the reader hits EOF, Start returns the read loop's result,
+// and the second loop's exit error goes through logLoopExit. Neither loop
+// returns a non-nil error today, so the non-nil path is asserted on
+// logLoopExit directly.
+func TestChannelServer_Start_LogsSecondLoopError(t *testing.T) {
+	logger := &debugRecordingLogger{}
+	srv := NewChannelServer(ChannelServerConfig{}, strings.NewReader(""), io.Discard, logger)
+
+	if err := srv.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v, want the read loop's nil result", err)
+	}
+	for _, e := range logger.entries() {
+		if strings.Contains(e, "loop exited after") {
+			t.Fatalf("unexpected loop-exit debug entry for a nil error: %q", e)
+		}
+	}
+
+	drainErr := errors.New("write on closed pipe")
+	srv.logLoopExit("drain loop exited after read loop", drainErr)
+
+	entries := logger.entries()
+	if len(entries) != 1 {
+		t.Fatalf("debug entries = %v, want one drain loop entry", entries)
+	}
+	if !strings.Contains(entries[0], "drain loop") || !strings.Contains(entries[0], drainErr.Error()) {
+		t.Errorf("debug entry = %q, want it to name the drain loop and its error", entries[0])
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -44,6 +45,12 @@ const (
 	// overflowRunnerGate is ci-template v1.48's runs-on for CI Gate: the
 	// preflight `runner` output on github.com, and ci-gate elsewhere.
 	overflowRunnerGate = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') || 'ci-gate' }}`
+	// gateRunner is CI Gate's runs-on, preflight's accepted-event predicate
+	// with a fixed bigdisk array: on github.com the bigdisk pool for a push to
+	// main and a same-repository pull_request, the two events the Dells' job
+	// hook accepts (#2427), and ubuntu-latest for workflow_dispatch, schedule,
+	// pull_request_target, a fork's head and off github.com.
+	gateRunner = `${{ github.server_url == 'https://github.com' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
 	// preflightRunner is preflight's runs-on (ci-template v1.52): on
 	// github.com the Dells' bigdisk pool unless the repository variable
 	// CI_PREFLIGHT_RUNS_ON (runs-on JSON) overrides it, and off github.com
@@ -112,6 +119,77 @@ func waiverProblem(comment string) string {
 	return ""
 }
 
+// reviewOnlyLabels are the review runners' labels. Only code-review.yml's
+// review jobs run on them; no other job may take one, waiver or not.
+var reviewOnlyLabels = []string{"codex", "qwen"}
+
+// isReviewOnlyLabel reports whether l is a review runner's label; runner
+// labels match without regard to case.
+func isReviewOnlyLabel(l string) bool {
+	return slices.ContainsFunc(reviewOnlyLabels, func(r string) bool { return strings.EqualFold(r, l) })
+}
+
+// exprLiteral is a single- or double-quoted word inside a runs-on
+// expression, which catches a label given as a string literal or inside a
+// fromJSON array.
+var exprLiteral = regexp.MustCompile(`["']([A-Za-z0-9_.-]+)["']`)
+
+// runsOnLabels returns the labels a runs-on node names: the scalar's value
+// (for an expression, every quoted word in it, any of which the expression
+// can pick), each scalar in a sequence, or the labels value (scalar or
+// sequence) of a mapping.
+func runsOnLabels(n *yaml.Node) []string {
+	if n == nil {
+		return nil
+	}
+	switch n.Kind {
+	case yaml.ScalarNode:
+		if strings.Contains(n.Value, "${{") {
+			var out []string
+			for _, m := range exprLiteral.FindAllStringSubmatch(n.Value, -1) {
+				out = append(out, m[1])
+			}
+			return out
+		}
+		return []string{n.Value}
+	case yaml.SequenceNode:
+		var out []string
+		for _, c := range n.Content {
+			if c.Kind == yaml.ScalarNode {
+				out = append(out, c.Value)
+			}
+		}
+		return out
+	case yaml.MappingNode:
+		if l := mapValue(n, "labels"); l != nil && l.Kind != yaml.MappingNode {
+			return runsOnLabels(l)
+		}
+	}
+	return nil
+}
+
+// reviewLabelProblems reports every job of a workflow that runs on a
+// review-only label.
+func reviewLabelProblems(body []byte) []string {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(body, &doc); err != nil || len(doc.Content) == 0 {
+		return []string{"the workflow does not parse: " + errString(err)}
+	}
+	jobs := mapValue(doc.Content[0], "jobs")
+	if jobs == nil {
+		return nil
+	}
+	var problems []string
+	for i := 0; i+1 < len(jobs.Content); i += 2 {
+		for _, l := range runsOnLabels(mapValue(jobs.Content[i+1], "runs-on")) {
+			if isReviewOnlyLabel(l) {
+				problems = append(problems, "job "+jobs.Content[i].Value+" runs on the review-only label "+strconv.Quote(l))
+			}
+		}
+	}
+	return problems
+}
+
 // runnerProblems lists every ci.yml job whose runs-on breaks the runner
 // rule, given the workflow's text: a job runs on hostedRunner, on one of
 // ci-template v1.48's two runs-on expressions exactly (overflowRunnerDocker,
@@ -126,6 +204,11 @@ func runnerProblems(body []byte) []string {
 	var problems []string
 	for _, j := range jobs {
 		where := "job " + j.name
+		for _, l := range runsOnLabels(j.runsOn) {
+			if isReviewOnlyLabel(l) {
+				problems = append(problems, where+" runs on the review-only label "+strconv.Quote(l)+", which only code-review.yml may use")
+			}
+		}
 		switch {
 		case j.runsOn == nil:
 			problems = append(problems, where+" has no runs-on")
@@ -136,6 +219,7 @@ func runnerProblems(body []byte) []string {
 			}
 		case isOverflowRunner(j.runsOn.Value):
 		case j.name == "preflight" && j.runsOn.Value == preflightRunner:
+		case j.name == "ci-gate" && j.runsOn.Value == gateRunner:
 		case strings.Contains(j.runsOn.Value, "${{"):
 			problems = append(problems, where+" runs on an expression, which can pick a self-hosted label: "+strconv.Quote(j.runsOn.Value))
 		case j.runsOn.Value != hostedRunner:
@@ -184,7 +268,8 @@ func readCI(t *testing.T) []byte {
 
 // TestCIRunsHostedFirst holds the runner rule on ci.yml, and that no job
 // carries a self-hosted waiver today: every job runs on hostedRunner or on
-// one of ci-template v1.48's two hosted-first runs-on expressions.
+// one of ci-template v1.48's two hosted-first runs-on expressions, apart
+// from preflight on preflightRunner and ci-gate on gateRunner.
 func TestCIRunsHostedFirst(t *testing.T) {
 	body := readCI(t)
 	for _, p := range runnerProblems(body) {
@@ -196,7 +281,8 @@ func TestCIRunsHostedFirst(t *testing.T) {
 	}
 	for _, j := range jobs {
 		if j.runsOn != nil && j.runsOn.Value != hostedRunner && !isOverflowRunner(j.runsOn.Value) &&
-			(j.name != "preflight" || j.runsOn.Value != preflightRunner) {
+			(j.name != "preflight" || j.runsOn.Value != preflightRunner) &&
+			(j.name != "ci-gate" || j.runsOn.Value != gateRunner) {
 			t.Errorf("job %s runs on %q; no ci.yml job is waived off %s today", j.name, j.runsOn.Value, hostedRunner)
 		}
 	}
@@ -235,6 +321,10 @@ func TestRunnerProblems_Mutations(t *testing.T) {
 		{"a waiver with neither category nor reason", coverage("bigdisk  " + selfHostedWaiver), "names no category"},
 		{"a hardware waiver is allowed", coverage("gpu  " + selfHostedWaiver + "hardware: needs the GPU host"), ""},
 		{"an oversize waiver is allowed", coverage("bigdisk  " + selfHostedWaiver + "oversize: measured 40 GB of disk"), ""},
+		{"the codex review label with a waiver", coverage("codex  " + selfHostedWaiver + "hardware: x"), "review-only"},
+		{"the qwen review label with a waiver", coverage("qwen  " + selfHostedWaiver + "hardware: x"), "review-only"},
+		{"the codex review label in a list", coverage("[self-hosted, codex]"), "review-only"},
+		{"the codex review label in an expression", coverage("${{ github.server_url == 'https://github.com' && 'codex' || 'ubuntu-latest' }}"), "review-only"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			mutated := c.mutate(body)
@@ -242,6 +332,66 @@ func TestRunnerProblems_Mutations(t *testing.T) {
 				t.Fatal("the mutation changed nothing")
 			}
 			p := runnerProblems([]byte(mutated))
+			if c.want == "" {
+				if len(p) != 0 {
+					t.Fatalf("want no problem, got %v", p)
+				}
+				return
+			}
+			if !slices.ContainsFunc(p, func(s string) bool { return strings.Contains(s, c.want) }) {
+				t.Fatalf("want a problem containing %q, got %v", c.want, p)
+			}
+		})
+	}
+}
+
+// TestReviewRunnerLabelsStayInCodeReview holds the review runners' labels to
+// code-review.yml: no other workflow names codex or qwen in a runs-on.
+func TestReviewRunnerLabelsStayInCodeReview(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join(repoRoot, ".github", "workflows", "*.y*ml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no workflow files found")
+	}
+	for _, f := range files {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if filepath.Base(f) == "code-review.yml" {
+			// The review jobs run here: the gate must still see their labels.
+			p := reviewLabelProblems(body)
+			for _, l := range reviewOnlyLabels {
+				if !slices.ContainsFunc(p, func(s string) bool { return strings.HasSuffix(s, "label "+strconv.Quote(l)) }) {
+					t.Errorf("code-review.yml: the gate does not see the review label %q in any runs-on, got %v", l, p)
+				}
+			}
+			continue
+		}
+		if p := reviewLabelProblems(body); len(p) != 0 {
+			t.Errorf("%s: %v", filepath.Base(f), p)
+		}
+	}
+}
+
+func TestReviewLabelProblems_Mutations(t *testing.T) {
+	for _, c := range []struct {
+		name, runsOn, want string // want is "" when the runs-on is allowed
+	}{
+		{"a scalar review label", "codex", "job j runs on the review-only label \"codex\""},
+		{"a review label in a list", "[self-hosted, qwen]", "job j runs on the review-only label \"qwen\""},
+		{"a review label in a labels mapping", "{labels: [codex]}", "job j runs on the review-only label \"codex\""},
+		{"a hosted runner", "ubuntu-latest", ""},
+		{"a review label in an expression", "${{ github.server_url == 'https://github.com' && 'codex' || 'ubuntu-latest' }}", "job j runs on the review-only label \"codex\""},
+		{"a review label in a fromJSON array", "${{ fromJSON('[\"self-hosted\",\"qwen\"]') }}", "job j runs on the review-only label \"qwen\""},
+		{"a review label in another case", "Codex", "job j runs on the review-only label \"Codex\""},
+		{"an expression with no review label", preflightRunner, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			body := "on: push\njobs:\n  j:\n    runs-on: " + c.runsOn + "\n    steps:\n      - run: true\n"
+			p := reviewLabelProblems([]byte(body))
 			if c.want == "" {
 				if len(p) != 0 {
 					t.Fatalf("want no problem, got %v", p)
@@ -289,7 +439,7 @@ var jobRunners = map[string]string{
 	"image":          overflowRunnerDocker,
 	"lint-gates":     overflowRunnerDocker,
 	"integration":    overflowRunnerDocker,
-	"ci-gate":        overflowRunnerGate,
+	"ci-gate":        gateRunner,
 }
 
 // jobRunnerProblems lists each ci.yml job whose runs-on is not its jobRunners
@@ -757,6 +907,114 @@ func TestCIPreflightRunsOn(t *testing.T) {
 				t.Errorf("preflight runs on %s, want %s", got, c.want)
 			}
 		})
+	}
+}
+
+// gateRouteCases are the events CI Gate's routing is checked on. The Dells'
+// job hook (#2427) accepts only a push to main and a same-repository
+// pull_request, so only those two take bigdisk.
+var gateRouteCases = []struct {
+	name                     string
+	server, event, ref, head string
+	want                     string
+}{
+	{"github.com push to main", githubCom, "push", mainRef, "", bigdiskJSON},
+	{"github.com push to another branch", githubCom, "push", "refs/heads/feature", "", `"ubuntu-latest"`},
+	{"github.com dispatch on main", githubCom, "workflow_dispatch", mainRef, "", `"ubuntu-latest"`},
+	{"github.com schedule", githubCom, "schedule", mainRef, "", `"ubuntu-latest"`},
+	{"github.com same-repository pull request", githubCom, "pull_request", prRef, "o/r", bigdiskJSON},
+	{"github.com fork pull request", githubCom, "pull_request", prRef, "fork/r", `"ubuntu-latest"`},
+	{"github.com deleted fork pull request", githubCom, "pull_request", prRef, "", `"ubuntu-latest"`},
+	{"github.com same-repository pull_request_target", githubCom, "pull_request_target", mainRef, "o/r", `"ubuntu-latest"`},
+	{"github.com fork pull_request_target", githubCom, "pull_request_target", mainRef, "fork/r", `"ubuntu-latest"`},
+	{"off github.com, push to main", forge, "push", mainRef, "", `"ubuntu-latest"`},
+}
+
+// TestCIGateRunsOn evaluates CI Gate's runs-on for each event: bigdisk only
+// where the Dells' job hook accepts the event, ubuntu-latest everywhere else.
+func TestCIGateRunsOn(t *testing.T) {
+	runsOn := mapValue(ciJobNode(readCI(t), "ci-gate"), "runs-on")
+	if runsOn == nil || runsOn.Kind != yaml.ScalarNode {
+		t.Fatal("ci.yml's ci-gate job has no scalar runs-on")
+	}
+	for _, c := range gateRouteCases {
+		t.Run(c.name, func(t *testing.T) {
+			v, err := ghEval(runsOn.Value, ghContext(c.server, c.event, c.ref, c.head, ""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := json.Marshal(v); string(got) != c.want {
+				t.Errorf("CI Gate runs on %s, want %s", got, c.want)
+			}
+		})
+	}
+}
+
+// TestCIGateRunsWherePreflightDoes holds CI Gate's predicate to preflight's:
+// with the variable unset, the gate takes bigdisk exactly when preflight
+// does, so an edit to one predicate alone is caught.
+func TestCIGateRunsWherePreflightDoes(t *testing.T) {
+	body := readCI(t)
+	gate := mapValue(ciJobNode(body, "ci-gate"), "runs-on")
+	pre := mapValue(ciJobNode(body, "preflight"), "runs-on")
+	if gate == nil || gate.Kind != yaml.ScalarNode || pre == nil || pre.Kind != yaml.ScalarNode {
+		t.Fatal("ci.yml's ci-gate or preflight job has no scalar runs-on")
+	}
+	for _, c := range gateRouteCases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := ghContext(c.server, c.event, c.ref, c.head, "")
+			pv, err := ghEval(pre.Value, ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gv, err := ghEval(gate.Value, ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, _ := json.Marshal(pv)
+			g, _ := json.Marshal(gv)
+			want := `"ubuntu-latest"`
+			if string(p) == bigdiskJSON {
+				want = bigdiskJSON
+			}
+			if string(g) != want {
+				t.Errorf("CI Gate runs on %s while preflight runs on %s; want %s", g, p, want)
+			}
+		})
+	}
+}
+
+// TestCodeReviewJobsRunHosted keeps code-review.yml's scope and gate jobs on
+// ubuntu-latest. The workflow's only trigger is pull_request_target, which
+// the Dells' job hook refuses (#2427), so no bigdisk route can run there.
+func TestCodeReviewJobsRunHosted(t *testing.T) {
+	b, err := os.ReadFile(codeReviewWorkflowPath)
+	if err != nil {
+		t.Fatalf("read code-review.yml: %v", err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil || len(doc.Content) == 0 {
+		t.Fatalf("parse code-review.yml: %v", err)
+	}
+	on := mapValue(doc.Content[0], "on")
+	if on == nil || on.Kind != yaml.MappingNode || len(on.Content) != 2 || on.Content[0].Value != "pull_request_target" {
+		t.Fatal("code-review.yml's on: must have pull_request_target as its only trigger; " +
+			"a new trigger means the scope and gate routing must be reviewed against the events the Dells' job hook accepts")
+	}
+	for _, job := range []string{"scope", "gate"} {
+		runsOn := mapValue(mapValue(mapValue(doc.Content[0], "jobs"), job), "runs-on")
+		if runsOn == nil || runsOn.Kind != yaml.ScalarNode {
+			t.Fatalf("code-review.yml's %s job has no scalar runs-on", job)
+		}
+		for _, head := range []string{"o/r", "fork/r", ""} {
+			v, err := ghEval(runsOn.Value, ghContext(githubCom, "pull_request_target", mainRef, head, ""))
+			if err != nil {
+				t.Fatalf("%s, head %q: %v", job, head, err)
+			}
+			if got, _ := json.Marshal(v); string(got) != `"ubuntu-latest"` {
+				t.Errorf("code-review.yml's %s runs on %s for a pull_request_target with head %q, want \"ubuntu-latest\"", job, got, head)
+			}
+		}
 	}
 }
 

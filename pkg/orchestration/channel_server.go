@@ -214,24 +214,32 @@ func (s *ChannelServer) Start(ctx context.Context) error {
 	case err := <-readDone:
 		s.logger.Info("channel server read loop exited")
 		s.closeOnce()
-		<-drainDone
+		s.logLoopExit("drain loop exited after read loop", <-drainDone)
 		return err
 	case err := <-drainDone:
 		s.logger.Info("channel server drain loop exited")
 		s.closeOnce()
-		<-readDone
+		s.logLoopExit("read loop exited after drain loop", <-readDone)
 		return err
 	case <-ctx.Done():
 		s.logger.Info("channel server context canceled")
 		s.closeOnce()
-		<-readDone
-		<-drainDone
+		s.logLoopExit("read loop exited after context cancel", <-readDone)
+		s.logLoopExit("drain loop exited after context cancel", <-drainDone)
 		return &ChannelServerError{Message: "context canceled", Cause: ctx.Err()}
 	case <-s.done:
 		s.logger.Info("channel server stopped")
-		<-readDone
-		<-drainDone
+		s.logLoopExit("read loop exited after stop", <-readDone)
+		s.logLoopExit("drain loop exited after stop", <-drainDone)
 		return nil
+	}
+}
+
+// logLoopExit logs, at debug level, a non-nil exit error from a loop whose
+// result Start does not return.
+func (s *ChannelServer) logLoopExit(what string, err error) {
+	if err != nil {
+		s.logger.Debug("channel server: "+what, "error", err.Error())
 	}
 }
 

@@ -1,7 +1,7 @@
 # QuicBaaS production image: multi-stage build of a static binary.
 
 # Build arguments
-ARG GO_VERSION=1.27
+ARG GO_VERSION=1.27.4
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown

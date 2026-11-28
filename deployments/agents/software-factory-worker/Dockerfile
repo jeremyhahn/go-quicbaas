@@ -997,10 +997,10 @@ ARG SERENA_VERSION
 # SERENA_DEPENDENCY_FLOORS), no default for the same reason as every other
 # pin: a default is a second copy that drifts.
 #
-# `--overrides`, NOT `--with`. serena-agent 1.7.0 depends on urllib3==2.7.0
-# EXACTLY, and `--with` only ADDS a constraint alongside the package's own
-# declared dependencies -- uv then has two conflicting requirements on
-# urllib3 and refuses to resolve at all ("No solution found ... your
+# `--overrides`, NOT `--with`. serena-agent pins its dependencies EXACTLY
+# (2.1.0: filelock==3.25.2), and `--with` only ADDS a constraint alongside the
+# package's own declared dependencies -- uv then has two conflicting
+# requirements on that package and refuses to resolve at all ("No solution found ... your
 # requirements are unsatisfiable"). `--overrides <file>` REPLACES the
 # declared pin instead, which is the uv analogue of what the throwaway
 # module above does for gopls/gosec's go.mod requirements.

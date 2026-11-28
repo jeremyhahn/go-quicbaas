@@ -41,6 +41,27 @@ STATIC_LDFLAGS := $(LDFLAGS) -s -w -extldflags '-static'
 GOCMD ?= go
 GOBUILD := $(GOCMD) build
 GOTEST := $(GOCMD) test
+
+# Test CPU budget. go test -p runs TEST_P test binaries at once, and each one
+# otherwise takes the job's full GOMAXPROCS (and -parallel defaults to it), so
+# a job used about TEST_P times its CPU quota. The budget is the cgroup v2
+# quota (ceil(quota/period) from $(TEST_CPU_MAX_FILE), the cgroup v2 cpu.max),
+# else $GOMAXPROCS, else nproc, else 1; each binary gets budget/TEST_P CPUs,
+# never fewer than 1.
+# Override with TEST_CPU_BUDGET=<n> and TEST_P=<n>; TEST_CPU_MAX_FILE names
+# another cpu.max (tests).
+TEST_CPU_MAX_FILE ?= /sys/fs/cgroup/cpu.max
+TEST_P ?= 2
+ifeq ($(origin TEST_CPU_BUDGET),undefined)
+TEST_CPU_BUDGET := $(shell q=max; p=100000; \
+	if [ -r $(TEST_CPU_MAX_FILE) ]; then read q p < $(TEST_CPU_MAX_FILE); fi; \
+	if [ "$$q" != max ] && [ "$$p" -gt 0 ] 2>/dev/null; then echo $$(( (q + p - 1) / p )); \
+	elif [ -n "$$GOMAXPROCS" ]; then echo "$$GOMAXPROCS"; \
+	else nproc 2>/dev/null || echo 1; fi)
+endif
+TEST_BIN_CPUS := $(shell n=$$(( $(TEST_CPU_BUDGET) / $(TEST_P) )); [ $$n -ge 1 ] || n=1; echo $$n)
+TEST_CPU_ENV := GOMAXPROCS=$(TEST_BIN_CPUS)
+TEST_CPU_FLAGS := -p $(TEST_P) -parallel $(TEST_BIN_CPUS)
 GOGET := $(GOCMD) get
 GOMOD := $(GOCMD) mod
 GOFMT ?= gofmt
@@ -1358,7 +1379,7 @@ ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(TEST_TAGS)$(NC)"
 endif
 	@START_TIME=$$(date +%s); \
-	$(GOTEST) -v -p 2 -tags '$(TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/... ./internal/... ./scripts/... ./test/buildgates/...; \
+	$(TEST_CPU_ENV) $(GOTEST) -v $(TEST_CPU_FLAGS) -tags '$(TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/... ./internal/... ./scripts/... ./test/buildgates/...; \
 	TEST_RESULT=$$?; \
 	END_TIME=$$(date +%s); \
 	ELAPSED=$$((END_TIME - START_TIME)); \
@@ -1572,19 +1593,19 @@ check-build-tags: ## Fail if any //go:build CONSTRAINT is satisfied by no test p
 test-minimal: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with every tag that has a !tag side off (compiles the stub/no-op paths)
 	@echo "$(BLUE)Running unit tests with every disabled-side tag off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(MINIMAL_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/... ./internal/...
+	$(TEST_CPU_ENV) $(GOTEST) $(TEST_CPU_FLAGS) -tags '$(MINIMAL_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/... ./internal/...
 
 .PHONY: test-standard
 test-standard: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests in the build-standard configuration (REST on, AI features off)
 	@echo "$(BLUE)Running unit tests in the build-standard configuration...$(NC)"
 	@echo "$(YELLOW)Build tags: $(STANDARD_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(STANDARD_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/... ./internal/...
+	$(TEST_CPU_ENV) $(GOTEST) $(TEST_CPU_FLAGS) -tags '$(STANDARD_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/... ./internal/...
 
 .PHONY: test-lean
 test-lean: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with the transports on and the optional data-model features off
 	@echo "$(BLUE)Running unit tests with the transports on, data-model extras off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(LEAN_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/... ./internal/...
+	$(TEST_CPU_ENV) $(GOTEST) $(TEST_CPU_FLAGS) -tags '$(LEAN_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/... ./internal/...
 
 INTEROP_LEGS := oidc http3 grpc mcp
 
@@ -1599,13 +1620,18 @@ $(addprefix interop-test-,$(INTEROP_LEGS)): interop-test-%: ## Run one interop l
 .PHONY: test-tooling
 test-tooling: ## Run the unit tests of the repository tooling (scripts, build gates)
 	@echo "$(BLUE)Running the repository tooling unit tests...$(NC)"
-	$(GOTEST) -p 2 -tags '$(TEST_TAGS)' -timeout=10m ./scripts/... ./test/buildgates/...
+	$(TEST_CPU_ENV) $(GOTEST) $(TEST_CPU_FLAGS) -tags '$(TEST_TAGS)' -timeout=10m ./scripts/... ./test/buildgates/...
+
+.PHONY: test-awskms-retry
+test-awskms-retry: ## Run the AWS KMS sealing retry tests against a local fault-injecting endpoint (no AWS account needed)
+	@echo "$(BLUE)Running the AWS KMS retry tests...$(NC)"
+	$(TEST_CPU_ENV) $(GOTEST) $(TEST_CPU_FLAGS) -race -count=1 -tags 'awskms codec_json' -timeout=10m -run '^TestAWSKMSStrategy_RetryBehaviour$$' ./pkg/server/
 
 .PHONY: test-desktop
 test-desktop: check-insecure-tls check-build-tags check-local-keygen ## Run the Wails desktop binding tests (needs webkit2gtk dev libraries)
 	@echo "$(BLUE)Running desktop GUI binding tests...$(NC)"
 	@echo "$(YELLOW)Build tags: $(DESKTOP_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(DESKTOP_TEST_TAGS)' -timeout=10m ./cmd/...
+	$(TEST_CPU_ENV) $(GOTEST) $(TEST_CPU_FLAGS) -tags '$(DESKTOP_TEST_TAGS)' -timeout=10m ./cmd/...
 
 .PHONY: test-all-tags
 test-all-tags: test test-minimal test-standard test-lean test-desktop ## Run every test pass in the tag matrix
@@ -3571,7 +3597,7 @@ TAG_PASS_TIMEOUT ?= 20m
 # `make coverage` runs all three with a single shard. It runs the same
 # TEST_CHECKS validations as `make test` first, so replacing `make test` with
 # it keeps every check.
-COVERAGE_PASSES := test-sdk-go test-minimal test-standard test-lean test-tooling test-software-factory-worker
+COVERAGE_PASSES := test-sdk-go test-minimal test-standard test-lean test-tooling test-software-factory-worker test-awskms-retry
 
 # coverage_shard_profile is shard $(1)'s profile in a run of SHARDS shards.
 coverage_shard_profile = $(COVERAGE_DIR)/coverage-shard-$(1)-of-$(SHARDS).out
@@ -3588,7 +3614,7 @@ coverage-shard: ## Run shard SHARD of SHARDS of the -race unit run, writing cove
 	@$(call go_packages,-tags '$(TEST_TAGS)' $(COVER_PKGS),/proto$$); \
 	$(call shard_packages,-tags '$(TEST_TAGS)'); \
 	printf "$(BLUE)Coverage shard $(SHARD) of $(SHARDS): %s packages$(NC)\n" "$$(printf '%s\n' "$$pkgs" | wc -l)"; \
-	GOTOOLCHAIN=go$(GO_VERSION) CGO_ENABLED=1 $(GOTEST) -race -p 2 -timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=$(call coverage_shard_profile,$(SHARD)) $$pkgs
+	GOTOOLCHAIN=go$(GO_VERSION) CGO_ENABLED=1 $(TEST_CPU_ENV) $(GOTEST) -race $(TEST_CPU_FLAGS) -timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=$(call coverage_shard_profile,$(SHARD)) $$pkgs
 
 # The shards hold disjoint packages, so their profiles join by concatenation:
 # one mode line, then every shard's blocks. Every one of the SHARDS profiles
@@ -3917,7 +3943,7 @@ endif
 	# the package and took the whole target red. A budget exists to catch a
 	# hang, so it belongs well above the honest worst case rather than beside
 	# it. Do not buy headroom by trimming the package set: every package races.
-	CGO_ENABLED=1 $(GOCMD) test -race -p 2 $(BUILD_TAGS_ARG) -timeout=$(RACE_TIMEOUT) ./pkg/... ./cmd/... ./internal/... || \
+	CGO_ENABLED=1 $(TEST_CPU_ENV) $(GOCMD) test -race $(TEST_CPU_FLAGS) $(BUILD_TAGS_ARG) -timeout=$(RACE_TIMEOUT) ./pkg/... ./cmd/... ./internal/... || \
 		(echo "$(RED)Race detector found issues$(NC)" && exit 1)
 	@echo "$(GREEN)Race detector tests passed$(NC)"
 
@@ -4133,7 +4159,7 @@ test-worker-image: build-worker-image ## Build the worker image and run its prob
 # CI runs it through COVERAGE_PASSES.
 .PHONY: test-software-factory-worker
 test-software-factory-worker: ## Run the worker image package's unit tests (no container engine)
-	$(GOTEST) -v -timeout=5m ./$(WORKER_IMAGE_DIR)/...
+	$(TEST_CPU_ENV) $(GOTEST) -v $(TEST_CPU_FLAGS) -timeout=5m ./$(WORKER_IMAGE_DIR)/...
 
 # EVERY WORKER-IMAGE PIN IS KEPT AT ITS UPSTREAM'S LATEST RELEASE
 # (devops.md: track the latest). This fails when any pin in
@@ -5271,7 +5297,7 @@ bench-kvstore: ## Run kvstore package benchmarks
 test-sdk-go: ## Run Go SDK unit tests (excludes integration tests)
 	@echo "$(BLUE)Running Go SDK unit tests...$(NC)"
 	@cd sdk/go || exit 1; $(call go_packages,./...,/test/); \
-	CGO_ENABLED=1 go test -v -race -count=1 $$pkgs
+	CGO_ENABLED=1 $(TEST_CPU_ENV) go test -v -race -count=1 $(TEST_CPU_FLAGS) $$pkgs
 	@echo "$(GREEN)✓ Go SDK unit tests passed$(NC)"
 
 .PHONY: test-sdk-go-coverage

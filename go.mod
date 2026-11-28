@@ -8,7 +8,7 @@ exclude google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1
 require (
 	cloud.google.com/go/kms v1.36.0 // held: v1.36.1 released 2026-10-28, under 7 days old (#1704)
 	connectrpc.com/connect v1.21.1
-	github.com/aws/aws-sdk-go-v2 v1.47.5 // held: v1.48.0 also moves github.com/aws/aws-sdk-go-v2 and github.com/aws/smithy-go in sdk/go/go.mod (#2535)
+	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.12 // held: v1.33.13 released 2026-10-30, under 7 days old (#1704)
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.12 // held: v1.20.13 released 2026-10-30, under 7 days old (#1704)
 	github.com/aws/aws-sdk-go-v2/service/kms v1.62.1 // held: v1.62.2 released 2026-10-30, under 7 days old (#1704)
@@ -134,7 +134,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.39.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.6 // indirect
-	github.com/aws/smithy-go v1.28.7 // indirect
+	github.com/aws/smithy-go v1.28.9 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bep/debounce v1.2.1 // indirect

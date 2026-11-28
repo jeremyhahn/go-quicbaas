@@ -49,6 +49,7 @@ func (m *unixSocketModeModule) Name() string { return "quicbaas-unix-socket-mode
 
 // Start sets the socket's mode to 0660.
 func (m *unixSocketModeModule) Start(_ context.Context) error {
+	// #nosec G302 -- the unix socket is 0660 so local clients in the socket's group can connect
 	if err := os.Chmod(m.socket, nodeUnixSocketMode); err != nil {
 		return fmt.Errorf("set unix socket mode on %s: %w", m.socket, err)
 	}

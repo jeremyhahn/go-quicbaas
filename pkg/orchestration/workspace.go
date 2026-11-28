@@ -170,6 +170,7 @@ func (m *WorkspaceManager) Provision(tenantID, projectID string) (string, error)
 	projectDir := filepath.Dir(workspace)
 	tenantDir := filepath.Dir(projectDir)
 	for _, dir := range []string{tenantDir, projectDir, workspace} {
+		// #nosec G302 -- a directory needs the execute bit; 0700 is owner-only
 		if chErr := os.Chmod(dir, workspaceDirPerm); chErr != nil {
 			return "", &WorkspaceIOError{Op: "provision", Path: dir, Err: chErr}
 		}
