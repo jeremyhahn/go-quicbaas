@@ -23,8 +23,8 @@ import (
 )
 
 // iamTenantScopedTools are the IAM tools that read their target tenant from the
-// tenant_id argument. The argument is caller-supplied, so it is checked against
-// the caller's own tenant before the handler sees it.
+// tenant_id argument. The argument is caller-supplied, so it is resolved by
+// scopeIAMTenant before the handler sees it.
 var iamTenantScopedTools = map[string]struct{}{
 	"quicbaas_iam_user_create":     {},
 	"quicbaas_iam_user_get":        {},
@@ -51,31 +51,34 @@ var iamTenantScopedTools = map[string]struct{}{
 	"quicbaas_iam_audit_delete":    {},
 }
 
-// scopeIAMTenant applies the REST cross-tenant rule to an IAM tool call: the
-// tenant_id argument may name only the caller's own tenant (tenantctx.Target),
-// and an omitted one means the caller's tenant. It returns a copy of args
-// carrying the resolved tenant, leaving the caller's map untouched. Tools that
-// do not read tenant_id pass through unchanged.
-func scopeIAMTenant(ctx context.Context, name string, args map[string]interface{}) (map[string]interface{}, error) {
+// scopeIAMTenant applies the REST cross-tenant rule to an IAM tool call
+// (tenantctx.AdminTarget, as pkg/api/rest/tenant_target.go urlTenant does,
+// go-quicbaas#2741): a tenant caller's tenant_id may name only its own tenant,
+// an omitted one means the caller's tenant, a system-tenant caller acts in the
+// tenant it names, and a call with no tenant bound is refused. It returns the
+// context with the resolved tenant bound, which the tool call must run with,
+// and a copy of args carrying the resolved tenant, leaving the caller's map
+// untouched. Tools that do not read tenant_id pass through unchanged.
+func scopeIAMTenant(ctx context.Context, name string, args map[string]interface{}) (context.Context, map[string]interface{}, error) {
 	if _, scoped := iamTenantScopedTools[name]; !scoped {
-		return args, nil
+		return ctx, args, nil
 	}
-	tenantID, err := tenantctx.Target(ctx, "mcp.iam", getString(args, "tenant_id"))
+	ctx, tenantID, err := tenantctx.AdminTarget(ctx, "mcp.iam", getString(args, "tenant_id"))
 	if err != nil {
-		return nil, err
+		return ctx, nil, err
 	}
 	scopedArgs := make(map[string]interface{}, len(args)+1)
 	for k, v := range args {
 		scopedArgs[k] = v
 	}
 	scopedArgs["tenant_id"] = tenantID
-	return scopedArgs, nil
+	return ctx, scopedArgs, nil
 }
 
 // executeIAMTool routes IAM tool execution to the appropriate handler.
 // This is called from the main ExecuteTool switch statement.
 func (r *ToolRegistry) executeIAMTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
-	args, err := scopeIAMTenant(ctx, name, args)
+	ctx, args, err := scopeIAMTenant(ctx, name, args)
 	if err != nil {
 		return nil, err
 	}
