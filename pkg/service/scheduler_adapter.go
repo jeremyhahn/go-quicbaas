@@ -169,7 +169,7 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 	if err := schedulerRefuseReservedHandler("UpdateJob", req.Handler); err != nil {
 		return nil, err
 	}
-	if req.Handler != "" || len(req.Payload) > 0 {
+	if req.Handler != "" || len(req.Payload) > 0 || (tenantID != "" && !req.ExecuteAt.IsZero()) {
 		current, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
 		if err != nil {
 			return nil, err
@@ -319,6 +319,13 @@ func (a *SchedulerAdapter) TriggerJob(ctx context.Context, req *TriggerScheduler
 	// Enforce tenant access on the returned job
 	if err := schedulerTenantEnforceAccess(tenantID, job.TargetTenantID, "TriggerJob"); err != nil {
 		return nil, err
+	}
+
+	// The KMS service runs a grace job at the deadline it set; a tenant
+	// cannot run it early, as UpdateJob cannot change its run time.
+	if tenantID != "" && job.Handler == schedulerServiceInternalHandler && time.Now().Before(job.ExecuteAt) {
+		return nil, NewError(errors.ErrForbidden, "scheduler.TriggerJob",
+			"a service-managed job cannot be triggered by a tenant before its run time")
 	}
 
 	if err := a.scheduler.TriggerJob(ctx, req.JobID, tenantID); err != nil {
@@ -560,9 +567,11 @@ func (a *SchedulerAdapter) GetCompletedGracePeriodVersions(ctx context.Context, 
 		Limit:   100,
 	}
 	// A tenant's grace jobs are filed in its own namespace (see RotateKey).
-	if tenantID, ok := tenantctx.Lookup(ctx); ok {
-		query.OwnerID = schedulerEngineTenant(tenantID)
+	ownerID, err := schedulerTenantResolveID(ctx, "grace_period.completed", "")
+	if err != nil {
+		return nil, err
 	}
+	query.OwnerID = ownerID
 
 	jobs, _, err := a.scheduler.ListJobsWithCursor(ctx, query)
 	if err != nil {

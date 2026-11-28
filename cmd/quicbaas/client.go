@@ -202,6 +202,9 @@ func buildSDKClientOptionsWithToken(authToken string) ([]quicbaas.Option, error)
 // buildTLSConfig creates a TLS configuration from CLI flags.
 // If no explicit CA cert is provided, it attempts to auto-discover the CA
 // certificate from the server's data directory (data-dir/certs/ca-chain.crt).
+// A client certificate pair (--tls-cert/--tls-key) is loaded with or without
+// a CA file; without one, RootCAs stays nil and the system roots verify the
+// server.
 func buildTLSConfig() (*tls.Config, error) {
 	caFile := tlsCA
 
@@ -213,27 +216,27 @@ func buildTLSConfig() (*tls.Config, error) {
 		}
 	}
 
-	// No CA cert available - return nil to let the SDK use system defaults
-	if caFile == "" {
+	// No CA file and no client identity: the SDK verifies the server against the system roots.
+	if caFile == "" && (tlsCert == "" || tlsKey == "") {
 		return nil, nil
 	}
 
-	// Load CA certificate pool
-	caCert, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, errors.Wrapf(err, errors.ErrConfiguration, "buildTLSConfig",
-			"failed to read CA certificate")
-	}
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS13}
 
-	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM(caCert) {
-		return nil, errors.New(errors.ErrConfiguration, "buildTLSConfig",
-			"failed to parse CA certificate")
-	}
+	// Without a CA file RootCAs stays nil, which means the system roots.
+	if caFile != "" {
+		caCert, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, errors.Wrapf(err, errors.ErrConfiguration, "buildTLSConfig",
+				"failed to read CA certificate")
+		}
 
-	tlsCfg := &tls.Config{
-		RootCAs:    caCertPool,
-		MinVersion: tls.VersionTLS13,
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, errors.New(errors.ErrConfiguration, "buildTLSConfig",
+				"failed to parse CA certificate")
+		}
+		tlsCfg.RootCAs = caCertPool
 	}
 
 	// Load client certificate if both cert and key are provided (mTLS)

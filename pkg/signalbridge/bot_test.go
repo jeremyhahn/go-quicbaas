@@ -383,6 +383,37 @@ func TestBot_ExactlyOnceWatermark(t *testing.T) {
 	}
 }
 
+// A failed session stream stops the forwarder, even with the channel left
+// open, and nothing is sent to the attached conversation.
+func TestBot_ForwardLoopStopsOnStreamError(t *testing.T) {
+	bot, signal, _, mgr := newTestBot(t)
+	_ = mgr.Attach("c", "sess-X", ConversationDM, OperatorIdentity{TenantID: "t", SubjectID: "bot"})
+
+	ch := make(chan *orchestratorSDK.SessionEventEnvelope, 1)
+	ch <- &orchestratorSDK.SessionEventEnvelope{SessionID: "sess-X", Err: errors.New("boom")}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	bot.wg.Add(1)
+	go func() {
+		defer close(done)
+		bot.forwardLoop(ctx, "sess-X", ch)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("forwardLoop did not stop after a stream error")
+	}
+
+	signal.mu.Lock()
+	defer signal.mu.Unlock()
+	if len(signal.sends) != 0 {
+		t.Fatalf("a stream error must not be forwarded; got %d sends", len(signal.sends))
+	}
+}
+
 // TestNewOrchestratorBot_Errors rejects missing required fields.
 func TestNewOrchestratorBot_Errors(t *testing.T) {
 	if _, err := NewOrchestratorBot(BotConfigRuntime{}); err == nil {

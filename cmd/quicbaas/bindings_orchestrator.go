@@ -18,8 +18,6 @@ package main
 import (
 	"context"
 
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
-
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -557,7 +555,11 @@ func (b *OrchestratorBinding) SubscribeJobEvents(req *orchestratorSDK.SubscribeJ
 				if !ok {
 					return
 				}
-				wailsRuntime.EventsEmit(b.ctx, "job-event", map[string]interface{}{
+				if event.Err != nil {
+					emitGUIEvent(b.ctx, "job-event", map[string]interface{}{"job_id": event.JobID, "error": event.Err.Error()})
+					return
+				}
+				emitGUIEvent(b.ctx, "job-event", map[string]interface{}{
 					"job_id":    event.JobID,
 					"type":      event.Type,
 					"state":     event.State,

@@ -377,15 +377,15 @@ func TestOrchestratorGRPC_Spawn_Success(t *testing.T) {
 
 func TestOrchestratorGRPC_ListWorkflows_PagesAndFilters(t *testing.T) {
 	agentSvc := &grpcTestAgentService{listWorkflows: []*orchestration.WorkflowDefinition{
-		{Name: "alpha", Mode: orchestration.WorkflowModeCanned, ProjectID: "p1"},
+		{Name: "alpha", Mode: orchestration.WorkflowModeConstrained, ProjectID: "p1"},
 		{Name: "beta", Mode: orchestration.WorkflowModeAutonomous, ProjectID: "p2"},
-		{Name: "gamma", Mode: orchestration.WorkflowModeCanned, ProjectID: "p1"},
+		{Name: "gamma", Mode: orchestration.WorkflowModeConstrained, ProjectID: "p1"},
 	}}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
 	resp, err := server.ListWorkflows(tenantctx.WithSystem(context.Background()), &pb.OrchestratorListWorkflowsRequest{
 		ProjectId: "p1",
-		Mode:      string(orchestration.WorkflowModeCanned),
+		Mode:      string(orchestration.WorkflowModeConstrained),
 		Limit:     1,
 		Offset:    1,
 		Sort:      "name:desc",
@@ -414,7 +414,7 @@ func TestWorkflowDefinitionToProto_PreservesFullRESTShape(t *testing.T) {
 		ProjectID:   "project-a",
 		Name:        "full-workflow",
 		Description: "full workflow",
-		Mode:        orchestration.WorkflowModeCanned,
+		Mode:        orchestration.WorkflowModeConstrained,
 		Agents: []orchestration.AgentRoleSpec{{
 			Role:            "lead",
 			Backend:         "ollama",

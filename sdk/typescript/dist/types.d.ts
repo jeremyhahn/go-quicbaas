@@ -568,7 +568,7 @@ export interface FileLock {
 }
 export type CommunicationTopology = 'hub_and_spoke' | 'hybrid' | 'peer_to_peer';
 export type WorkspaceIsolation = 'shared' | 'worktree';
-export type WorkflowMode = 'canned' | 'constrained' | 'autonomous';
+export type WorkflowMode = 'constrained' | 'autonomous';
 export interface AgentRoleSpec {
     role: string;
     backend: string;

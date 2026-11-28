@@ -65,7 +65,7 @@
   // Step 1 — Basics
   let wfName        = $state('');
   let wfDescription = $state('');
-  let wfMode        = $state<WorkflowMode>('canned');
+  let wfMode        = $state<WorkflowMode>('constrained');
 
   // Step 2 — Agents
   interface AgentForm extends Omit<AgentRoleSpec, 'env'> {
@@ -158,7 +158,7 @@
     currentStep = 0;
     wfName        = def.name ?? '';
     wfDescription = def.description ?? '';
-    wfMode        = (def.mode as WorkflowMode) ?? 'canned';
+    wfMode        = (def.mode as WorkflowMode) ?? 'constrained';
     // Agents
     agentForms = (def.agents ?? []).map((spec) => {
       const envRows = Object.entries(spec.env ?? {}).map(([key, value]) => ({ key, value }));
@@ -421,7 +421,7 @@
 
   function step2Valid(): boolean {
     if (agentForms.length === 0) return false;
-    if (wfMode === 'canned' || wfMode === 'constrained') {
+    if (wfMode === 'constrained') {
       return agentForms.some((af) => af.role.trim() === 'lead');
     }
     return true;
@@ -429,8 +429,8 @@
 
   function step2Error(): string {
     if (agentForms.length === 0) return 'Add at least one agent.';
-    if ((wfMode === 'canned' || wfMode === 'constrained') && !agentForms.some((af) => af.role.trim() === 'lead')) {
-      return 'Canned and constrained modes require exactly one agent with role="lead".';
+    if (wfMode === 'constrained' && !agentForms.some((af) => af.role.trim() === 'lead')) {
+      return 'Constrained mode requires exactly one agent with role="lead".';
     }
     return '';
   }
@@ -779,11 +779,8 @@
           <legend class="text-sm font-medium mb-3">
             Mode <span class="text-error">*</span>
           </legend>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             {#each [
-              { value: 'canned' as WorkflowMode,
-                title: 'Canned',
-                desc: 'Runs a fully predetermined workflow with fixed steps. Lead agent required.' },
               { value: 'constrained' as WorkflowMode,
                 title: 'Constrained',
                 desc: 'Lead agent decomposes tasks within defined roles and capabilities. Lead agent required.' },

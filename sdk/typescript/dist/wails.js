@@ -647,6 +647,21 @@ class WailsOrchestratorClient {
                 r?.();
             }
         });
+        // The binding ends a failed stream with one event on
+        // "session-event:<sessionID>:error" carrying {session_id, error}. It
+        // wakes the generator, which delivers the events already queued and
+        // then rejects, so the consumer learns the stream is gone.
+        let streamError = null;
+        const unsubError = window.runtime.EventsOn(`${eventTopic}:error`, (...args) => {
+            const payload = (args[0] ?? {});
+            const detail = typeof payload.error === 'string' && payload.error !== ''
+                ? payload.error
+                : 'the session event stream failed';
+            streamError = new ConnectionError(`session ${req.session_id}: ${detail}`);
+            const r = wakeResolve;
+            wakeResolve = null;
+            r?.();
+        });
         try {
             while (true) {
                 if (req.signal?.aborted)
@@ -655,6 +670,8 @@ class WailsOrchestratorClient {
                     yield queue.shift();
                     continue;
                 }
+                if (streamError)
+                    throw streamError;
                 // Wait until the next event arrives or the signal fires.
                 await new Promise((resolve) => {
                     wakeResolve = resolve;
@@ -671,6 +688,7 @@ class WailsOrchestratorClient {
         }
         finally {
             unsub();
+            unsubError();
         }
     }
     // inference delegates to OrchestratorBinding.Inference via Wails IPC.

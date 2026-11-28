@@ -14,6 +14,8 @@
 package embedded
 
 import (
+	stderrors "errors"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,6 +87,10 @@ func TestErrRecvOnClosedStream(t *testing.T) {
 		msg := ErrRecvOnClosedStream.Error()
 		assert.Contains(t, msg, "cannot receive on closed stream")
 		assert.Contains(t, msg, "CONNECTION")
+	})
+
+	t.Run("ends a stream like io.EOF", func(t *testing.T) {
+		assert.True(t, stderrors.Is(ErrRecvOnClosedStream, io.EOF))
 	})
 }
 

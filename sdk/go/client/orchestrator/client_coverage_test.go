@@ -7,6 +7,7 @@ package orchestrator
 
 import (
 	"context"
+	"io"
 	"testing"
 	"time"
 
@@ -1155,7 +1156,7 @@ func TestSubscribeSessionEvents_HappyPath(t *testing.T) {
 	ms := &mockStream{
 		recvFn: func() (interface{}, error) {
 			if idx >= len(envelopes) {
-				return nil, errors.NewInternal("mock", "stream ended")
+				return nil, io.EOF
 			}
 			e := envelopes[idx]
 			idx++
@@ -1214,7 +1215,7 @@ func TestSubscribeSessionEvents_WrongMessageTypeSkipped(t *testing.T) {
 	ms := &mockStream{
 		recvFn: func() (interface{}, error) {
 			if idx >= len(msgs) {
-				return nil, errors.NewInternal("mock", "end")
+				return nil, io.EOF
 			}
 			m := msgs[idx]
 			idx++
@@ -1314,7 +1315,7 @@ func TestSubscribeJobEvents_WrongMessageTypeSkipped(t *testing.T) {
 	ms := &mockStream{
 		recvFn: func() (interface{}, error) {
 			if idx >= len(msgs) {
-				return nil, errors.NewInternal("mock", "end")
+				return nil, io.EOF
 			}
 			m := msgs[idx]
 			idx++

@@ -124,7 +124,23 @@ func (wl *WorkflowLoader) fill(defs []*WorkflowDefinition) {
 		if def == nil || def.Name == "" || def.TenantID == "" {
 			continue
 		}
+		migrateStoredWorkflowMode(def)
 		wl.store(def.TenantID, def)
+	}
+}
+
+// legacyWorkflowModeCanned is the mode name ruling 189 deleted. A definition
+// stored before the deletion still carries it.
+const legacyWorkflowModeCanned WorkflowMode = "canned"
+
+// migrateStoredWorkflowMode moves a stored definition off the deleted canned
+// mode. Canned always ran as constrained (the same role and backend
+// restrictions, the same lead requirement), so it becomes constrained: a
+// definition read from storage keeps the execution restrictions it was
+// written with, on a fresh job and on a resumed one.
+func migrateStoredWorkflowMode(def *WorkflowDefinition) {
+	if def.Mode == legacyWorkflowModeCanned {
+		def.Mode = WorkflowModeConstrained
 	}
 }
 
@@ -146,6 +162,7 @@ func (wl *WorkflowLoader) Rehydrate(ctx context.Context, tenantID string) (int, 
 		if def == nil || def.Name == "" {
 			continue
 		}
+		migrateStoredWorkflowMode(def)
 		wl.store(tenantID, def)
 	}
 	return len(defs), nil

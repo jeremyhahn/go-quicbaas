@@ -59,6 +59,11 @@ const (
 	// find it. A tenant job lives in the tenant's own namespace, which the
 	// platform scan of SystemJobsPrefix never reaches; one entry per job,
 	// "<prefix><tenantID>/<jobID>", with the tenant ID as its value. The
+	// value is a membership marker, never a summary of the job: the store
+	// has no atomic multi-key write, so a summary written beside the record
+	// could go stale (a backfill snapshot landing after a requeue, a failed
+	// record write whose cleanup also failed) and hide a pending job. The
+	// due scan reads every indexed record, and the record decides. The
 	// index lives in the reserved namespace, so a tenant cannot enumerate
 	// other tenants' jobs through it.
 	TenantJobIndexPrefix = "__sys:scheduler/tenant-jobs/"
@@ -466,7 +471,18 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	// Scan system jobs prefix for pending jobs
 	dueJobs := make([]*scheduler.Job, 0)
 
-	err := s.kv.Scan(ctx, SystemJobsPrefix, func(key string, value []byte) error {
+	visit := func(key string, value []byte) error {
+		// Keep only job records: the marker must open a namespace segment
+		// ("__sys:" or "t:{tenant}:") and be followed by a decimal job ID,
+		// so execution records and a tenant's own keys are skipped.
+		i := strings.LastIndex(key, jobKeyMarker)
+		if i <= 0 || key[i-1] != ':' {
+			return nil
+		}
+		if _, err := strconv.ParseUint(key[i+len(jobKeyMarker):], 10, 64); err != nil {
+			return nil
+		}
+
 		var job scheduler.Job
 		if err := json.Unmarshal(value, &job); err != nil {
 			// Skip malformed entries
@@ -481,9 +497,9 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 		}
 
 		return nil
-	})
+	}
 
-	if err != nil && !errors.Is(err, ErrLimitReached) {
+	if err := s.kv.Scan(ctx, SystemJobsPrefix, visit); err != nil && !errors.Is(err, ErrLimitReached) {
 		return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.scan", Cause: err}
 	}
 	if len(dueJobs) >= limit {
@@ -498,7 +514,7 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 		tenantID string
 	}
 	var refs []tenantJobRef
-	err = s.kv.Scan(ctx, TenantJobIndexPrefix, func(key string, value []byte) error {
+	err := s.kv.Scan(ctx, TenantJobIndexPrefix, func(key string, value []byte) error {
 		id, ok := parseTenantJobIndexKey(key)
 		if !ok || len(value) == 0 {
 			return nil
@@ -555,9 +571,8 @@ func (s *Storage) SaveExecution(ctx context.Context, exec *scheduler.JobExecutio
 		return &scheduler.ErrStorageError{Op: "SaveExecution.marshal", Cause: err}
 	}
 
-	// A tenant-owned job's executions live in that tenant's keyspace, where
-	// GetExecutions reads tenant history; system and delegated runs stay in
-	// the system keyspace.
+	// The execution is stored in its job's namespace ("" is the system
+	// keyspace), where GetExecutions reads the job's history.
 	key := keyForExecution(exec, exec.TenantID)
 
 	if err := s.kv.Put(ctx, key, data); err != nil {
@@ -614,7 +629,8 @@ func (s *Storage) GetExecutions(ctx context.Context, jobID uint64, tenantID stri
 // CreateJob would overwrite it.
 //
 // It is also where the store opens, so it reconciles the tenant-job index
-// (backfillTenantJobIndex) before the first due scan; a reconcile that fails stops the engine from starting for the same reason.
+// (backfillTenantJobIndex) before the first due scan; a reconcile that fails
+// stops the engine from starting for the same reason.
 func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 	if err := s.ids.initialize(ctx); err != nil {
 		return err

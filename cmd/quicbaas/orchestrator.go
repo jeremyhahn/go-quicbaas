@@ -1921,6 +1921,11 @@ func runOrchRun(cmd *cobra.Command, args []string) error {
 				eventCh = nil
 				continue
 			}
+			if evt.Err != nil {
+				fmt.Fprintf(os.Stderr, "Event stream ended: %v (continuing with polling)\n", evt.Err)
+				eventCh = nil
+				continue
+			}
 			// Filter display based on verbosity setting.
 			// The audit trail always captures everything; this only controls display.
 			show := false

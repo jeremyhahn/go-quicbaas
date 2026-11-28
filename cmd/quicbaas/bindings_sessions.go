@@ -347,6 +347,9 @@ func (b *SessionBinding) releaseSubscription(sessionID string, sub *sessionSubsc
 // to the Wails frontend. When the channel closes or ctx fires, the
 // subscription is removed from the registry — but only if the registry
 // still holds sub, so a replaced forwarder never tears down its successor.
+// emitGUIEvent is wailsRuntime.EventsEmit; tests replace it.
+var emitGUIEvent = wailsRuntime.EventsEmit
+
 func (b *SessionBinding) forwardEvents(ctx context.Context, sessionID string, sub *sessionSubscription, topic string, events <-chan *orchestratorSDK.SessionEventEnvelope) {
 	defer b.releaseSubscription(sessionID, sub)
 	for {
@@ -360,7 +363,11 @@ func (b *SessionBinding) forwardEvents(ctx context.Context, sessionID string, su
 			if env == nil {
 				continue
 			}
-			wailsRuntime.EventsEmit(b.ctx, topic, env)
+			if env.Err != nil {
+				emitGUIEvent(b.ctx, topic+":error", map[string]string{"session_id": sessionID, "error": env.Err.Error()})
+				return
+			}
+			emitGUIEvent(b.ctx, topic, env)
 		}
 	}
 }

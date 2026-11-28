@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -177,6 +178,84 @@ func TestSubscribeSessionEvents_REST_ServerErrorEventSurfacesAsError(t *testing.
 	}
 	if !strings.Contains(recvErr.Error(), "boom") {
 		t.Errorf("expected error to carry server message, got: %v", recvErr)
+	}
+}
+
+// drainRESTSessionEvents reads ch until it closes; a hang fails the test.
+func drainRESTSessionEvents(t *testing.T, ch <-chan *orchestrator.SessionEventEnvelope) []*orchestrator.SessionEventEnvelope {
+	t.Helper()
+	var got []*orchestrator.SessionEventEnvelope
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case env, ok := <-ch:
+			if !ok {
+				return got
+			}
+			got = append(got, env)
+		case <-timeout:
+			t.Fatalf("channel did not close; got %d values", len(got))
+		}
+	}
+}
+
+// An SSE error event after a delivered event reaches the subscriber channel
+// as a final value carrying Err, instead of closing it like a finished stream.
+func TestSubscribeSessionEvents_REST_ClientChannelCarriesStreamError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		writeTestSSEEvent(w, 1, "prompt_submitted", map[string]interface{}{"kind": "prompt_submitted"})
+		fmt.Fprint(w, "event: error\ndata: subscribe failed: boom\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	defer tr.Close()
+
+	ch, err := orchestrator.NewClient(tr).SubscribeSessionEvents(context.Background(),
+		&orchestrator.SubscribeSessionEventsRequest{SessionID: "s1", Follow: true})
+	if err != nil {
+		t.Fatalf("SubscribeSessionEvents: %v", err)
+	}
+	got := drainRESTSessionEvents(t, ch)
+	if len(got) != 2 {
+		t.Fatalf("got %d values, want the event then the error", len(got))
+	}
+	if got[0].Err != nil || got[0].Sequence != 1 {
+		t.Fatalf("first value = %+v, want the event", got[0])
+	}
+	if got[1].Err == nil || !strings.Contains(got[1].Err.Error(), "boom") {
+		t.Fatalf("last value Err = %v, want one containing %q", got[1].Err, "boom")
+	}
+}
+
+// A stream the server finishes ends the channel with no Err value.
+func TestSubscribeSessionEvents_REST_ClientChannelCleanEnd(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		writeTestSSEEvent(w, 1, "prompt_submitted", map[string]interface{}{"kind": "prompt_submitted"})
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	defer tr.Close()
+
+	ch, err := orchestrator.NewClient(tr).SubscribeSessionEvents(context.Background(),
+		&orchestrator.SubscribeSessionEventsRequest{SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("SubscribeSessionEvents: %v", err)
+	}
+	got := drainRESTSessionEvents(t, ch)
+	if len(got) != 1 {
+		t.Fatalf("got %d values, want one event", len(got))
+	}
+	if got[0].Err != nil {
+		t.Fatalf("clean end delivered Err = %v", got[0].Err)
 	}
 }
 

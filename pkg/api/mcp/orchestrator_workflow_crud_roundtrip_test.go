@@ -54,12 +54,12 @@ func (s *workflowCRUDService) DeleteWorkflow(ctx context.Context, name string) e
 	return s.loader.Delete(orchestration.TenantFromContext(ctx), name)
 }
 
-// sdkWorkflow is a valid canned workflow as an SDK caller writes it.
+// sdkWorkflow is a valid constrained workflow as an SDK caller writes it.
 func sdkWorkflow(name, description string) *orchestrator.WorkflowDefinition {
 	return &orchestrator.WorkflowDefinition{
 		Name:        name,
 		Description: description,
-		Mode:        orchestrator.WorkflowModeCanned,
+		Mode:        orchestrator.WorkflowModeConstrained,
 		Agents:      []orchestrator.AgentRoleSpec{{Role: "lead", Backend: "claude", Model: "opus"}},
 		Settings:    orchestrator.WorkflowSettings{MaxIterations: 3},
 	}
@@ -71,7 +71,7 @@ func storeWorkflow(t *testing.T, svc *workflowCRUDService, name string) {
 	require.NoError(t, svc.loader.Register("t1", &orchestration.WorkflowDefinition{
 		Name:        name,
 		Description: "stored",
-		Mode:        orchestration.WorkflowModeCanned,
+		Mode:        orchestration.WorkflowModeConstrained,
 		Agents:      []orchestration.AgentRoleSpec{{Role: "lead", Backend: "claude", Model: "opus"}},
 	}))
 }
@@ -92,7 +92,7 @@ func TestWorkflowCRUD_CreateWorkflow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "build", wf.Name)
 	require.Equal(t, "build it", wf.Description)
-	require.Equal(t, orchestrator.WorkflowModeCanned, wf.Mode)
+	require.Equal(t, orchestrator.WorkflowModeConstrained, wf.Mode)
 	require.Equal(t, 3, wf.Settings.MaxIterations)
 
 	stored, err := svc.loader.Get("t1", "build")
@@ -221,7 +221,7 @@ func TestWorkflowCRUD_ToolsRejectMissingArguments(t *testing.T) {
 	}
 
 	_, err := reg.ExecuteTool(ctx, "quicbaas_orchestrator_create_workflow", map[string]interface{}{
-		"definition": map[string]interface{}{"mode": "canned"},
+		"definition": map[string]interface{}{"mode": "constrained"},
 	})
 	require.Error(t, err, "a definition with no name and no name argument must be refused")
 
@@ -244,7 +244,7 @@ func TestWorkflowCRUD_ToolsRefuseRetiredSystemPrompt(t *testing.T) {
 			"tenant_id": "t1",
 			"name":      "build",
 			"definition": map[string]interface{}{
-				"name": "build", "mode": "canned", "description": "retired",
+				"name": "build", "mode": "constrained", "description": "retired",
 				"agents": []interface{}{map[string]interface{}{
 					"role": "lead", "backend": "claude", "system_prompt": "be careful",
 				}},

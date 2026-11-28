@@ -1901,6 +1901,41 @@ func TestRunOrchRunWithEventStreaming(t *testing.T) {
 		assert.Greater(t, pollCount, 0)
 	})
 
+	t.Run("EventStreamErrorFallsBackToPolling", func(t *testing.T) {
+		// The channel stays open: the Err value alone must end the stream.
+		eventCh := make(chan *orchestratorSDK.JobEvent, 1)
+		eventCh <- &orchestratorSDK.JobEvent{
+			JobID: "job_evt_err",
+			Err:   errors.New(errors.ErrUnavailable, "stream", "stream reset"),
+		}
+
+		mock := &mockOrchestratorClient{
+			startJobFn: func(ctx context.Context, req *orchestratorSDK.StartJobRequest) (*orchestratorSDK.StartJobResponse, error) {
+				return &orchestratorSDK.StartJobResponse{JobID: "job_evt_err"}, nil
+			},
+			subscribeJobEventsFn: func(ctx context.Context, req *orchestratorSDK.SubscribeJobEventsRequest) (<-chan *orchestratorSDK.JobEvent, error) {
+				return eventCh, nil
+			},
+			getJobStatusFn: func(ctx context.Context, req *orchestratorSDK.GetJobStatusRequest) (*orchestratorSDK.JobStatus, error) {
+				return &orchestratorSDK.JobStatus{
+					JobID:     "job_evt_err",
+					State:     "completed",
+					TaskCount: 1,
+					Completed: 1,
+				}, nil
+			},
+		}
+		setMockOrchestratorFactory(mock)
+		cmd := newOrchRunCommand()
+		require.NoError(t, cmd.Flags().Set("poll-interval", "50ms"))
+		var err error
+		stderr := captureStderr(t, func() {
+			err = cmd.RunE(cmd, []string{"test event stream error"})
+		})
+		assert.NoError(t, err)
+		assert.Contains(t, stderr, "stream reset")
+	})
+
 	t.Run("EventStreamingUnavailableFallsBackToPolling", func(t *testing.T) {
 		pollCount := 0
 		mock := &mockOrchestratorClient{

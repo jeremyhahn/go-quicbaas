@@ -68,7 +68,7 @@ var notCarriedOverGRPC = map[string]bool{
 }
 
 func orchestratorReachCases() map[string]reachCase {
-	def := &orchestratorclient.WorkflowDefinition{Name: "w1", Mode: orchestratorclient.WorkflowModeCanned}
+	def := &orchestratorclient.WorkflowDefinition{Name: "w1", Mode: orchestratorclient.WorkflowModeConstrained}
 	return map[string]reachCase{
 		"AttentionList":          {req: &orchestratorclient.AttentionListRequest{}, rpc: "/ListAttention"},
 		"AttentionResolve":       {req: &orchestratorclient.AttentionResolveRequest{}, rpc: "/ResolveAttention"},

@@ -92,6 +92,43 @@ func TestDecodeMCPSessionHistory(t *testing.T) {
 	}
 }
 
+// TestDecodeMCPSessionHistory_NextSeqPassesThrough pins that the MCP decoder
+// carries the server's next_seq through unchanged: 0 ends the history, any
+// other value names the next sequence to fetch.
+func TestDecodeMCPSessionHistory_NextSeqPassesThrough(t *testing.T) {
+	cases := []struct {
+		name    string
+		nextSeq string
+		want    uint64
+	}{
+		{name: "end of history", nextSeq: "0", want: 0},
+		{name: "more to fetch", nextSeq: "43", want: 43},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := `{"session_id":"sess-1","tenant_id":"tenant-1","next_seq":` + tc.nextSeq + `,"events":[` +
+				`{"sequence":42,"session_id":"sess-1","tenant_id":"tenant-1",` +
+				`"timestamp":"2026-03-16T12:00:00Z","kind":"turn_completed",` +
+				`"turn_completed":{"turn_id":"turn-1","stop_reason":"end_turn"}}]}`
+
+			result, err := decodeMCPSessionHistory([]byte(raw))
+			if err != nil {
+				t.Fatalf("decodeMCPSessionHistory: %v", err)
+			}
+			resp, ok := result.(*orchestrator.GetSessionHistoryResponse)
+			if !ok {
+				t.Fatalf("result type = %T", result)
+			}
+			if len(resp.Events) != 1 {
+				t.Fatalf("decoded %d events, want 1", len(resp.Events))
+			}
+			if uint64(resp.NextSeq) != tc.want {
+				t.Fatalf("NextSeq = %d, want %d", resp.NextSeq, tc.want)
+			}
+		})
+	}
+}
+
 // TestDecodeMCPSessionHistory_Malformed asserts undecodable input is a typed
 // error rather than an empty page, which a caller would read as "the session
 // has nothing to say".

@@ -183,9 +183,8 @@ func (r *reviewRunnerRig) jobAs(jobID string, pullRequest int) *orchestration.Jo
 			Params: ReviewJobSubject{PullRequest: pullRequest}.Params(),
 		},
 		Project: project,
-		Agents:  r.agents,
+		Agents:  withLifecyclePolicy(r.agents, guard),
 		Logger:  logger.NewAdapter(base),
-		Policy:  &orchestration.JobLifecyclePolicy{Guard: guard},
 		AuditFn: func(eventType, details string) {
 			r.auditMu.Lock()
 			r.audits = append(r.audits, orchestration.JobAuditEvent{Type: eventType, Details: details})

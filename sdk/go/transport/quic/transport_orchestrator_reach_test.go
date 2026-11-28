@@ -51,7 +51,7 @@ func clientMethods() []string {
 var notCarriedOverREST = map[string]bool{"InferenceStream": true, "SubscribeJobEvents": true, "GetSessionHistory": true}
 
 func orchestratorReachCases() map[string]reachCase {
-	def := &orchestratorclient.WorkflowDefinition{Name: "w1", Mode: orchestratorclient.WorkflowModeCanned}
+	def := &orchestratorclient.WorkflowDefinition{Name: "w1", Mode: orchestratorclient.WorkflowModeConstrained}
 	return map[string]reachCase{
 		"AttentionList":          {req: &orchestratorclient.AttentionListRequest{}, route: "GET /api/v1/orchestrator/attention"},
 		"AttentionResolve":       {req: &orchestratorclient.AttentionResolveRequest{TaskID: "t1"}, route: "POST /api/v1/orchestrator/attention/t1/resolve"},

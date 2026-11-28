@@ -260,10 +260,6 @@ func TestWorkflowDefinition_Validate(t *testing.T) {
 			},
 		},
 		{
-			name: "canned with lead",
-			def:  WorkflowDefinition{Name: "test", Mode: WorkflowModeCanned, Agents: []AgentRoleSpec{lead, worker}},
-		},
-		{
 			name: "constrained with NumCtx",
 			def: WorkflowDefinition{
 				Name: "ollama-workflow", Mode: WorkflowModeConstrained,
@@ -290,9 +286,9 @@ func TestWorkflowDefinition_Validate(t *testing.T) {
 			wantField: "agents",
 		},
 		{
-			name:      "canned without lead",
-			def:       WorkflowDefinition{Name: "test", Mode: WorkflowModeCanned, Agents: []AgentRoleSpec{worker}},
-			wantField: "agents",
+			name:      "canned is not a mode",
+			def:       WorkflowDefinition{Name: "test", Mode: WorkflowMode("canned"), Agents: []AgentRoleSpec{lead, worker}},
+			wantField: "mode",
 		},
 		{
 			name: "invalid settings",

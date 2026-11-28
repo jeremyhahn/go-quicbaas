@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SessionEventEnvelope, SubscribeSessionEventsRequest } from '../src/types.js';
 import { WailsClient } from '../src/wails.js';
+import { ConnectionError } from '../src/errors.js';
 
 // ---------------------------------------------------------------------------
 // Window / Wails stub setup
@@ -187,7 +188,8 @@ describe('WailsOrchestratorClient.subscribeSession', () => {
     // Use an object wrapper to avoid TypeScript narrowing busCallback to null
     // across the async boundary.
     const captured: { cb: EventCallback | null } = { cb: null };
-    stub.runtime.EventsOn.mockImplementation((_topic: string, cb: EventCallback) => {
+    stub.runtime.EventsOn.mockImplementation((topic: string, cb: EventCallback) => {
+      if (topic !== 'session-event:sess-push') return () => {};
       captured.cb = cb;
       return () => { captured.cb = null; };
     });
@@ -235,6 +237,69 @@ describe('WailsOrchestratorClient.subscribeSession', () => {
     // The unsub function must eventually be called when the generator exits.
     await new Promise((r) => setTimeout(r, 0));
     expect(unsubCalled).toBe(true);
+  });
+
+  it('rejects after the queued events when the binding emits the stream error topic', async () => {
+    stub.go.main.SessionBinding.Subscribe.mockResolvedValue([]);
+
+    const listeners = new Map<string, EventCallback>();
+    const unsubscribed: string[] = [];
+    stub.runtime.EventsOn.mockImplementation((topic: string, cb: EventCallback) => {
+      listeners.set(topic, cb);
+      return () => { unsubscribed.push(topic); };
+    });
+
+    const req: SubscribeSessionEventsRequest = { session_id: 'sess-broken', follow: true };
+    const received: SessionEventEnvelope[] = [];
+    // The consumer is written the way sessionStore is: for await with a catch.
+    const consumed = (async () => {
+      try {
+        for await (const ev of client.orchestrator.subscribeSession(req)) {
+          received.push(ev);
+        }
+        return null;
+      } catch (err: unknown) {
+        return err;
+      }
+    })();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(listeners.has('session-event:sess-broken:error')).toBe(true);
+    listeners.get('session-event:sess-broken')?.({
+      session_id: 'sess-broken',
+      sequence: 4,
+      payload_json: { kind: 'output' },
+      timestamp: new Date().toISOString(),
+    });
+    listeners.get('session-event:sess-broken:error')?.({
+      session_id: 'sess-broken',
+      error: 'stream reset by peer',
+    });
+
+    const err = await consumed;
+    expect(err).toBeInstanceOf(ConnectionError);
+    expect((err as Error).message).toContain('stream reset by peer');
+    expect(received.map((e) => e.sequence)).toEqual([4]);
+    expect(unsubscribed.sort()).toEqual([
+      'session-event:sess-broken',
+      'session-event:sess-broken:error',
+    ]);
+  });
+
+  it('rejects with a generic message when the error event carries no text', async () => {
+    stub.go.main.SessionBinding.Subscribe.mockResolvedValue([]);
+    const listeners = new Map<string, EventCallback>();
+    stub.runtime.EventsOn.mockImplementation((topic: string, cb: EventCallback) => {
+      listeners.set(topic, cb);
+      return () => {};
+    });
+
+    const iter = client.orchestrator.subscribeSession({ session_id: 's2', follow: true })[Symbol.asyncIterator]();
+    const next = iter.next();
+    await new Promise((r) => setTimeout(r, 0));
+    listeners.get('session-event:s2:error')?.();
+
+    await expect(next).rejects.toThrow('the session event stream failed');
   });
 });
 

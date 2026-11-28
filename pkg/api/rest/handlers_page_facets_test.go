@@ -415,14 +415,14 @@ func TestListWorkflows_NarrowsOnProjectAndMode(t *testing.T) {
 	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 	agentSvc.listWorkflows = []*orchestration.WorkflowDefinition{
-		{Name: "alpha", Mode: orchestration.WorkflowModeCanned, ProjectID: "proj-a"},
+		{Name: "alpha", Mode: orchestration.WorkflowModeConstrained, ProjectID: "proj-a"},
 		{Name: "beta", Mode: orchestration.WorkflowModeAutonomous, ProjectID: "proj-a"},
-		{Name: "gamma", Mode: orchestration.WorkflowModeCanned, ProjectID: "proj-b"},
+		{Name: "gamma", Mode: orchestration.WorkflowModeConstrained, ProjectID: "proj-b"},
 	}
 
 	w := httptest.NewRecorder()
 	server.HandleOrchestratorListWorkflows(w,
-		orchReq(http.MethodGet, "/api/v1/orchestrator/workflows?tenant_id=acme&project_id=proj-a&mode=canned", nil, nil))
+		orchReq(http.MethodGet, "/api/v1/orchestrator/workflows?tenant_id=acme&project_id=proj-a&mode=constrained", nil, nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())

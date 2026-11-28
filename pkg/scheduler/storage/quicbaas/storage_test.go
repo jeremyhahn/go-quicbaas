@@ -86,14 +86,19 @@ func (m *mockKVStore) Scan(_ context.Context, prefix string, fn func(key string,
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	for k, v := range m.data {
+	keys := make([]string, 0, len(m.data))
+	for k := range m.data {
 		if strings.HasPrefix(k, prefix) {
-			if err := fn(k, v); err != nil {
-				if err == ErrLimitReached {
-					return nil
-				}
-				return err
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if err := fn(k, m.data[k]); err != nil {
+			if err == ErrLimitReached {
+				return nil
 			}
+			return err
 		}
 	}
 	return nil
