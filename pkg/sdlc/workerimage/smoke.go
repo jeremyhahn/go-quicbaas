@@ -56,11 +56,13 @@ type SmokeRequest struct {
 	Backend string
 	Model   string
 
-	// Image is the candidate's reference.
+	// Image is the candidate's local image ID: content-addressed, so an
+	// engine that does not hold the build cannot pull a substitute.
 	Image string
 
-	// Host pins the session to the host whose engine holds the candidate.
-	// Empty lets the orchestrator place it.
+	// Host pins the session to the host whose engine should hold the
+	// candidate; the spawn fails there if it does not. Empty lets the
+	// orchestrator place it.
 	Host string
 }
 

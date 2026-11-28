@@ -269,9 +269,10 @@ type Server struct {
 
 	// Backup manager - handles backup and restore operations
 	backupManager *backup.BackupManager
-	// backupStorage provides the interfaces.Storage needed by the backup manager.
-	// Created during startBackupManager and closed during stopBackupManager.
-	backupStorage *backupStorageAdapter
+	// backupStorage is the backup manager's data store: the embedded qrdb
+	// node's live platform-shard keyspace. Created during startBackupManager
+	// and cleared during stopBackupManager.
+	backupStorage *backupLiveStorage
 
 	// Object storage catalog components
 	catalogManager catalog.CatalogManager
@@ -412,10 +413,6 @@ type Server struct {
 	// started by startOrchestration and stopped at shutdown.
 	orchSweeps *orchestrationSweeps
 
-	// orchContainerReaper is the orchestrator's sandbox-container reaper
-	// goroutine, started with the container runtime and stopped at shutdown.
-	orchContainerReaper *orchestrationSweeps
-
 	// orchWorkspaceSweep is the periodic sweep of concluded tasks' session
 	// workspaces, stopped at shutdown.
 	orchWorkspaceSweep *orchestrationSweeps
@@ -433,10 +430,10 @@ type Server struct {
 	// when the node has a container engine; see lifecycle_sdlc_worker_image.go.
 	sdlcWorkerImage *sdlcWorkerImageLoop
 
-	// orchContainerRuntime is the container engine the orchestration service
-	// spawns sandboxed sessions on, nil on a node without docker or podman.
-	// The worker image refresh builds on the same engine, so the image it
-	// builds is the image this node's workers run.
+	// orchContainerRuntime is the engine the worker image refresh builds,
+	// tags and pushes images on. It is nil on a node without docker or podman
+	// or with the refresh disabled. No session runs on it: sessions run in
+	// containers only on the co-located fleet node agent.
 	orchContainerRuntime *orchestration.ExecContainerRuntime
 
 	// gitProvisioner is the managed-workspace git path wireProjectWorkspaces
@@ -1360,7 +1357,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		// Stop the job sweep before the stores it reads leases and tasks
 		// from go away.
 		s.stopOrchestrationSweeps()
-		s.stopContainerReaper()
 		s.stopWorkspaceSweep()
 
 		// Nothing starts new jobs from here on, so the running ones can be
@@ -2055,6 +2051,19 @@ func (s *Server) GetQRDBAdminServicer() qrdbsdk.AdminServicer {
 		return nil
 	}
 	return svcs.Admin
+}
+
+// GetQRDBBackupServicer returns the embedded qrdb node's backup service, or nil when the node is absent.
+func (s *Server) GetQRDBBackupServicer() qrdbservice.BackupServicer {
+	node := s.getQRDBNode()
+	if node == nil {
+		return nil
+	}
+	svcs := node.Services()
+	if svcs == nil {
+		return nil
+	}
+	return svcs.Backup
 }
 
 // GetQRDBUserServicer returns the qrdb user.UserServicer exposed by the

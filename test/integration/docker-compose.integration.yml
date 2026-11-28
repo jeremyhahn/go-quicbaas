@@ -305,7 +305,7 @@ services:
         echo \"Ollama enabled: $${QUICBAAS_TEST_OLLAMA:-0}  |  Ollama test tags: $$RAG_TAGS  |  Ollama URL: $${OLLAMA_URL:-unset}\" &&
         echo 'Test configuration:' &&
         echo '  - Sequential execution (-p 1) to prevent connection storms' &&
-        echo '  - Per package: go test -timeout 10m, killed at 11m (run_packages.sh)' &&
+        echo '  - Per package: go test -timeout 10m, killed at 11m; iam, cli and cluster 30m, killed at 31m (run_packages.sh)' &&
         echo '' &&
         : > /test-results/integration-test.log &&
         OVERALL_EXIT=0 &&

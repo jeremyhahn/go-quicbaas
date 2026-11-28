@@ -148,9 +148,11 @@ Recovery is layered so that each failure heals at the lowest layer that can:
 
 ## Container runtime
 
-`pkg/containerruntime` is the stack's one container runtime: the
+`internal/containerruntime` is the stack's one container runtime: the
 `PodmanManager` lifecycle model, attestor hooks, exec, attach and pty, and
-per-container metrics, with their tests. It was moved from go-trusted-platform
+per-container metrics, with their tests. It is internal to this module and is
+not a public API: no exported package, SDK, CLI flag or configuration value
+exposes it. It was moved from go-trusted-platform
 `pkg/compute/podman` with its history (design:
 [trusted service plane: container runtime](../service-plane/architecture.md#container-runtime)).
 
@@ -158,10 +160,19 @@ per-container metrics, with their tests. It was moved from go-trusted-platform
   daemon, never in `quicbaasd`. `quicbaasd` stays `CGO_ENABLED=0`, and
   `TestDaemonNeverLinksContainerRuntime` fails if the daemon links the
   package.
-- **Its job wiring comes later.** Only the agent's container init entry
-  point imports it today; the node daemon and the embedded node still launch
-  containers through `ExecContainerRuntime` in `pkg/orchestration`, which is
-  removed once the agent runs jobs through this package.
+- **The agent runs jobs through it.** `containerruntime.JobRuntime` serves
+  `orchestration.ContainerRuntime` in-process. The agent's `main` registers
+  it through `internal/inprocessruntime`; `pkg/fleet` never imports the
+  runtime, because `quicbaasd` links `pkg/fleet`. No
+  `--container-runtime` value selects it yet. `auto` never takes it: it
+  probes Docker, then Podman, through `ExecContainerRuntime` (removed in a
+  later slice of row #1682), because the in-process runtime has no container
+  networking and no seccomp or AppArmor confinement yet. Its state lives under
+  `<work-dir>/containers`, and the work-dir lock keeps a second agent off
+  that directory.
+- **FIPS is unaffected.** `TestFIPSModuleUnaffectedByTheRuntime` re-executes
+  a cgo binary that links the runtime with `GODEBUG=fips140=on` and checks
+  that the Go-native module is enabled.
 - **Everything runs in-process.** runc `libcontainer` creates, starts,
   signals and destroys containers; `go.podman.io/image/v5` pulls images,
   honouring the signature policy and digest pins; `go.podman.io/storage`
@@ -172,6 +183,10 @@ per-container metrics, with their tests. It was moved from go-trusted-platform
   `ErrRuntimeRequiresLinuxCgo`. The agent builds also pass the tags
   `containers_image_openpgp exclude_graphdriver_btrfs` (`CONTAINER_LIB_TAGS`
   in the Makefile).
+- **An exec is always killable.** Each exec runs in its own cgroup v2
+  sub-cgroup, so cancelling it kills every process it started, even after its
+  leader exits. A host without the unified hierarchy or cgroup.kill (Linux
+  before 5.14) refuses exec with `ErrExecNotKillable`.
 - **The agent is its own container init.** libcontainer re-executes the
   agent as `quicbaas init` with `_LIBCONTAINER_INITPIPE` set, and the agent's
   `main` calls `containerruntime.RunContainerInit` before anything else. The
