@@ -14,12 +14,12 @@ Code that another layer owns today moves here with its history and tests,
 through a path-filtered history merge, and is wired here before the copy it
 replaces is removed. Code that belongs to a lower layer moves there and is
 consumed through `sdk/go`. Package names are this repo's:
-`pkg/containerruntime`, `pkg/ociregistry`, and the Verifier in `pkg/service`.
+`internal/containerruntime`, `pkg/ociregistry`, and the Verifier in `pkg/service`.
 
 ## Container runtime
 
 The row `container-runtime` provides one container runtime,
-`pkg/containerruntime`. It is moved in from go-trusted-platform
+`internal/containerruntime`, internal to this module and not a public API. It is moved in from go-trusted-platform
 `pkg/compute/podman`. The parts already built are described in
 [agent-fleet: Container runtime](../agent-fleet/architecture.md#container-runtime).
 

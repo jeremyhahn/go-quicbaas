@@ -2494,6 +2494,11 @@ func (f *failOnSetStorage96) Set(key, value []byte) error {
 	return &testOpError{Op: "set", Message: "simulated set failure"}
 }
 
+// SetWithContext fails the same way: restore writes through the context-aware path.
+func (f *failOnSetStorage96) SetWithContext(_ context.Context, key, value []byte) error {
+	return f.Set(key, value)
+}
+
 // TestClose_WithWorkDir tests Close when the work directory cleanup
 // happens (line 1022).
 func TestClose_WithWorkDir(t *testing.T) {
