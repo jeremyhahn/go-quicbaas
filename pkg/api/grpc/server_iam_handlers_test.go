@@ -673,6 +673,7 @@ func TestIAMServer_UpdateUser_Success(t *testing.T) {
 
 	svc.On("UpdateUser", mock.Anything, mock.AnythingOfType("*iam.User")).
 		Return(&iam.User{ID: 30001, TenantID: "t1", Email: "updated@test.com"}, nil)
+	srv.SetRoleAuthorizer(allowAllRoleAuthorizer{})
 
 	resp, err := srv.UpdateUser(callerContext("t1"), &iampb.UpdateUserRequest{
 		TenantId:   "t1",

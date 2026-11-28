@@ -745,7 +745,8 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	//                                    target tenant, as REST and embedded
 	//                                    do) / audit:read;
 	//   delegated-admin assignments   -> roles:read / list / assign / unassign;
-	//   permission checks             -> permissions:resolve.
+	//   permission checks             -> permissions:resolve;
+	//   federation, gdpr and policies -> exactly their REST route's grant.
 	"quicbaas_iam_user_create":      {"users", "create"},
 	"quicbaas_iam_user_get":         {"users", "read"},
 	"quicbaas_iam_user_list":        {"users", "list"},
@@ -790,6 +791,35 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_iam_app_update":        {"tenants", "update"},
 	"quicbaas_iam_app_rotate_secret": {"tenants", "update"},
 	"quicbaas_iam_app_delete":        {"tenants", "delete"},
+
+	// Federation provider and account-link, gdpr and policy tools. By owner
+	// ruling each takes exactly its REST route's grant
+	// (pkg/api/rest/routes_permissions_generated.go), nothing wider. The
+	// federated login handshake and the erasure processing and export
+	// generation tools stay dead (authz_qrdb_unmapped.go), and so do the gdpr
+	// export-status, deletion-cancel and deletion-status tools: their handlers
+	// look the record up by ID with no tenant check.
+	"quicbaas_iam_federation_createprovider": {"tenants", "create"},
+	"quicbaas_iam_federation_getprovider":    {"tenants", "read"},
+	"quicbaas_iam_federation_listproviders":  {"tenants", "read"},
+	"quicbaas_iam_federation_updateprovider": {"tenants", "create"},
+	"quicbaas_iam_federation_deleteprovider": {"tenants", "delete"},
+	"quicbaas_iam_federation_linkaccount":    {"tenants", "create"},
+	"quicbaas_iam_federation_getuserlinks":   {"tenants", "read"},
+	"quicbaas_iam_federation_unlinkaccount":  {"tenants", "delete"},
+	"quicbaas_iam_gdpr_consent_grant":        {"tenants", "create"},
+	"quicbaas_iam_gdpr_consent_withdraw":     {"tenants", "create"},
+	"quicbaas_iam_gdpr_consent_get":          {"tenants", "read"},
+	"quicbaas_iam_gdpr_consent_list":         {"tenants", "read"},
+	"quicbaas_iam_gdpr_export_request":       {"tenants", "create"},
+	"quicbaas_iam_gdpr_deletion_request":     {"tenants", "create"},
+	"quicbaas_iam_policy_create":             {"tenants", "create"},
+	"quicbaas_iam_policy_get":                {"tenants", "read"},
+	"quicbaas_iam_policy_list":               {"tenants", "read"},
+	"quicbaas_iam_policy_update":             {"tenants", "create"},
+	"quicbaas_iam_policy_delete":             {"tenants", "delete"},
+	"quicbaas_iam_policy_test":               {"tenants", "create"},
+	"quicbaas_iam_policy_validate":           {"tenants", "create"},
 
 	"quicbaas_iam_session_get":             {"users", "read"},
 	"quicbaas_iam_session_list":            {"users", "read"},

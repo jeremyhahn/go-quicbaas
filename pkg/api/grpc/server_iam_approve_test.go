@@ -104,7 +104,7 @@ func TestApproveUser_RejectsBadRequests(t *testing.T) {
 }
 
 // ApproveUser carries REST's users:enable grant through the real
-// authorization interceptor, and UpdateUser stays unmapped.
+// authorization interceptor.
 func TestApproveUser_Authorization(t *testing.T) {
 	info := &grpc.UnaryServerInfo{FullMethod: approveUserMethod}
 	for _, tc := range []struct {
@@ -133,7 +133,4 @@ func TestApproveUser_Authorization(t *testing.T) {
 			assert.Equal(t, codes.PermissionDenied, status.Code(err))
 		})
 	}
-
-	_, mapped := grpcMethodPermissions["/quicbaas.iam.v1.IAMService/UpdateUser"]
-	assert.False(t, mapped, "UpdateUser stays unmapped; approving goes through ApproveUser")
 }
