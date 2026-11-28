@@ -1,7 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// The server's QUIC listener speaks qrdb's frame protocol, not REST over
+// This SDK reaches QUIC only through WebTransport over HTTP/3
+// (draft-ietf-webtrans-http3-16), which the server does not accept yet, and
+// the server's QUIC listener speaks qrdb's frame protocol, not REST over
 // HTTP/3, so the QUIC transport refuses every family it exposes. A refusal
 // must never reach the network: a REST request aimed at the QUIC endpoint would
 // fail against the real listener or silently ride TCP HTTP while claiming QUIC.
@@ -69,8 +71,9 @@ describe('createClient — quic', () => {
 // The remaining families. Orchestration, cost and worker image have no QUIC
 // route on the server at all (go-quicbaas#819); auth, barrier, ceremony,
 // bootstrap and the connection itself sit behind qrdb's frame protocol, which
-// this SDK does not speak. Every method is enumerated from the prototype so a
-// verb added later cannot slip in as a bare stub.
+// this SDK does not speak. Every reason names WebTransport over HTTP/3 as the
+// adopted path. Every method is enumerated from the prototype so a verb added
+// later cannot slip in as a bare stub.
 
 // refusalOf runs one verb to completion, draining it when it is a stream, and
 // returns what it threw.
@@ -132,6 +135,7 @@ describe('QuicClient — every other family refuses with a typed reason', () => 
         // A paged listing answers through its unpaged sibling.
         expect(refusal.method).toBe(verb.replace(/Page$/, ''));
         expect(refusal.reason).toContain(tc.reason);
+        expect(refusal.reason).toContain('WebTransport');
         expect(refusal.message).toContain(`quic transport does not carry ${tc.family}.`);
       }
       expect(fetchMock).not.toHaveBeenCalled();
