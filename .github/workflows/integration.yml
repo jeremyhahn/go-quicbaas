@@ -2,25 +2,9 @@
 name: Integration
 
 on:
-  # Gitea has no API to re-run a finished run (ci-template v1.3).
+  # Dispatch only. ci.yml's integration job covers pull requests and pushes
+  # to main; a push or pull_request trigger here ran the same suite twice.
   workflow_dispatch:
-  # `labeled`, so adding `ci:full` starts a full-tier run.
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, labeled]
-  push:
-    # main is the only trunk.
-    branches: [main]
-    paths:
-      - 'pkg/**'
-      - 'cmd/**'
-      - 'sdk/**'
-      - 'test/integration/**'
-      - '**/Dockerfile*'
-      - 'Makefile'
-      - 'go.mod'
-      - 'go.sum'
-      - '.github/workflows/integration.yml'
 
 permissions:
   contents: read
