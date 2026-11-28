@@ -1,5 +1,4 @@
-# GPU override for agent integration tests.
-# Applied automatically when NVIDIA GPU is detected.
+# GPU override for the agent integration tests.
 
 services:
   ollama:

@@ -249,11 +249,6 @@ func (s *Server) startEmbeddedFleetNode() error {
 		return &ServerCauseError{Message: "embedded agent: invalid sandbox security policy", Cause: securityErr}
 	}
 
-	backends, buildErr := buildEmbeddedFleetNodeBackends(cfg.Backends, cfg.OllamaURL, sandboxNetwork, sandboxSecurity, mcpResolver, log)
-	if buildErr != nil {
-		return buildErr
-	}
-
 	// Resolve the sandbox policy (how SandboxModeDefault is interpreted and
 	// whether an explicit Required is honored). Empty maps to opt-in.
 	sandboxPolicy, policyErr := orchestration.ParseSandboxPolicy(cfg.SandboxPolicy)
@@ -261,26 +256,32 @@ func (s *Server) startEmbeddedFleetNode() error {
 		return &ServerCauseError{Message: "embedded agent: invalid sandbox_policy", Cause: policyErr}
 	}
 
-	// Wire a container runtime when sandboxed sessions are reachable under the
-	// policy (preferred/required) or an explicit sandbox image is configured.
-	// The runtime lets the ACP backend's sandboxed spawn paths launch an
-	// interactive fleet node container; without it a Required spawn fails closed.
-	imageMap := buildEmbeddedFleetNodeImageMap(cfg)
-	var containerRuntime orchestration.ContainerRuntime
-	if sandboxPolicy != orchestration.SandboxPolicyOptIn || len(imageMap) > 0 {
-		rt, rtBuildErr := orchestration.NewExecContainerRuntime(log)
-		if rtBuildErr != nil {
-			log.Warnf("Embedded agent: container runtime unavailable; sandboxed sessions will fail: %v", rtBuildErr)
-		} else {
-			containerRuntime = rt
-			if cfg.AutoPull {
-				for backendName, image := range imageMap {
-					if pullErr := rt.Pull(context.Background(), image); pullErr != nil {
-						log.Warnf("Embedded agent: pre-pull of sandbox image %q (backend %s) failed: %v", image, backendName, pullErr)
-					}
-				}
+	// quicbaasd builds no container runtime (row #1682): containers run in
+	// the fleet node agent co-located with it, which holds the one in-process
+	// runtime and is enrolled against this server. Under a policy that puts
+	// sessions in containers this node keeps only the backends that spawn
+	// nothing, leaving the rest to that agent, and with nothing to sandbox it
+	// runs opt-in. An explicit Required spawn placed here still fails closed.
+	kinds := cfg.Backends
+	if sandboxPolicy != orchestration.SandboxPolicyOptIn {
+		kinds = containerFreeEmbeddedBackends(kinds)
+		if len(kinds) == 0 {
+			if err := s.removeStaleEmbeddedRegistration(context.Background(), nodeID); err != nil {
+				return &ServerCauseError{Message: "embedded agent: remove the previous embedded registration", Cause: err}
 			}
+			log.Infof("Embedded agent: not started: sandbox policy %q puts every configured backend %v on the co-located fleet node agent",
+				sandboxPolicy, cfg.Backends)
+			return nil
 		}
+		log.Infof("Embedded agent: sandbox policy %q: sandboxed sessions run on the co-located fleet node agent; this node keeps %v",
+			sandboxPolicy, kinds)
+		sandboxPolicy = orchestration.SandboxPolicyOptIn
+	}
+	imageMap := buildEmbeddedFleetNodeImageMap(cfg)
+
+	backends, buildErr := buildEmbeddedFleetNodeBackends(kinds, cfg.OllamaURL, sandboxNetwork, sandboxSecurity, mcpResolver, log)
+	if buildErr != nil {
+		return buildErr
 	}
 
 	// The mount policy admits this daemon's OWN sockets root, which is
@@ -303,14 +304,13 @@ func (s *Server) startEmbeddedFleetNode() error {
 
 	// Construct fleet node Runtime.
 	runtime, rtErr := fleet.NewRuntime(fleet.RuntimeConfig{
-		Backends:         backends,
-		ContainerRuntime: containerRuntime,
-		SandboxPolicy:    sandboxPolicy,
-		ImageMap:         imageMap,
-		ImageRegistry:    cfg.ImageRegistry,
-		AutoPull:         cfg.AutoPull,
-		Logger:           log,
-		WorkDir:          cfg.DataDir,
+		Backends:      backends,
+		SandboxPolicy: sandboxPolicy,
+		ImageMap:      imageMap,
+		ImageRegistry: cfg.ImageRegistry,
+		AutoPull:      cfg.AutoPull,
+		Logger:        log,
+		WorkDir:       cfg.DataDir,
 		// The embedded fleet node shares this host with the orchestrator, so it
 		// enforces the SAME bind-mount policy the orchestrator does: the
 		// managed projects root (tenant-scoped) plus the operator's allowlist.
@@ -413,7 +413,7 @@ func (s *Server) startEmbeddedFleetNode() error {
 	spawnServer.SetIdentity(buildEmbeddedFleetNodeIdentity(nodeID, embeddedFleetNodeTenantID))
 
 	// Build the fleet registration.
-	caps := buildEmbeddedFleetNodeCapabilities(cfg.Backends, cfg.GPUAvailable)
+	caps := buildEmbeddedFleetNodeCapabilities(kinds, cfg.GPUAvailable)
 	effectiveHostAffinity := cfg.HostAffinity
 	if effectiveHostAffinity == "" {
 		effectiveHostAffinity = hostname
@@ -424,7 +424,7 @@ func (s *Server) startEmbeddedFleetNode() error {
 		TenantID:     embeddedFleetNodeTenantID,
 		Name:         nodeID,
 		Host:         effectiveHostAffinity,
-		Backend:      primaryBackend(cfg.Backends),
+		Backend:      primaryBackend(kinds),
 		NodeType:     "embedded",
 		Kind:         orchestration.FleetNodeKindEmbedded,
 		Status:       orchestration.FleetNodeStatusIdle,
@@ -458,7 +458,7 @@ func (s *Server) startEmbeddedFleetNode() error {
 	started = true
 
 	log.Infof("Embedded agent started: id=%s backends=%s host=%s gpu=%v",
-		nodeID, strings.Join(cfg.Backends, ","), effectiveHostAffinity, cfg.GPUAvailable)
+		nodeID, strings.Join(kinds, ","), effectiveHostAffinity, cfg.GPUAvailable)
 
 	return nil
 }
@@ -503,6 +503,30 @@ func (s *Server) stopEmbeddedFleetNode(ctx context.Context) {
 
 	s.embeddedFleetNodeState = nil
 	s.logger.Infof("Embedded agent stopped: id=%s", ea.nodeID)
+}
+
+// removeStaleEmbeddedRegistration removes the embedded registration a
+// previous run on this host left in the fleet registry, when this run
+// registers none. An abrupt shutdown never deregisters, and an embedded
+// registration is exempt from heartbeat expiry, so placement would keep
+// choosing a backend nothing serves. A record of another kind under the
+// same id is not this node's and is left alone.
+func (s *Server) removeStaleEmbeddedRegistration(ctx context.Context, nodeID string) error {
+	node, err := s.fleetRegistry.GetFleetNode(ctx, embeddedFleetNodeTenantID, nodeID)
+	if errors.Is(err, orchestration.ErrFleetNodeNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if node.Kind != orchestration.FleetNodeKindEmbedded {
+		return nil
+	}
+	if err := s.fleetRegistry.RemoveFleetNode(ctx, embeddedFleetNodeTenantID, nodeID); err != nil &&
+		!errors.Is(err, orchestration.ErrFleetNodeNotFound) {
+		return err
+	}
+	return nil
 }
 
 // installEmbeddedBackendDialer registers the embedded fleet node's bufconn dialer
@@ -733,6 +757,24 @@ func buildEmbeddedFleetNodeBackends(
 // explicit ImageMap wins; otherwise the convenience SandboxImage is applied to
 // every configured backend so a single operator setting sandboxes the whole
 // embedded fleet node. Returns an empty map when neither is set (raw-only operation).
+// containerFreeEmbeddedBackends keeps the configured backend kinds that spawn
+// no process and so never run in a container: an ollama backend is a client
+// of a server. Every other kind runs a CLI that a sandbox policy puts in a
+// container, which only the co-located fleet node agent can run. An empty
+// list is the ollama default buildEmbeddedFleetNodeBackends applies.
+func containerFreeEmbeddedBackends(kinds []string) []string {
+	if len(kinds) == 0 {
+		return []string{"ollama"}
+	}
+	var kept []string
+	for _, kind := range kinds {
+		if kind == "ollama" {
+			kept = append(kept, kind)
+		}
+	}
+	return kept
+}
+
 func buildEmbeddedFleetNodeImageMap(cfg config.EmbeddedFleetNodeConfig) map[string]string {
 	if len(cfg.ImageMap) > 0 {
 		out := make(map[string]string, len(cfg.ImageMap))

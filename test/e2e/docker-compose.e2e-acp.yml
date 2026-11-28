@@ -22,13 +22,8 @@ services:
       QUICBAAS_E2E_ACP_MODEL_BARE: "qwen3:1.7b"
       # Set to 1 to exercise the container-sandbox spawn path.
       QUICBAAS_E2E_SANDBOX: "${QUICBAAS_E2E_SANDBOX:-0}"
-      # Prebuilt sandbox agent image (opencode + baked ollama provider config)
-      # the daemon spawns as a sibling container per session. Built on the host
-      # docker by the Makefile target before the compose run, with the ollama
-      # baseURL baked in. run-e2e.sh forwards it to the daemon's
-      # --embedded-fleet-node-sandbox-image flag.
+      # The prebuilt sandbox agent image the daemon spawns as a sibling container per session.
       QUICBAAS_E2E_SANDBOX_IMAGE: "${QUICBAAS_E2E_SANDBOX_IMAGE:-quicbaas-e2e-sandbox-agent:latest}"
     volumes:
-      # Required only for the sandboxed path so the daemon can spawn sibling
-      # agent containers. Harmless for the raw path.
+      # Only for the sandboxed path, so the daemon can spawn sibling containers.
       - /var/run/docker.sock:/var/run/docker.sock

@@ -77,7 +77,11 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 ## Future
 - **identity-refactor** — the identity surface layered over go-qrdb's primitives; authentication on UI routes — [docs/SPEC.md](docs/SPEC.md) — open
 - **websocket** — the WebSocket server mounted on a listener — [docs/websocket/api.md](docs/websocket/api.md) — open
-- **tenant-agent** — a QuicBaaS tenant agent replaces the Company Agent — [milestone 33](../../milestone/33) — open
+- **tenant-agent** — a QuicBaaS tenant agent replaces the Company Agent; configuring a tenant creates its default Tenant Agent on its provider's default account — [milestone 33](../../milestone/33) — open
+- **provider-accounts** — one default model-provider account per frontier provider (Anthropic and OpenAI now, more later), its credential set at first login and never shown again — [#2470](../../issues/2470) — open
+- **agents** — users create their own agents, any name, each with its account and model — [#2471](../../issues/2471) — open
+- **project-agents** — a new software-factory project chooses its agents and accounts, reusing an existing agent or creating a project-specific one — [#2472](../../issues/2472) — open
+- **agent-sessions** — session-only options at session start: reasoning effort, context window size and similar — [#2473](../../issues/2473) — open
 - **ai-native-sdlc** — the AI-native SDLC built in: managed settings, OpenTelemetry session export, weekly security scans and a first responder, notifying over Signal (preferred) and Slack — [#2463](../../issues/2463) — open
 
 ## Dependencies

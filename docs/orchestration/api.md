@@ -321,7 +321,7 @@ its declared type: every verb rejects with `TransportNotSupportedError`
 | Transport | projects | sdlc | accounts | How / why not |
 |---|---|---|---|---|
 | REST | yes | yes | yes | `/api/v1/projects`, `/api/v1/sdlc`, `/api/v1/agent-accounts`. |
-| QUIC | no | no | no | The server's QUIC listener speaks qrdb's frame protocol, not REST over HTTP/3, and Node's `fetch` does not negotiate HTTP/3. Whether and how a QUIC client listener is offered to SDK callers is an open owner decision. |
+| QUIC | no | no | no | The server's QUIC listener speaks qrdb's frame protocol, not REST over HTTP/3, and Node's `fetch` does not negotiate HTTP/3. Whether and how a QUIC client listener is offered to SDK callers is an open decision. |
 | MCP | yes, with refusals | yes | yes, with one refusal | `project_*`, `sdlc_*` and `quicbaas_agent_account_*` tools on one Streamable HTTP session (`mcp_rpc.ts`). `credential.expires_at` (RFC 3339) reaches create and rotation. Refused because the tool does not read the argument: `createProject` with non-empty `metadata`, `updateProject` with any `metadata` (`{}` would mean "clear"), `updateProject` with `clear_description`, `listProjectsPage` with `autonomous`, `listAccountsPage` with `status`. |
 | gRPC-Web | no | no | no | The server serves native gRPC only (no gRPC-Web endpoint), and the SDK has no gRPC-Web client library. Needs an architecture decision. |
 | Unix | no | no | no | The Unix transport is gRPC over `AF_UNIX`; the TypeScript SDK has no Node gRPC client or generated stubs. Needs an architecture decision. |
@@ -348,7 +348,7 @@ The QUIC client sends nothing. Every verb of its other families rejects with
 | Family | Reason | Gap |
 |---|---|---|
 | `orchestrator` (jobs, tasks, sessions, fleet, workflows, attention, decompose, backends, runners, models, health, inference, worker image) and cost (cost settings, spend policy, spend report) | The server serves them over qrdb's frame protocol, which the SDK does not implement. | SDK: the server projects every unary orchestrator method onto QUIC (go-quicbaas#819); the four streaming methods stay off QUIC. The TypeScript QUIC client does not speak the frame protocol yet. |
-| `auth`, `barrier`, `ceremony`, `bootstrap`, `connection` (`connect`, `disconnect`) | The listener speaks qrdb's frame protocol, which the SDK does not implement. | SDK: go-qrdb serves `barrier.*` and `ceremony.*` on that protocol; a TypeScript client for it waits on the same owner decision as projects, sdlc and accounts. |
+| `auth`, `barrier`, `ceremony`, `bootstrap`, `connection` (`connect`, `disconnect`) | The listener speaks qrdb's frame protocol, which the SDK does not implement. | SDK: go-qrdb serves `barrier.*` and `ceremony.*` on that protocol; a TypeScript client for it waits on the same decision as projects, sdlc and accounts. |
 
 `deployFleetNode` keeps its own `DeployNotSupportedError` on every non-REST
 transport. A `*Page` listing refuses with its unpaged sibling's method name.

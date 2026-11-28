@@ -165,6 +165,10 @@ type StorageService interface {
 	ObjectStorageAdmin() ObjectStorageAdminClient
 	ObjectTransfer() ObjectTransferClient
 	ParameterStore() ParameterStoreClient
+	// QRDBBackup returns go-qrdb's own backup service (BackupClient),
+	// re-exported through the SDK. The QRDB transport is lazily initialized
+	// on first call.
+	QRDBBackup() (QRDBBackupClient, error)
 }
 
 // AsyncService provides asynchronous processing operations including
@@ -500,6 +504,9 @@ func (s *storageService) ObjectStorageAdmin() ObjectStorageAdminClient {
 }
 func (s *storageService) ObjectTransfer() ObjectTransferClient { return s.c.ObjectTransfer() }
 func (s *storageService) ParameterStore() ParameterStoreClient { return s.c.ParameterStore() }
+func (s *storageService) QRDBBackup() (QRDBBackupClient, error) {
+	return s.c.QRDBBackup()
+}
 
 // asyncService delegates AsyncService methods to the underlying client.
 type asyncService struct {

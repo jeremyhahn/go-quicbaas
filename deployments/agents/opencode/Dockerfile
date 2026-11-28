@@ -1,7 +1,4 @@
-# OpenCode Agent Container
-# Uses the official install script for the latest OpenCode with ACP support.
-# Includes gopls for Go language server and Serena for semantic code navigation.
-# Non-root agent user, workspace at /workspace
+# OpenCode agent container, from the official install script.
 
 FROM alpine:3.21 AS installer
 
@@ -40,8 +37,7 @@ RUN pip3 install --break-system-packages serena
 COPY --from=installer /root/.opencode/bin/opencode /usr/local/bin/opencode
 # gopls is optional for LSP support
 
-# Install the OpenAI-compatible AI SDK package required for Ollama provider.
-# OpenCode dynamically loads this when opencode.json configures ollama.
+# The OpenAI-compatible AI SDK package the Ollama provider needs.
 RUN apk add --no-cache nodejs npm \
     && mkdir -p /opt/opencode-providers \
     && cd /opt/opencode-providers \
