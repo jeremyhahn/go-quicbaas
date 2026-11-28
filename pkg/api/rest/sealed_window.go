@@ -16,11 +16,13 @@
 package rest
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	qrdbsealedwindow "github.com/jeremyhahn/go-qrdb/pkg/api/sealedwindow"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
@@ -110,10 +112,14 @@ func (s *Server) sealedWindowNativeAliases() map[string]http.HandlerFunc {
 // handler is never shadowed. The health and status aliases go-qrdb's handler
 // cannot answer are served natively instead (sealedWindowNativeAliases).
 func (s *Server) mountSealedWindowRoutes(r *chi.Mux) {
+	s.sealedMounted = nil
 	if s.sealedWindowHandler == nil {
 		return
 	}
 	aliases := s.sealedWindowNativeAliases()
+	mounted := chi.NewRouter()
+	s.sealedMounted = mounted
+	noop := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	for _, entry := range s.sealedAllowlist {
 		methods := sealedWindowAnyMethod
 		path := entry
@@ -135,10 +141,49 @@ func (s *Server) mountSealedWindowRoutes(r *chi.Mux) {
 		}
 		if len(methods) == 1 {
 			r.Method(methods[0], pattern, s.sealedWindowHandler)
+			mounted.Method(methods[0], pattern, noop)
 			continue
 		}
 		r.Handle(pattern, s.sealedWindowHandler)
+		mounted.Handle(pattern, noop)
 	}
+}
+
+// sealedListenerProbe is the sealed window's listener probe: the live barrier
+// state plus the window's one Admission, shared by every sealed transport.
+type sealedListenerProbe = qrdbsealedwindow.ListenerProbe
+
+// SetSealedWindowAdmission makes every natively served request on this
+// listener hold probe's Admission for its whole duration: a Transition request
+// (barrier initialize / unseal, see sealedwindow.IsRESTTransition)
+// exclusively, every other request shared. Once probe reports the barrier
+// unsealed, a native request is refused with 503 and
+// qrdbsealedwindow.ClosedMessage. Routes served by the sealed-window handler
+// are left to it, since it admits on the same probe. Pass the probe given to
+// that handler and to the other sealed transports. Must be called before
+// Start; nil removes the admission.
+func (s *Server) SetSealedWindowAdmission(probe sealedListenerProbe) {
+	s.sealedAdmission = probe
+	s.setupRouter()
+}
+
+// sealedWindowAdmissionMiddleware implements SetSealedWindowAdmission.
+func (s *Server) sealedWindowAdmissionMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.sealedMounted != nil && s.sealedMounted.Match(chi.NewRouteContext(), r.Method, r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		release := s.sealedAdmission.Admit(sealedwindow.IsRESTTransition(r.Method, r.URL.Path))
+		defer release()
+		if !s.sealedAdmission.IsSealed() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": qrdbsealedwindow.ClosedMessage})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // sealedWindowAnyMethod are the methods an allowlist entry without a method

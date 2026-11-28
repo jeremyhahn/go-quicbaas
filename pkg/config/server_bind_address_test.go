@@ -19,38 +19,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestResolveBindHostFallsBackToServerHost verifies that an empty per-protocol
-// override resolves to the shared Server.Host, preserving current behavior.
-func TestResolveBindHostFallsBackToServerHost(t *testing.T) {
-	sc := &ServerConfig{Host: "0.0.0.0"}
-	assert.Equal(t, "0.0.0.0", sc.ResolveBindHost(""))
-}
-
-// TestResolveBindHostOverride verifies that a non-empty per-protocol override
-// wins over Server.Host.
-func TestResolveBindHostOverride(t *testing.T) {
-	sc := &ServerConfig{Host: "0.0.0.0"}
-	assert.Equal(t, "127.0.0.1", sc.ResolveBindHost("127.0.0.1"))
-}
-
-// TestResolveBindHostPerProtocol verifies that each protocol's BindAddress is
-// resolved independently: a private-ingress override on one listener does not
-// affect the others, which keep Server.Host.
-func TestResolveBindHostPerProtocol(t *testing.T) {
-	sc := &ServerConfig{
-		Host: "0.0.0.0",
-		REST: ServerRESTConfig{BindAddress: "10.0.0.1"},
-		GRPC: ServerGRPCConfig{BindAddress: "10.0.0.2"},
-		MCP:  ServerMCPConfig{BindAddress: "127.0.0.1"},
-		Unix: ServerUnixConfig{},
-	}
-
-	assert.Equal(t, "10.0.0.1", sc.ResolveBindHost(sc.REST.BindAddress))
-	assert.Equal(t, "10.0.0.2", sc.ResolveBindHost(sc.GRPC.BindAddress))
-	assert.Equal(t, "127.0.0.1", sc.ResolveBindHost(sc.MCP.BindAddress))
-	assert.Equal(t, "0.0.0.0", sc.ResolveBindHost(sc.Unix.BindAddress))
-}
-
 // TestResolveSealedBindHostDefaultsToLoopback verifies that an unset
 // SealedBindHost resolves to loopback even when Server.Host binds all
 // interfaces — the sealed-window surface must never inherit Host.

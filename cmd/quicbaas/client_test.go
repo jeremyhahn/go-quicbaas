@@ -105,6 +105,9 @@ func (m *mockClient) SealStore() (quicbaas.QRDBSealStoreClient, error)          
 func (m *mockClient) TenantMgmt() (quicbaas.QRDBTenantClient, error)             { return nil, nil }
 func (m *mockClient) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) { return nil, nil }
 func (m *mockClient) Share() (quicbaas.QRDBShareClient, error)                   { return nil, nil }
+func (m *mockClient) QRDBCluster() (*quicbaas.QRDBClusterClient, error)          { return nil, nil }
+func (m *mockClient) QRDBMembership() (quicbaas.QRDBMembershipClient, error)     { return nil, nil }
+func (m *mockClient) QRDBRebalance() (quicbaas.QRDBRebalanceClient, error)       { return nil, nil }
 func (m *mockClient) Close() error {
 	m.closed = true
 	return nil

@@ -46,25 +46,17 @@ func TestSealedListenAddress_ExplicitOptIn(t *testing.T) {
 	assert.Equal(t, "0.0.0.0:9443", sealedListenAddress(cfg, cfg.Server.GRPC.Port))
 }
 
-// TestSealedListenAddress_IgnoresPerProtocolBindAddress covers the old
-// sealed-REST bug: the listener config address was computed from
-// ResolveBindHost(REST.BindAddress) while Start() received an address built
-// from Server.Host, silently producing two different addresses. The sealed
-// address is now computed exactly once from the sealed bind host; the
-// per-protocol BindAddress overrides govern only the post-unseal listeners.
-func TestSealedListenAddress_IgnoresPerProtocolBindAddress(t *testing.T) {
+// TestSealedListenAddress_IgnoresServerHost covers the sealed window's own
+// bind host: a wildcard server.host for the post-unseal listeners does not
+// widen the sealed listeners, which stay on the sealed bind host (loopback
+// by default).
+func TestSealedListenAddress_IgnoresServerHost(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.Host = "0.0.0.0"
-	cfg.Server.REST.BindAddress = "10.0.0.1"
-	cfg.Server.GRPC.BindAddress = "10.0.0.2"
-	cfg.Server.MCP.BindAddress = "10.0.0.4"
 
 	assert.Equal(t, "127.0.0.1:8443", sealedListenAddress(cfg, cfg.Server.REST.Port))
 	assert.Equal(t, "127.0.0.1:9443", sealedListenAddress(cfg, cfg.Server.GRPC.Port))
 	assert.Equal(t, "127.0.0.1:11443", sealedListenAddress(cfg, cfg.Server.MCP.Port))
-
-	// The full-boot resolution path is untouched: BindAddress still wins there.
-	assert.Equal(t, "10.0.0.1", cfg.Server.ResolveBindHost(cfg.Server.REST.BindAddress))
 }
 
 // TestSealedListenAddress_IPv6HostJoined asserts IPv6 sealed bind hosts are

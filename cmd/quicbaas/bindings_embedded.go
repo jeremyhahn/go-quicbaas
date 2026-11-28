@@ -338,10 +338,7 @@ func embeddedMCPEndpoint(cfg *config.Config) string {
 	if cfg == nil || !cfg.Server.MCP.Enabled {
 		return ""
 	}
-	host := strings.TrimSpace(cfg.Server.MCP.BindAddress)
-	if host == "" {
-		host = strings.TrimSpace(cfg.Server.Host)
-	}
+	host := strings.TrimSpace(cfg.Server.Host)
 	switch host {
 	case "", "0.0.0.0", "::", "[::]":
 		return ""

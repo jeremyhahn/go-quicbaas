@@ -43,8 +43,8 @@ func (s *Server) startSealedRESTServer() error {
 	clonedTLSConfig := cloneTLSConfig(s.tlsConfig)
 
 	// One address for both the server config and Start: the sealed-phase
-	// bind host (loopback by default). Server.Host and REST.BindAddress do
-	// not apply to the pre-unseal surface.
+	// bind host (loopback by default). Server.Host does not
+	// apply to the pre-unseal surface.
 	address := sealedListenAddress(s.config, s.config.Server.REST.Port)
 
 	restConfig := &restapi.Config{
@@ -91,16 +91,17 @@ func (s *Server) startSealedRESTServer() error {
 	// Allowlisted routes quicbaas does not serve natively (officer
 	// registration, the ceremony flows) are served by qrdb's sealed REST
 	// surface over the node's OWN seal services, the same instances the
-	// sealed gRPC qrdb.v1 service is registered with. That surface is
-	// anonymous, so it follows the barrier's live state: once the barrier
-	// unseals it refuses every request until this listener is torn down.
+	// sealed gRPC qrdb.v1 service is registered with. It and the native
+	// routes admit on the sealed window's one listener probe, the one the
+	// sealed gRPC listener admits on, which reads the live barrier state.
 	// The /health, /v1/health and /status aliases, which qrdb's sealed
 	// handler cannot answer without an admin service, are served by the
 	// REST server's own health and barrier-status handlers.
+	listener := s.sealedListener()
 	restServer.SetSealedWindowHandler(qrdbsdk.NewSealedWindowHandler(
 		s.qrdbBarrierServicer(), s.qrdbCeremonyServicer(), s.qrdbCredentialServicer(),
-		qrdbsdk.NewSealedWindowListenerProbe(liveSealedWindowProbe{sealed: s.sealedWindowNodeSealed},
-			s.qrdbCeremonyServicer())))
+		listener))
+	restServer.SetSealedWindowAdmission(listener)
 
 	if err := restServer.Start(address); err != nil {
 		return &SealedWindowBootError{Stage: "sealed rest listener", Cause: err}

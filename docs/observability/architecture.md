@@ -69,8 +69,9 @@ carry the dependency.
 
 - **Health endpoints are unauthenticated.** They disclose liveness, readiness,
   and by implication whether the server is sealed or bootstrapping. Treat that
-  as information disclosure and bind them accordingly — the per-protocol
-  `bind_address` settings exist so the probe surface need not be network-wide.
+  as information disclosure and bind them accordingly — every listener
+  binds on `server.host`, so keep the probe surface from being network-wide at
+  the network boundary.
 - **Metrics can leak shape.** Counter cardinality reveals tenant and key names
   if labels are chosen carelessly. `engineering.md` states which labels are
   bounded.

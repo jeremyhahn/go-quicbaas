@@ -76,9 +76,10 @@ not take the process out of the pool.
 
 The health endpoints are **unauthenticated**, and they disclose whether the
 server is sealed or bootstrapping. That is information about your security
-posture. The per-protocol `bind_address` settings exist so the probe surface can
-be bound somewhere narrower than the API — use them rather than accepting a
-network-wide probe surface as the price of a health check.
+posture. Every listener binds on `server.host` (there is no per-protocol bind), so
+narrow the probe surface at the network boundary — a firewall or security
+group in front of the node — rather than accepting a network-wide probe
+surface as the price of a health check.
 
 ## Troubleshooting
 

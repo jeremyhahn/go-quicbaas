@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -162,14 +163,14 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 	if err != nil {
 		return nil, err
 	}
-
 	// A job run by a reserved handler (a platform handler, or a KMS grace
 	// job) is written only by the service that owns the handler: its handler and payload are not
 	// user-editable, and no job is turned into one.
+	// A tenant's run-time edit is read the same way, so a service-managed job keeps the run time the service gave it.
 	if err := schedulerRefuseReservedHandler("UpdateJob", req.Handler); err != nil {
 		return nil, err
 	}
-	if req.Handler != "" || len(req.Payload) > 0 {
+	if req.Handler != "" || len(req.Payload) > 0 || (tenantID != "" && !req.ExecuteAt.IsZero()) {
 		current, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
 		if err != nil {
 			return nil, err
@@ -251,10 +252,7 @@ func (a *SchedulerAdapter) ListJobs(ctx context.Context, req *ListSchedulerJobsR
 	if ownerType == "" && tenantID != "" {
 		ownerType = SchedulerOwnerTypeTenant
 	}
-	ownerID := req.OwnerID
-	if ownerType == SchedulerOwnerTypeTenant && tenantID != "" {
-		ownerID = tenantID
-	}
+	ownerID := tenantID
 
 	// Convert request to scheduler.JobQuery
 	query := &scheduler.JobQuery{
@@ -319,6 +317,13 @@ func (a *SchedulerAdapter) TriggerJob(ctx context.Context, req *TriggerScheduler
 	// Enforce tenant access on the returned job
 	if err := schedulerTenantEnforceAccess(tenantID, job.TargetTenantID, "TriggerJob"); err != nil {
 		return nil, err
+	}
+
+	// The KMS service runs a grace job at the deadline it set; a tenant
+	// cannot run it early, as UpdateJob cannot change its run time.
+	if tenantID != "" && job.Handler == schedulerhandlers.HandlerKMSGracePeriod && time.Now().Before(job.ExecuteAt) {
+		return nil, NewError(errors.ErrForbidden, "scheduler.TriggerJob",
+			"a service-managed job cannot be triggered by a tenant before its run time")
 	}
 
 	if err := a.scheduler.TriggerJob(ctx, req.JobID, tenantID); err != nil {
@@ -560,9 +565,11 @@ func (a *SchedulerAdapter) GetCompletedGracePeriodVersions(ctx context.Context, 
 		Limit:   100,
 	}
 	// A tenant's grace jobs are filed in its own namespace (see RotateKey).
-	if tenantID, ok := tenantctx.Lookup(ctx); ok {
-		query.OwnerID = schedulerEngineTenant(tenantID)
+	ownerID, err := schedulerTenantResolveID(ctx, "grace_period.completed", "")
+	if err != nil {
+		return nil, err
 	}
+	query.OwnerID = ownerID
 
 	jobs, _, err := a.scheduler.ListJobsWithCursor(ctx, query)
 	if err != nil {

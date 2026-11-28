@@ -156,13 +156,13 @@ point the daemon completes the full boot automatically.
 The sealed-phase network listeners (REST, gRPC TCP, QUIC, MCP) bind a
 dedicated host — `server.sealed_bind_host`
 (`QUICBAAS_SERVER_SEALED_BIND_HOST`), default `127.0.0.1` — never
-`server.host` or the per-protocol `bind_address` overrides, so a
+`server.host`, so a
 deployment that binds the full API on `0.0.0.0` does not expose the
 pre-unseal surface network-wide. Deployments whose Shamir officers
 drive the ceremony/unseal flow remotely opt in by setting the sealed
 bind host to a routable address (for example `0.0.0.0`). The
-post-unseal full-boot listeners are unaffected and keep resolving
-`server.host` / `bind_address` as before.
+post-unseal full-boot listeners are unaffected and keep binding on
+`server.host` as before.
 
 The allowlist mirrors go-qrdb's canonical sealed-window verb table
 verbatim and is derived ONCE for all transports in

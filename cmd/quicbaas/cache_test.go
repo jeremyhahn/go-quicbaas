@@ -2625,6 +2625,15 @@ func (m *mockSDKClientForClusterCovPlusTest) CustodianGroup() (quicbaas.QRDBCust
 func (m *mockSDKClientForClusterCovPlusTest) Share() (quicbaas.QRDBShareClient, error) {
 	return nil, nil
 }
+func (m *mockSDKClientForClusterCovPlusTest) QRDBCluster() (*quicbaas.QRDBClusterClient, error) {
+	return nil, nil
+}
+func (m *mockSDKClientForClusterCovPlusTest) QRDBMembership() (quicbaas.QRDBMembershipClient, error) {
+	return nil, nil
+}
+func (m *mockSDKClientForClusterCovPlusTest) QRDBRebalance() (quicbaas.QRDBRebalanceClient, error) {
+	return nil, nil
+}
 func (m *mockSDKClientForClusterCovPlusTest) Close() error {
 	if m.closeFunc != nil {
 		return m.closeFunc()

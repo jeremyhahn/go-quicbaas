@@ -134,7 +134,7 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 
 	// Create REST server configuration
 	restConfig := &restapi.Config{
-		Address:        fmt.Sprintf("%s:%d", s.config.Server.ResolveBindHost(s.config.Server.REST.BindAddress), s.config.Server.REST.Port),
+		Address:        fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.REST.Port),
 		ReadTimeout:    s.config.Server.ReadTimeout,
 		WriteTimeout:   s.config.Server.WriteTimeout,
 		IdleTimeout:    s.config.Server.IdleTimeout,

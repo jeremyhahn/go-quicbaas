@@ -267,6 +267,7 @@ func (s *Server) runSealedWindow() error {
 		return err
 	}
 	s.sealedWindowFacade = facade
+	s.sealedWindowListener = s.newSealedWindowListener()
 
 	if err := s.startSealedGRPCServer(); err != nil {
 		_ = s.stopSealedTransports() // abort path: the causal error wins; failures are Warn-logged inside
@@ -360,6 +361,7 @@ func (s *Server) startSealedGRPCServer() error {
 
 	allow := sealedwindow.GRPCFullMethodAllowlist()
 	probe := constantSealedProbe{}
+	listener := s.sealedListener()
 
 	grpcOpts := []ggrpc.ServerOption{
 		ggrpc.Creds(creds),
@@ -378,12 +380,14 @@ func (s *Server) startSealedGRPCServer() error {
 			grpcapi.UnaryLoggingInterceptor(s.logger),
 			grpcapi.UnaryRecoveryInterceptor(s.logger),
 			qrdbsdk.SealedWindowUnaryInterceptor(probe, allow),
+			sealedAdmissionUnaryInterceptor(listener),
 			s.qrdbSealSOPINInterceptor(),
 		),
 		ggrpc.ChainStreamInterceptor(
 			grpcapi.StreamLoggingInterceptor(s.logger),
 			grpcapi.StreamRecoveryInterceptor(s.logger),
 			qrdbsdk.SealedWindowStreamInterceptor(probe, allow),
+			sealedAdmissionStreamInterceptor(listener),
 		),
 	}
 
@@ -486,9 +490,8 @@ func (s *Server) stopSealedTransports() error {
 // sealedListenAddress resolves the listen address for a sealed-window
 // listener: the dedicated sealed-phase bind host (loopback unless
 // Server.SealedBindHost opts into a routable address) joined with the
-// protocol port. Server.Host and the per-protocol BindAddress overrides
-// deliberately do not apply while sealed; they govern only the post-unseal
-// full-boot listeners.
+// protocol port. Server.Host deliberately does not apply
+// while sealed; it governs only the post-unseal full-boot listeners.
 func sealedListenAddress(cfg *config.Config, port int) string {
 	return net.JoinHostPort(cfg.Server.ResolveSealedBindHost(), strconv.Itoa(port))
 }

@@ -541,6 +541,18 @@ type qrdbState struct {
 	once   sync.Once
 	client *qrdbsdk.Client
 	err    error
+	// transport is the network transport buildQRDBClient built client
+	// over; nil on the embedded path and for an injected client.
+	// go-qrdb's Client does not expose its transport, so it is kept here
+	// for the bearer client.
+	transport qrdbtransport.Transport
+	// bearer is a second client over transport, wrapped in
+	// qrdbBearerTransport, that the cluster and membership accessors use
+	// when a WithAuthToken bearer must ride gRPC metadata. It is built
+	// lazily and never closed itself: closing client closes transport.
+	bearerOnce sync.Once
+	bearer     *qrdbsdk.Client
+	bearerErr  error
 	// closed is set by Close; every qrdb accessor and the embedded
 	// time-series readers refuse once it is.
 	closed atomic.Bool
@@ -719,7 +731,33 @@ func (c *client) buildQRDBClient() (*qrdbsdk.Client, error) {
 			return nil, connErr
 		}
 	}
-	return qrdbsdk.NewClient(t)
+	qc, err := qrdbsdk.NewClient(t)
+	if err != nil {
+		return nil, err
+	}
+	c.qrdb.transport = t
+	return qc, nil
+}
+
+// qrdbBearerClient returns the qrdb client whose every call carries the
+// WithAuthToken bearer as gRPC authorization metadata, built once over the
+// main client's transport. Only the gRPC and Unix sub-clients may use it.
+func (c *client) qrdbBearerClient(op string) (*QRDBClient, error) {
+	if _, err := c.qrdbClient(); err != nil {
+		return nil, err
+	}
+	c.qrdb.bearerOnce.Do(func() {
+		if c.qrdb.transport == nil {
+			c.qrdb.bearerErr = sdkerrors.NewInvalidInput(op,
+				"the qrdb sub-client has no network transport to carry the WithAuthToken bearer")
+			return
+		}
+		c.qrdb.bearer, c.qrdb.bearerErr = qrdbsdk.NewClient(&qrdbBearerTransport{
+			inner:  c.qrdb.transport,
+			bearer: "Bearer " + c.opts.authToken,
+		})
+	})
+	return c.qrdb.bearer, c.qrdb.bearerErr
 }
 
 // buildQRDBTransport constructs the go-qrdb transport that matches the active

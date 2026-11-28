@@ -13,8 +13,6 @@ services:
       - CGO_ENABLED=0
       # WriteTimeout above RequestTimeout (25s), so the server can send the 503 after a Raft proposal times out.
       - QUICBAAS_SERVER_WRITE_TIMEOUT=45s
-      # No PebbleDB fsync in the MVCC state machine; overlay2 fsync latency causes proposal timeouts.
-      - QRDB_NOSYNC_WRITES=1
       - QUICBAAS_RAFT_NODE_ID=1
       - QUICBAAS_RAFT_DEPLOYMENT_ID=42
       - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node1:63001
@@ -72,7 +70,6 @@ services:
     environment:
       - CGO_ENABLED=0
       - QUICBAAS_SERVER_WRITE_TIMEOUT=45s
-      - QRDB_NOSYNC_WRITES=1
       - QUICBAAS_RAFT_NODE_ID=2
       - QUICBAAS_RAFT_DEPLOYMENT_ID=42
       - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node2:63002
@@ -129,7 +126,6 @@ services:
     environment:
       - CGO_ENABLED=0
       - QUICBAAS_SERVER_WRITE_TIMEOUT=45s
-      - QRDB_NOSYNC_WRITES=1
       - QUICBAAS_RAFT_NODE_ID=3
       - QUICBAAS_RAFT_DEPLOYMENT_ID=42
       - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node3:63003
@@ -188,7 +184,6 @@ services:
     environment:
       - CGO_ENABLED=0
       - QUICBAAS_SERVER_WRITE_TIMEOUT=45s
-      - QRDB_NOSYNC_WRITES=1
       - QUICBAAS_RAFT_NODE_ID=4
       - QUICBAAS_RAFT_DEPLOYMENT_ID=42
       - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node4:63004

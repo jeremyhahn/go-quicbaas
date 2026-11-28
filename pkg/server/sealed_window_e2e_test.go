@@ -103,7 +103,7 @@ func NewSealedBootTestConfig(t *testing.T) *config.Config {
 	// enough to lose that race. go#497: this test spent 1601s of a CI runner
 	// on "listen tcp 127.0.0.1:63001: bind: address already in use".
 	cfg.Server.REST.Port = getFreePort(t)
-	cfg.Server.REST.BindAddress = "127.0.0.1"
+	cfg.Server.Host = "127.0.0.1"
 	cfg.Server.GRPC.Enabled = false
 	cfg.Server.MCP.Enabled = false
 	cfg.Server.Unix.Socket = filepath.Join(dataDir, "qb.sock")

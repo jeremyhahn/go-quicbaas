@@ -609,6 +609,13 @@ type Server struct {
 	// the sealed window is being served.
 	sealedWindowFacade service.QuicBaaS
 
+	// sealedWindowListener is the ONE listener probe of the sealed window:
+	// it reads the node's live barrier state and holds the window's single
+	// Admission, shared by every sealed transport (see
+	// sealed_window_admission.go). Non-nil only while the sealed window is
+	// being served.
+	sealedWindowListener sealedListenerProbe
+
 	// bootstrapAdminUserID and bootstrapAdminTenantID identify the pending
 	// admin user created by firstBootBootstrap, letting later admin binding
 	// paths find the right user without re-querying the identity store.

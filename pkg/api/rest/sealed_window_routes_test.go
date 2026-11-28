@@ -64,6 +64,10 @@ func newRealSealedWindowRESTServer(t *testing.T) (*Server, *reachedHandler) {
 	return s, h
 }
 
+// sealedWindowStubHeader marks a response served by the stub sealed-window
+// handler, standing in for qrdb's rest.NewSealedWindowHandler.
+const sealedWindowStubHeader = "X-Test-Sealed-Window"
+
 // sealedWindowRouteProbe turns one REST allowlist entry ("METHOD /path",
 // "/path" or the "/prefix/" form) into the methods and a concrete path to
 // route-match it with.

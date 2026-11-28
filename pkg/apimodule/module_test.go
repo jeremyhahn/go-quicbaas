@@ -292,6 +292,21 @@ func TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly(t *testing.T) {
 	assert.False(t, unixOnly[pb.Crypto_ServiceDesc.ServiceName], "Crypto is served to every peer: go-xkms serves no quicbaas.kms.v1 name")
 }
 
+// TestModule_RegisterGRPC_ServesAttestationVerifier proves the node's network
+// gRPC port serves quicbaas.attestation.v1: the pinned go-xkms ServiceModule
+// has no endorsement or reference-values RPC, so without this registration
+// the SDK's attestation client gets Unimplemented.
+func TestModule_RegisterGRPC_ServesAttestationVerifier(t *testing.T) {
+	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
+	require.NoError(t, err)
+
+	server := grpc.NewServer()
+	m.RegisterGRPC(server)
+	info, ok := server.GetServiceInfo()[pb.AttestationService_ServiceDesc.ServiceName]
+	require.True(t, ok, "AttestationService must be registered on the quicbaas module")
+	assert.Len(t, info.Methods, len(pb.AttestationService_ServiceDesc.Methods))
+}
+
 // startBufconnModule registers the module on a bufconn-backed gRPC server and
 // returns the client connection.
 func startBufconnModule(t *testing.T, m *Module, opts ...grpc.ServerOption) *grpc.ClientConn {

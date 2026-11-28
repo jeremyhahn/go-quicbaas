@@ -144,8 +144,24 @@ func TestNewNPUEmbeddingProviderMapsConfig(t *testing.T) {
 
 // TestNewNPUEmbeddingProviderAppliesDefaults confirms an empty config yields the
 // provider's own defaults rather than empty values.
-func TestNewNPUEmbeddingProviderAppliesDefaults(t *testing.T) {
+// TestNewNPUEmbeddingProviderRefusesMissingEndpoint proves the server does not
+// fall back to a hardcoded sidecar address when api_url is unset.
+func TestNewNPUEmbeddingProviderRefusesMissingEndpoint(t *testing.T) {
 	cfg := embedding.Config{Provider: embedding.NPUProviderName}
+
+	provider, err := newNPUEmbeddingProvider(context.Background(), &cfg)
+	if err == nil {
+		npu, _ := provider.(*embedding.NPUProvider)
+		if npu != nil {
+			t.Cleanup(func() { _ = npu.Close() })
+			t.Fatalf("newNPUEmbeddingProvider without api_url used %q, want a refusal", npu.BaseURL())
+		}
+	}
+	require.ErrorIs(t, err, embedding.ErrNPUEndpointRequired)
+}
+
+func TestNewNPUEmbeddingProviderAppliesDefaults(t *testing.T) {
+	cfg := embedding.Config{Provider: embedding.NPUProviderName, APIURL: "http://npu.test:8077"}
 
 	provider, err := newNPUEmbeddingProvider(context.Background(), &cfg)
 	require.NoError(t, err)
@@ -153,7 +169,7 @@ func TestNewNPUEmbeddingProviderAppliesDefaults(t *testing.T) {
 	npu, ok := provider.(*embedding.NPUProvider)
 	require.True(t, ok)
 
-	require.Equal(t, embedding.DefaultNPUURL, npu.BaseURL())
+	require.Equal(t, "http://npu.test:8077", npu.BaseURL())
 	require.Equal(t, embedding.DefaultNPUDimensions, npu.Dimensions())
 	require.Equal(t, embedding.DefaultNPUMaxTokens, npu.MaxTokens())
 	require.NoError(t, npu.Close())
@@ -163,6 +179,7 @@ func TestNewNPUEmbeddingProviderAppliesDefaults(t *testing.T) {
 // probed at construction: the daemon must start whether or not the sidecar is up.
 func TestNPUProviderReportsUnknownDeviceBeforeUse(t *testing.T) {
 	cfg := embedding.DefaultNPUConfig()
+	cfg.BaseURL = "http://npu.test:8077"
 	cfg.Timeout = time.Second
 
 	provider, err := embedding.NewNPUProvider(context.Background(), cfg)

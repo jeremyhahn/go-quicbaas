@@ -105,7 +105,10 @@ func (m *mockRAGSDKClient) TenantMgmt() (quicbaas.QRDBTenantClient, error)      
 func (m *mockRAGSDKClient) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) {
 	return nil, nil
 }
-func (m *mockRAGSDKClient) Share() (quicbaas.QRDBShareClient, error) { return nil, nil }
+func (m *mockRAGSDKClient) Share() (quicbaas.QRDBShareClient, error)               { return nil, nil }
+func (m *mockRAGSDKClient) QRDBCluster() (*quicbaas.QRDBClusterClient, error)      { return nil, nil }
+func (m *mockRAGSDKClient) QRDBMembership() (quicbaas.QRDBMembershipClient, error) { return nil, nil }
+func (m *mockRAGSDKClient) QRDBRebalance() (quicbaas.QRDBRebalanceClient, error)   { return nil, nil }
 
 func (m *mockRAGSDKClient) RAG() quicbaas.RAGClient {
 	if m.ragClient != nil {

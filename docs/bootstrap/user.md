@@ -51,8 +51,8 @@ quicbaas init status
 Between process start and a successful unseal, the server is in the **sealed
 window**. Only the ceremony and unseal surfaces answer.
 
-`ServerConfig.SealedBindHost` binds those listeners independently of every other
-`bind_address`, and defaults to loopback. **Leave it there unless remote Shamir
+`ServerConfig.SealedBindHost` binds those listeners independently of
+`server.host`, and defaults to loopback. **Leave it there unless remote Shamir
 officers must reach the ceremony**, in which case set it to a routable address
 deliberately and narrow it again afterwards. Binding the full API on `0.0.0.0`
 does not expose the pre-unseal surface — that separation is the point of the
