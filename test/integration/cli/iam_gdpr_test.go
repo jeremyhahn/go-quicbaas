@@ -38,16 +38,20 @@ func TestIAMGDPRConsentLifecycle(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-lc-tenant")
-		userID := UniqueKey("gdpr-lc-user")
 
 		// Create tenant for GDPR operations
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-lc-user")
 
 		// Step 1: Grant marketing consent
 		grantCmd := IAMGDPRConsentGrantCommand(tenantID, userID, "marketing", "1.0")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, grantCmd) {
+			return
+		}
 		runner.RunAndAssert(grantCmd)
 
 		// Step 2: Get consent and verify it is active
@@ -92,14 +96,18 @@ func TestIAMGDPRConsentGrant(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-grant-tenant")
-		userID := UniqueKey("gdpr-grant-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-grant-user")
 
 		grantCmd := IAMGDPRConsentGrantCommand(tenantID, userID, "marketing", "1.0")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, grantCmd) {
+			return
+		}
 		runner.RunAndAssert(grantCmd)
 	})
 }
@@ -112,15 +120,19 @@ func TestIAMGDPRConsentGrantJSON(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-json-tenant")
-		userID := UniqueKey("gdpr-json-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-json-user")
 
 		// Grant consent
 		grantCmd := IAMGDPRConsentGrantCommand(tenantID, userID, "analytics", "2.0")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, grantCmd) {
+			return
+		}
 		runner.RunAndAssert(grantCmd)
 
 		// Get consent with JSON output
@@ -157,15 +169,19 @@ func TestIAMGDPRConsentGet(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-get-tenant")
-		userID := UniqueKey("gdpr-get-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-get-user")
 
 		// Grant consent for personalization
 		grantCmd := IAMGDPRConsentGrantCommand(tenantID, userID, "personalization", "1.0")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, grantCmd) {
+			return
+		}
 		runner.RunAndAssert(grantCmd)
 
 		// Get consent and verify purpose and active status
@@ -192,15 +208,19 @@ func TestIAMGDPRConsentWithdraw(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-wd-tenant")
-		userID := UniqueKey("gdpr-wd-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-wd-user")
 
 		// Grant consent
 		grantCmd := IAMGDPRConsentGrantCommand(tenantID, userID, "data_processing", "1.0")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, grantCmd) {
+			return
+		}
 		runner.RunAndAssert(grantCmd)
 
 		// Withdraw consent
@@ -229,14 +249,18 @@ func TestIAMGDPRConsentList(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-list-tenant")
-		userID := UniqueKey("gdpr-list-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-list-user")
 
 		// Grant multiple purposes
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMGDPRConsentGrantCommand(tenantID, userID, "marketing", "1.0")) {
+			return
+		}
 		purposes := []string{"marketing", "analytics", "functional"}
 		for _, purpose := range purposes {
 			grantCmd := IAMGDPRConsentGrantCommand(tenantID, userID, purpose, "1.0")
@@ -265,12 +289,12 @@ func TestIAMGDPRConsentGrantInvalidPurpose(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-inv-tenant")
-		userID := UniqueKey("gdpr-inv-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-inv-user")
 
 		// Attempt to grant consent with an invalid purpose
 		invalidCmd := CommandDef{
@@ -300,15 +324,19 @@ func TestIAMGDPRConsentMultiplePurposes(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-multi-tenant")
-		userID := UniqueKey("gdpr-multi-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-multi-user")
 
 		// Grant marketing consent
 		marketingCmd := IAMGDPRConsentGrantCommand(tenantID, userID, "marketing", "1.0")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, marketingCmd) {
+			return
+		}
 		runner.RunAndAssert(marketingCmd)
 
 		// Grant analytics consent
@@ -352,15 +380,19 @@ func TestIAMGDPRExportRequest(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-exp-tenant")
-		userID := UniqueKey("gdpr-exp-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-exp-user")
 
 		// Request JSON export
 		exportCmd := IAMGDPRExportRequestCommand(tenantID, userID, "json")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, exportCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(exportCmd)
 		if !runner.IsSkipped(exportCmd) {
 			require.NoError(t, err, "export request should succeed")
@@ -381,15 +413,19 @@ func TestIAMGDPRExportRequestCSV(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-csv-tenant")
-		userID := UniqueKey("gdpr-csv-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-csv-user")
 
 		// Request CSV export
 		exportCmd := IAMGDPRExportRequestCommand(tenantID, userID, "csv")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, exportCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(exportCmd)
 		if !runner.IsSkipped(exportCmd) {
 			require.NoError(t, err, "CSV export request should succeed")
@@ -409,15 +445,19 @@ func TestIAMGDPRExportStatus(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-expst-tenant")
-		userID := UniqueKey("gdpr-expst-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-expst-user")
 
 		// Request export to get an export ID
 		exportCmd := IAMGDPRExportRequestCommand(tenantID, userID, "json")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, exportCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(exportCmd)
 		if runner.IsSkipped(exportCmd) {
 			return
@@ -451,12 +491,12 @@ func TestIAMGDPRExportInvalidFormat(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-invfmt-tenant")
-		userID := UniqueKey("gdpr-invfmt-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-invfmt-user")
 
 		// Request export with invalid format
 		invalidExportCmd := CommandDef{
@@ -490,15 +530,19 @@ func TestIAMGDPRDeletionRequest(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-del-tenant")
-		userID := UniqueKey("gdpr-del-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-del-user")
 
 		// Request deletion
 		deleteCmd := IAMGDPRDeletionRequestCommand(tenantID, userID, "user-requested-erasure")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, deleteCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(deleteCmd)
 		if !runner.IsSkipped(deleteCmd) {
 			require.NoError(t, err, "deletion request should succeed")
@@ -519,12 +563,12 @@ func TestIAMGDPRDeletionRequestCustomGracePeriod(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-grace-tenant")
-		userID := UniqueKey("gdpr-grace-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-grace-user")
 
 		// Request deletion with custom grace period
 		graceCmd := CommandDef{
@@ -541,6 +585,10 @@ func TestIAMGDPRDeletionRequestCustomGracePeriod(t *testing.T) {
 			ExpectOutput:   []string{userID},
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
+		}
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, graceCmd) {
+			return
 		}
 		stdout, _, err := runner.Run(graceCmd)
 		if !runner.IsSkipped(graceCmd) {
@@ -560,15 +608,19 @@ func TestIAMGDPRDeletionCancel(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-cancel-tenant")
-		userID := UniqueKey("gdpr-cancel-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-cancel-user")
 
 		// Request deletion
 		deleteCmd := IAMGDPRDeletionRequestCommand(tenantID, userID, "testing-cancellation")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, deleteCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(deleteCmd)
 		if runner.IsSkipped(deleteCmd) {
 			return
@@ -600,15 +652,19 @@ func TestIAMGDPRDeletionStatus(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("gdpr-delst-tenant")
-		userID := UniqueKey("gdpr-delst-user")
 
 		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		userID := createTenantUserID(t, runner, tenantID, "gdpr-delst-user")
 
 		// Request deletion
 		deleteCmd := IAMGDPRDeletionRequestCommand(tenantID, userID, "status-check-test")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, deleteCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(deleteCmd)
 		if runner.IsSkipped(deleteCmd) {
 			return

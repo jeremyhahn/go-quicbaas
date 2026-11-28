@@ -426,6 +426,7 @@ func TestAgentRegister(t *testing.T) {
 	RunForAllTransports(t, "RegisterFleetNode", func(t *testing.T, runner *TestRunner) {
 		name := UniqueKey("register-agent")
 		tenant := UniqueKey("register-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		host := "node01:9090"
 
 		cmd := FleetRegisterCommand(name, host, "claude", tenant)
@@ -447,6 +448,7 @@ func TestAgentRegister(t *testing.T) {
 	RunForAllTransports(t, "RegisterAgentJSON", func(t *testing.T, runner *TestRunner) {
 		name := UniqueKey("register-json")
 		tenant := UniqueKey("register-json-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		host := "node02:9090"
 
 		cmd := FleetRegisterJSONCommand(name, host, "codex", tenant)
@@ -471,6 +473,7 @@ func TestAgentRegister(t *testing.T) {
 	RunForAllTransports(t, "RegisterAgentWithBackend", func(t *testing.T, runner *TestRunner) {
 		name := UniqueKey("register-backend")
 		tenant := UniqueKey("register-backend-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		host := "node03:9090"
 
 		cmd := FleetRegisterWithBackendCommand(name, host, "ollama", tenant, "ollama-7b")
@@ -491,6 +494,7 @@ func TestAgentRegister(t *testing.T) {
 	RunForAllTransports(t, "RegisterAgentWithWorkDir", func(t *testing.T, runner *TestRunner) {
 		name := UniqueKey("register-workdir")
 		tenant := UniqueKey("register-workdir-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		host := "node04:9090"
 
 		cmd := FleetRegisterWithWorkDirCommand(name, host, "claude", tenant, "/data/agents/worker")
@@ -513,6 +517,7 @@ func TestAgentRegister(t *testing.T) {
 func TestAgentList(t *testing.T) {
 	RunForAllTransports(t, "ListFleetNodes", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("list-tenant")
+		runner.ActAsTenantAdmin(tenant)
 
 		// Register 2 agents
 		name1 := UniqueKey("list-agent-1")
@@ -546,6 +551,7 @@ func TestAgentList(t *testing.T) {
 func TestAgentListJSON(t *testing.T) {
 	RunForAllTransports(t, "ListAgentsJSON", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("list-json-tenant")
+		runner.ActAsTenantAdmin(tenant)
 
 		// Register an agent
 		name := UniqueKey("list-json-agent")
@@ -562,15 +568,18 @@ func TestAgentListJSON(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify JSON structure
+		// The fleet list JSON carries the agents under "nodes"; older output used "agents".
+		type listedAgent struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			Host     string `json:"host"`
+			NodeType string `json:"node_type"`
+			Status   string `json:"status"`
+		}
 		var listResp struct {
-			Agents []struct {
-				ID       string `json:"id"`
-				Name     string `json:"name"`
-				Host     string `json:"host"`
-				NodeType string `json:"node_type"`
-				Status   string `json:"status"`
-			} `json:"agents"`
-			Count int `json:"count"`
+			Nodes  []listedAgent `json:"nodes"`
+			Agents []listedAgent `json:"agents"`
+			Count  int           `json:"count"`
 		}
 		err = json.Unmarshal([]byte(stdout), &listResp)
 		require.NoError(t, err, "Output should be valid JSON")
@@ -578,7 +587,7 @@ func TestAgentListJSON(t *testing.T) {
 
 		// Verify our agent is in the list
 		found := false
-		for _, agent := range listResp.Agents {
+		for _, agent := range append(listResp.Nodes, listResp.Agents...) {
 			if agent.Name == name {
 				found = true
 				assert.Equal(t, "node01:9090", agent.Host)
@@ -598,6 +607,7 @@ func TestAgentListJSON(t *testing.T) {
 func TestAgentListFilterByHost(t *testing.T) {
 	RunForAllTransports(t, "ListAgentsByHost", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("filter-host-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		host1 := "filter-host-node01:9090"
 		host2 := "filter-host-node02:9090"
 
@@ -638,6 +648,7 @@ func TestAgentListFilterByHost(t *testing.T) {
 func TestAgentListFilterByType(t *testing.T) {
 	RunForAllTransports(t, "ListAgentsByType", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("filter-type-tenant")
+		runner.ActAsTenantAdmin(tenant)
 
 		// Register agents of different types
 		claudeName := UniqueKey("type-claude")
@@ -676,6 +687,7 @@ func TestAgentListFilterByType(t *testing.T) {
 func TestAgentListFilterByStatus(t *testing.T) {
 	RunForAllTransports(t, "ListAgentsByStatus", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("filter-status-tenant")
+		runner.ActAsTenantAdmin(tenant)
 
 		// Register an agent (should have "registered" status)
 		name := UniqueKey("status-agent")
@@ -701,6 +713,7 @@ func TestAgentListFilterByStatus(t *testing.T) {
 func TestAgentListFilterByBackend(t *testing.T) {
 	RunForAllTransports(t, "ListAgentsByBackend", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("filter-backend-tenant")
+		runner.ActAsTenantAdmin(tenant)
 
 		// Register agents with different backends
 		name1 := UniqueKey("backend-ollama")
@@ -734,6 +747,7 @@ func TestAgentRegisterWithModel(t *testing.T) {
 	RunForAllTransports(t, "RegisterAgentWithModel", func(t *testing.T, runner *TestRunner) {
 		name := UniqueKey("register-model")
 		tenant := UniqueKey("register-model-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		host := "model-node01:9090"
 		model := "claude-3-opus"
 
@@ -765,6 +779,7 @@ func TestAgentRegisterWithModel(t *testing.T) {
 	RunForAllTransports(t, "RegisterAgentWithAllOptions", func(t *testing.T, runner *TestRunner) {
 		name := UniqueKey("register-allopts")
 		tenant := UniqueKey("register-allopts-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		host := "allopts-node01:9090"
 
 		cmd := FleetRegisterWithAllOptionsCommand(name, host, "ollama", tenant, "ollama-backend", "llama3-70b", "/data/agents/worker")
@@ -787,6 +802,7 @@ func TestAgentRegisterWithModel(t *testing.T) {
 func TestAgentListYAML(t *testing.T) {
 	RunForAllTransports(t, "ListAgentsYAML", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("list-yaml-tenant")
+		runner.ActAsTenantAdmin(tenant)
 
 		// Register an agent for listing
 		name := UniqueKey("list-yaml-agent")
@@ -812,6 +828,7 @@ func TestAgentListYAML(t *testing.T) {
 func TestAgentStatus(t *testing.T) {
 	RunForAllTransports(t, "FleetNodeStatus", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("status-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		name := UniqueKey("status-agent")
 		host := "node01:9090"
 
@@ -852,6 +869,7 @@ func TestAgentStatus(t *testing.T) {
 func TestAgentHeartbeat(t *testing.T) {
 	RunForAllTransports(t, "FleetNodeHeartbeat", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("heartbeat-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		name := UniqueKey("heartbeat-agent")
 
 		// Register agent
@@ -890,6 +908,7 @@ func TestAgentHeartbeat(t *testing.T) {
 func TestAgentRemove(t *testing.T) {
 	RunForAllTransports(t, "RemoveFleetNode", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("remove-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		name := UniqueKey("remove-agent")
 
 		// Register agent
@@ -918,6 +937,7 @@ func TestAgentRemove(t *testing.T) {
 
 	RunForAllTransports(t, "RemoveAgentJSON", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("remove-json-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		name := UniqueKey("remove-json-agent")
 
 		// Register agent
@@ -953,6 +973,7 @@ func TestAgentRemove(t *testing.T) {
 func TestAgentLifecycle(t *testing.T) {
 	RunForAllTransports(t, "AgentLifecycle", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("lifecycle-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		name := UniqueKey("lifecycle-agent")
 		host := "lifecycle-node01:9090"
 
@@ -1013,17 +1034,20 @@ func TestAgentLifecycle(t *testing.T) {
 		stdout, _, err = runner.Run(listCmd2)
 		require.NoError(t, err)
 
+		// The fleet list JSON carries the agents under "nodes"; older output used "agents".
+		type listedAgent struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
 		var listResp struct {
-			Agents []struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-			} `json:"agents"`
-			Count int `json:"count"`
+			Nodes  []listedAgent `json:"nodes"`
+			Agents []listedAgent `json:"agents"`
+			Count  int           `json:"count"`
 		}
 		err = json.Unmarshal([]byte(stdout), &listResp)
 		require.NoError(t, err)
 
-		for _, agent := range listResp.Agents {
+		for _, agent := range append(listResp.Nodes, listResp.Agents...) {
 			assert.NotEqual(t, agentID, agent.ID, "Removed agent should not appear in list")
 		}
 		t.Logf("[%s] Step 8 - Verify removed: OK (count=%d)", runner.transport, listResp.Count)
@@ -1038,6 +1062,7 @@ func TestAgentOutputFormats(t *testing.T) {
 		t.Run(fmt.Sprintf("List_%s", format), func(t *testing.T) {
 			RunForAllTransports(t, fmt.Sprintf("List_%s", format), func(t *testing.T, runner *TestRunner) {
 				tenant := UniqueKey("format-tenant")
+				runner.ActAsTenantAdmin(tenant)
 
 				// Register an agent for listing
 				name := UniqueKey("format-agent")
@@ -1066,32 +1091,33 @@ func TestAgentOutputFormats(t *testing.T) {
 
 // TestAgentErrors tests error handling for agent commands.
 func TestAgentErrors(t *testing.T) {
-	RunForAllTransports(t, "RegisterMissingName", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "RegisterMissingName", "agent-err-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(FleetRegisterMissingNameCommand())
 	})
 
-	RunForAllTransports(t, "RegisterMissingHost", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "RegisterMissingHost", "agent-err-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(FleetRegisterMissingHostCommand())
 	})
 
-	RunForAllTransports(t, "RegisterMissingType", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "RegisterMissingType", "agent-err-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(FleetRegisterMissingTypeCommand())
 	})
 
-	RunForAllTransports(t, "StatusMissingID", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "StatusMissingID", "agent-err-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(FleetStatusMissingIDCommand())
 	})
 
-	RunForAllTransports(t, "RemoveMissingID", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "RemoveMissingID", "agent-err-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(FleetRemoveMissingIDCommand())
 	})
 
-	RunForAllTransports(t, "HeartbeatMissingID", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "HeartbeatMissingID", "agent-err-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(FleetHeartbeatMissingIDCommand())
 	})
 
 	RunForAllTransports(t, "StatusNonexistent", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("error-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		cmd := FleetStatusNonexistentCommand(tenant)
 		if runner.IsSkipped(cmd) {
 			return
@@ -1101,6 +1127,7 @@ func TestAgentErrors(t *testing.T) {
 
 	RunForAllTransports(t, "RemoveNonexistent", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("error-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		cmd := FleetRemoveNonexistentCommand(tenant)
 		if runner.IsSkipped(cmd) {
 			return
@@ -1110,6 +1137,7 @@ func TestAgentErrors(t *testing.T) {
 
 	RunForAllTransports(t, "HeartbeatNonexistent", func(t *testing.T, runner *TestRunner) {
 		tenant := UniqueKey("error-tenant")
+		runner.ActAsTenantAdmin(tenant)
 		cmd := FleetHeartbeatNonexistentCommand(tenant)
 		if runner.IsSkipped(cmd) {
 			return
@@ -1132,18 +1160,22 @@ func findAgentID(t *testing.T, runner *TestRunner, tenant, agentName string) str
 		return ""
 	}
 
+	// The fleet list JSON carries the agents under "nodes" (REST and CLI);
+	// older output used "agents". Accept both.
+	type fleetEntry struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
 	var listResp struct {
-		Agents []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"agents"`
+		Nodes  []fleetEntry `json:"nodes"`
+		Agents []fleetEntry `json:"agents"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &listResp); err != nil {
 		return ""
 	}
 
-	for _, agent := range listResp.Agents {
-		if agent.Name == agentName {
+	for _, agent := range append(listResp.Nodes, listResp.Agents...) {
+		if agent.Name == agentName && agent.ID != "" {
 			return agent.ID
 		}
 	}

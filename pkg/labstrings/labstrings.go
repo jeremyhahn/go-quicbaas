@@ -139,7 +139,7 @@ const (
 // and a rule's own advice could not be written down next to it.
 var classGuidance = map[Class]string{
 	ClassLabAddress:    "use an RFC 5737 documentation address (198.51.100.0/24) or a name under .example.com",
-	ClassLabHost:       "name the role, not the machine: agent-01, ci-runner-01, gpu-host.internal, quicbaas.example.com",
+	ClassLabHost:       "name the role, not the machine: agent-01, ci-runner-01, gpu-01.internal, quicbaas.example.com",
 	ClassOwnerPath:     "make the path relative to the repository root, or use /var/lib/quicbaas, /srv, /home/agent",
 	ClassOwnerAccount:  "name a role, not a person: operator, agent, or the project's own module path",
 	ClassCoordHost:     "use a reference endpoint (forge.example.com, registry.example:5000) and a role account (company-agent); name a credential variable for what it holds (FORGE_READ_TOKEN)",

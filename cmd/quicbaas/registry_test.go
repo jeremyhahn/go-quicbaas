@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	registrySDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/registry"
 )
 
@@ -106,7 +108,7 @@ func runRegistryCLI(t *testing.T, args ...string) (string, error) {
 func TestRegistryCLI_Register(t *testing.T) {
 	fake := &fakeRegistryClient{}
 	withFakeRegistry(t, fake)
-	out, err := runRegistryCLI(t, "register", "--service", "api", "--id", "node-a", "--address", "10.0.4.7:8443",
+	out, err := runRegistryCLI(t, "register", "--service", "api", "--id", "node-a", "--instance-address", "10.0.4.7:8443",
 		"--ttl", "20", "--meta", "zone=z1", "--meta", "arch=arm64", "--output", "json")
 	if err != nil {
 		t.Fatalf("register: %v", err)
@@ -180,7 +182,7 @@ func TestRegistryCLI_Errors(t *testing.T) {
 	if _, err := runRegistryCLI(t, "deregister", "0"); err == nil {
 		t.Fatal("deregister accepted lease 0")
 	}
-	if _, err := runRegistryCLI(t, "register", "--service", "api", "--id", "a", "--address", "x:1", "--meta", "novalue"); err == nil {
+	if _, err := runRegistryCLI(t, "register", "--service", "api", "--id", "a", "--instance-address", "x:1", "--meta", "novalue"); err == nil {
 		t.Fatal("register accepted malformed metadata")
 	}
 	if _, err := runRegistryCLI(t, "resolve", "api", "--output", "xml"); err == nil {
@@ -190,7 +192,7 @@ func TestRegistryCLI_Errors(t *testing.T) {
 	boom := errors.New("server down")
 	withFakeRegistry(t, &fakeRegistryClient{err: boom})
 	for _, args := range [][]string{
-		{"register", "--service", "api", "--id", "a", "--address", "x:1"},
+		{"register", "--service", "api", "--id", "a", "--instance-address", "x:1"},
 		{"renew", "1"}, {"deregister", "1"}, {"resolve", "api"}, {"watch", "api"},
 	} {
 		if _, err := runRegistryCLI(t, args...); err == nil {
@@ -206,5 +208,37 @@ func TestRegistryCLI_Errors(t *testing.T) {
 	}
 	if (&InvalidLeaseIDError{Value: "x"}).Error() == "" || (&InvalidRegistryMetadataError{Value: "x"}).Error() == "" {
 		t.Fatal("empty error messages")
+	}
+}
+
+// TestRegistryCLI_RegisterKeepsGlobalAddress checks that `registry register`
+// leaves the global persistent --address (the server to connect to) visible:
+// the instance address is --instance-address, so --address names the server.
+func TestRegistryCLI_RegisterKeepsGlobalAddress(t *testing.T) {
+	origAddress, origInstance := address, registryAddress
+	t.Cleanup(func() { address, registryAddress = origAddress, origInstance })
+
+	root := &cobra.Command{Use: "quicbaas"}
+	addServerAddressFlag(root.PersistentFlags())
+	root.AddCommand(newRegistryCommand())
+	register, _, err := root.Find([]string{"registry", "register"})
+	if err != nil {
+		t.Fatalf("find registry register: %v", err)
+	}
+	if register.LocalNonPersistentFlags().Lookup("address") != nil {
+		t.Fatal("registry register defines a local --address that hides the global server --address")
+	}
+
+	const server = "quicbaas.test:9090"
+	if err := register.ParseFlags([]string{
+		"--address", server, "--service", "api", "--id", "node-a", "--instance-address", "10.9.0.1:443",
+	}); err != nil {
+		t.Fatalf("parse register flags: %v", err)
+	}
+	if address != server {
+		t.Fatalf("server address = %q, want %q", address, server)
+	}
+	if registryAddress != "10.9.0.1:443" {
+		t.Fatalf("instance address = %q, want %q", registryAddress, "10.9.0.1:443")
 	}
 }

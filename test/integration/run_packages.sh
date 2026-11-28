@@ -1,28 +1,5 @@
 #!/bin/sh
-# run_packages.sh runs integration test packages one at a time, each under its
-# own time limit, so one hung package costs at most 11 minutes instead of the
-# whole suite (#1591).
-#
-# Usage: run_packages.sh LOG TAGS FLAGS PKG...
-#        run_packages.sh --filter LOG TAGS FILTER
-#
-#   LOG    file every package's output is appended to (and echoed)
-#   TAGS   build tags, passed to go test -tags
-#   FLAGS  extra go test flags, split on spaces (may be empty), e.g. "-run X$"
-#   PKG    packages or package patterns, each run by its own go test
-#   FILTER a QUICBAAS_TEST_FILTER value, go test flags and packages mixed, e.g.
-#          "-run TestX ./test/integration/...". It is split on spaces: a token
-#          starting with - is a flag, and a flag that takes a value (-run,
-#          -skip, -count, -timeout, -tags, ...) takes the next token with it
-#          unless written -flag=value; every other token is a package. A
-#          filter without packages runs on FILTER_DEFAULT_ROOT.
-#
-# After a failed package the cluster probe (health_check.sh on PATH) runs,
-# bounded by HEALTH_PROBE_TIMEOUT: if the cluster is down, or the probe does
-# not answer in time, the remaining packages are not run. The script exits 0
-# only if every package passed, and ends with a table of package durations.
-#
-# Tested by run_packages_test.sh (`make check-workspace-script`).
+# run_packages.sh runs integration packages one at a time, each under its own time limit.
 set -u
 set -f
 
@@ -90,6 +67,36 @@ fi
 
 PACKAGE_TIMEOUT=${PACKAGE_TIMEOUT:-10m}
 PACKAGE_KILL_TIMEOUT=${PACKAGE_KILL_TIMEOUT:-11m}
+# IAM_PACKAGE_TIMEOUT is the iam package's own limit; packages without their own limit
+# below keep PACKAGE_TIMEOUT. The iam package spends its time creating and deleting
+# tenants: run 45348624843 measured about 19.5 s per tenant lifecycle (create
+# plus delete) and timed the package out at 10m. After the shared-tenant
+# fixture (test/integration/iam/shared_tenant_test.go) about 95 lifecycles
+# remain (87 fresh tenants plus 8 shared ones), so
+#   ceil(1.5 x ((95 x 19.5 s) + 60 s)) = ceil(1.5 x 1912.5 s) = 2869 s (~48m),
+# which is capped at 30m. The kill limit stays one minute above it.
+IAM_PACKAGE_TIMEOUT=${IAM_PACKAGE_TIMEOUT:-30m}
+IAM_PACKAGE_KILL_TIMEOUT=${IAM_PACKAGE_KILL_TIMEOUT:-31m}
+# CLI_PACKAGE_TIMEOUT is the cli package's own limit. Its length is legitimate,
+# not a hang: run 45364801188 ran 64 of its 615 top-level tests in 523 s
+# (TestAgentAccount* 296 s, the barrier per-test daemons 171 s) before the 10m
+# limit. The 551 tests still to run all use the shared docker cluster (only
+# barrier_test.go spawns per-test daemons), at about 2 s each:
+#   523 s + 15 s (TestBarrierAuthPosture_DefaultDeny) + 551 x 2 s = 1640 s,
+#   ceil(1.5 x 1640 s) = 2460 s (41m), capped at 30m like iam.
+# The kill limit stays one minute above it.
+CLI_PACKAGE_TIMEOUT=${CLI_PACKAGE_TIMEOUT:-30m}
+CLI_PACKAGE_KILL_TIMEOUT=${CLI_PACKAGE_KILL_TIMEOUT:-31m}
+# CLUSTER_PACKAGE_TIMEOUT is the cluster package's own limit. Its length is
+# legitimate, not a hang: on main e2a3ed26 the 34 top-level tests before
+# TestDataPersistence passed in 588 s (TestClusterConsistency 202 s,
+# TestClusterManagement_Rebalancing 155-182 s, TestClusterShardOperations
+# 82-102 s) before the 10m limit. The unrun leader-election, multiprotocol
+# and four rebalancing tests add about 930 s:
+#   ceil(1.5 x (590 s + 930 s)) = 2280 s (38m), capped at 30m like iam.
+# The kill limit stays one minute above it.
+CLUSTER_PACKAGE_TIMEOUT=${CLUSTER_PACKAGE_TIMEOUT:-30m}
+CLUSTER_PACKAGE_KILL_TIMEOUT=${CLUSTER_PACKAGE_KILL_TIMEOUT:-31m}
 # HEALTH_PROBE_TIMEOUT bounds the cluster probe after a failed package: a node
 # that accepts connections but never answers would otherwise hang the runner.
 HEALTH_PROBE_TIMEOUT=${HEALTH_PROBE_TIMEOUT:-120s}
@@ -103,10 +110,26 @@ remaining=$#
 for pkg in "$@"; do
 	remaining=$((remaining - 1))
 	start=$(date +%s)
+	pkg_timeout=$PACKAGE_TIMEOUT
+	pkg_kill_timeout=$PACKAGE_KILL_TIMEOUT
+	case "$pkg" in
+	*/integration/iam | */integration/iam/ | */integration/iam/...)
+		pkg_timeout=$IAM_PACKAGE_TIMEOUT
+		pkg_kill_timeout=$IAM_PACKAGE_KILL_TIMEOUT
+		;;
+	*/integration/cli | */integration/cli/ | */integration/cli/...)
+		pkg_timeout=$CLI_PACKAGE_TIMEOUT
+		pkg_kill_timeout=$CLI_PACKAGE_KILL_TIMEOUT
+		;;
+	*/integration/cluster | */integration/cluster/ | */integration/cluster/...)
+		pkg_timeout=$CLUSTER_PACKAGE_TIMEOUT
+		pkg_kill_timeout=$CLUSTER_PACKAGE_KILL_TIMEOUT
+		;;
+	esac
 	# shellcheck disable=SC2086 # FLAGS is split into separate go test flags.
 	{
-		timeout --kill-after=30s "$PACKAGE_KILL_TIMEOUT" \
-			go test -v -p 1 -failfast -tags "$tags" -timeout "$PACKAGE_TIMEOUT" $flags "$pkg"
+		timeout --kill-after=30s "$pkg_kill_timeout" \
+			go test -v -p 1 -failfast -tags "$tags" -timeout "$pkg_timeout" $flags "$pkg"
 		echo $? >"$status_file"
 	} 2>&1 | tee -a "$log"
 	read -r rc <"$status_file"

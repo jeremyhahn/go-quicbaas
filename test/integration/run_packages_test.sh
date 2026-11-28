@@ -4,7 +4,8 @@
 # line, a failed package with a healthy cluster lets the rest run, a failed
 # package with a dead cluster stops the suite, exit 124 reads as timeout,
 # --filter splits go test flags from packages, and a probe that never answers
-# is cut off at HEALTH_PROBE_TIMEOUT.
+# is cut off at HEALTH_PROBE_TIMEOUT, and the iam, cli and cluster packages get
+# their own go test -timeout.
 #
 # Run by `make check-workspace-script`.
 set -eu
@@ -21,9 +22,11 @@ fail() {
 
 mkdir "$tmp/bin"
 
-# The stub timeout drops its own options and duration and runs the command.
+# The stub timeout records its whole command line in $STUB_RAN.timeout, then
+# drops its own options and duration and runs the command.
 cat >"$tmp/bin/timeout" <<'EOF'
 #!/bin/sh
+echo "$*" >>"$STUB_RAN.timeout"
 while [ $# -gt 0 ]; do
 	case $1 in
 	--*) shift ;;
@@ -102,9 +105,10 @@ grep -q '^package example/c: [0-9]*s timeout$' "$tmp/out" || fail "c times out: 
 # run_filter runs run_packages.sh --filter with filter $1, storing the go
 # command lines in $tmp/ran.args; it returns the exit status.
 run_filter() {
-	rm -f "$tmp/ran" "$tmp/ran.args" "$tmp/log"
+	rm -f "$tmp/ran" "$tmp/ran.args" "$tmp/ran.timeout" "$tmp/log"
 	: >"$tmp/ran"
 	: >"$tmp/ran.args"
+	: >"$tmp/ran.timeout"
 	PATH="$tmp/bin:$PATH" STUB_RAN="$tmp/ran" \
 		sh "$script" --filter "$tmp/log" "integration" "$1" >"$tmp/out" 2>&1
 }
@@ -153,6 +157,30 @@ PATH="$tmp/probe-bin:$PATH" STUB_RAN="$tmp/ran" STUB_GO_EXIT_a=1 HEALTH_PROBE_TI
 [ "$(ran)" = "example/a " ] || fail "probe hangs: ran '$(ran)'"
 grep -q '^infrastructure failure after example/a; 1 packages not run$' "$tmp/out" ||
 	fail "probe hangs: no infrastructure failure line"
+
+# (x) The iam package runs with its own limit, IAM_PACKAGE_TIMEOUT (30m).
+run_filter "./test/integration/iam" || fail "iam limit: exit $?, want 0"
+grep -q -- ' -timeout 30m .*\./test/integration/iam$' "$tmp/ran.args" ||
+	fail "iam limit: ran '$(cat "$tmp/ran.args")', want -timeout 30m"
+
+# (xi) The cli package runs with its own limit, CLI_PACKAGE_TIMEOUT (30m).
+run_filter "./test/integration/cli" || fail "cli limit: exit $?, want 0"
+grep -q -- ' -timeout 30m .*\./test/integration/cli$' "$tmp/ran.args" ||
+	fail "cli limit: ran '$(cat "$tmp/ran.args")', want -timeout 30m"
+
+# (xii) The cluster package runs with its own limit, CLUSTER_PACKAGE_TIMEOUT (30m).
+run_filter "./test/integration/cluster" || fail "cluster limit: exit $?, want 0"
+grep -q -- ' -timeout 30m .*\./test/integration/cluster$' "$tmp/ran.args" ||
+	fail "cluster limit: ran '$(cat "$tmp/ran.args")', want -timeout 30m"
+grep -q -- '^--kill-after=30s 31m go test .*\./test/integration/cluster$' "$tmp/ran.timeout" ||
+	fail "cluster limit: timeout ran '$(cat "$tmp/ran.timeout")', want 31m"
+
+# (xiii) Every other package keeps PACKAGE_TIMEOUT (10m).
+run_filter "./test/integration/login" || fail "other limit: exit $?, want 0"
+grep -q -- ' -timeout 10m .*\./test/integration/login$' "$tmp/ran.args" ||
+	fail "other limit: ran '$(cat "$tmp/ran.args")', want -timeout 10m"
+grep -q -- '^--kill-after=30s 11m go test .*\./test/integration/login$' "$tmp/ran.timeout" ||
+	fail "other limit: timeout ran '$(cat "$tmp/ran.timeout")', want 11m"
 
 # Too few arguments are refused, in both modes.
 if sh "$script" --filter "$tmp/log" integration 2>/dev/null; then

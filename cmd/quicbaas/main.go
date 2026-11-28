@@ -489,6 +489,7 @@ func main() {
 	if runContainerInit() {
 		return
 	}
+	registerInProcessContainerRuntime()
 	if isGUIOnly() {
 		// User intent: launch GUI (no subcommand, no CLI-intent flags).
 		if !hasDisplay() {

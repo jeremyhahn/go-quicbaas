@@ -315,7 +315,7 @@ is what makes readmission dispatch the Task.
 
 A park whose reason carries **no** `unblock[kind=…]` condition — an operator
 repair, an owner ruling, a needs-info question — is never readmitted by the
-sweep, and a condition the sweep cannot decide (an owner ruling) is left where
+sweep, and a condition the sweep cannot decide is left where
 it is. Those return to the queue only through a person's `readmit`; the sweep
 keeps the checkable ones from needing one.
 

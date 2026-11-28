@@ -150,6 +150,10 @@ const (
 	// usage reasons. Unlike the other non-active states it heals itself:
 	// AccountInfo.AvailableAt names the moment it rejoins the pool.
 	StatusLimited Status = "limited"
+	// StatusAwaitingCredential marks a default provider account whose
+	// credential has not been set yet; setting it with RotateCredential makes
+	// the account active.
+	StatusAwaitingCredential Status = "awaiting_credential"
 )
 
 // CredentialHealth is the derived verdict on how much life an account's

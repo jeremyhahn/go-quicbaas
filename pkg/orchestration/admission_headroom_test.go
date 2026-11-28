@@ -288,6 +288,54 @@ func TestAccountPoolHeadroom_OneReadyAccountIsEnough(t *testing.T) {
 	}
 }
 
+// awaitCredential moves a rig account to AccountStatusAwaitingCredential, the
+// state a tenant's default provider accounts are seeded in.
+func (r *headroomRig) awaitCredential(t *testing.T, account *Account) {
+	t.Helper()
+	account.Status = AccountStatusAwaitingCredential
+	if err := r.accounts.Update(context.Background(), account); err != nil {
+		t.Fatalf("update account %s: %v", account.ID, err)
+	}
+}
+
+// TestAccountPoolHeadroom_AccountsAwaitingACredentialAreNotPooled: a tenant
+// whose only accounts are unconfigured defaults has no pool yet, so admission
+// is unmetered rather than held behind accounts that cannot serve a session.
+func TestAccountPoolHeadroom_AccountsAwaitingACredentialAreNotPooled(t *testing.T) {
+	t.Parallel()
+	rig := newHeadroomRig(t)
+	rig.awaitCredential(t, rig.account(t, "default-claude", "", true))
+	rig.awaitCredential(t, rig.account(t, "default-codex", "", true))
+
+	headroom, err := rig.reader.Headroom(context.Background(), admissionTenant, "p", admissionClock)
+	if err != nil {
+		t.Fatalf("Headroom: %v", err)
+	}
+	if !headroom.Unmetered() || !headroom.HasHeadroom() {
+		t.Fatalf("a pool of accounts awaiting a credential must be unmetered: %+v", headroom)
+	}
+	if headroom.Reason != "" {
+		t.Fatalf("an unmetered pool has nothing to explain: %q", headroom.Reason)
+	}
+}
+
+// TestAccountPoolHeadroom_OnlyTheConfiguredAccountCounts: beside a ready
+// account, one still awaiting a credential is neither pooled nor held.
+func TestAccountPoolHeadroom_OnlyTheConfiguredAccountCounts(t *testing.T) {
+	t.Parallel()
+	rig := newHeadroomRig(t)
+	rig.account(t, "ready", "", true)
+	rig.awaitCredential(t, rig.account(t, "default-codex", "", true))
+
+	headroom, err := rig.reader.Headroom(context.Background(), admissionTenant, "p", admissionClock)
+	if err != nil {
+		t.Fatalf("Headroom: %v", err)
+	}
+	if headroom.Pooled != 1 || headroom.Ready != 1 || !headroom.HasHeadroom() {
+		t.Fatalf("Headroom = %+v, want only the ready account pooled and ready", headroom)
+	}
+}
+
 // TestAccountPoolHeadroom_TheEarliestReturnIsReported: with two held accounts
 // returning at two times, the pool returns at the first of them.
 func TestAccountPoolHeadroom_TheEarliestReturnIsReported(t *testing.T) {
