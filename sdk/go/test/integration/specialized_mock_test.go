@@ -884,7 +884,7 @@ func TestBackupClient_ListWithResults(t *testing.T) {
 		t.Fatal("expected non-nil response")
 	}
 	if len(resp.Backups) != 3 {
-		t.Errorf("expected 3 backups, got %d", len(resp.Backups))
+		t.Fatalf("expected 3 backups, got %d", len(resp.Backups))
 	}
 
 	// Verify backup info

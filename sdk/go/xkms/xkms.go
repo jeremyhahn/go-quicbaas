@@ -220,10 +220,12 @@ var (
 	DecodePCRs                        = xkmssdk.DecodePCRs
 	DefaultTPMConfig                  = xkmssdk.DefaultTPMConfig
 	DiscoverPlatformAttributes        = xkmssdk.DiscoverPlatformAttributes
+	EKAttributesFromConfig            = xkmssdk.EKAttributesFromConfig
 	EncodePubKeyPEM                   = xkmssdk.EncodePubKeyPEM
 	ErrCertNotFound                   = xkmssdk.ErrCertNotFound
 	ErrInvalidKeyAlgorithm            = xkmssdk.ErrInvalidKeyAlgorithm
 	ErrInvalidKeyStore                = xkmssdk.ErrInvalidKeyStore
+	ErrPIVImportNotSupported          = xkmssdk.ErrPIVImportNotSupported
 	ErrPlatformSRKAlreadyEnrolled     = xkmssdk.ErrPlatformSRKAlreadyEnrolled
 	ErrPlatformSRKEnrollEmptyPIN      = xkmssdk.ErrPlatformSRKEnrollEmptyPIN
 	ErrTPMEndorsementCertNotFound     = xkmssdk.ErrTPMEndorsementCertNotFound
@@ -231,6 +233,7 @@ var (
 	ErrTPMNotInitialized              = xkmssdk.ErrTPMNotInitialized
 	ErrTPMStoreCertNotFound           = xkmssdk.ErrTPMStoreCertNotFound
 	IDevIDAttributesFromConfig        = xkmssdk.IDevIDAttributesFromConfig
+	ImportPIVKey                      = xkmssdk.ImportPIVKey
 	LDevIDAttributesFromConfig        = xkmssdk.LDevIDAttributesFromConfig
 	KeyAttributesFromConfig           = xkmssdk.KeyAttributesFromConfig
 	MinimalInstallOptions             = xkmssdk.MinimalInstallOptions
@@ -259,6 +262,7 @@ var (
 	ParseStoreType                    = xkmssdk.ParseStoreType
 	ResetPIV                          = xkmssdk.ResetPIV
 	RSASRKTemplate                    = xkmssdk.RSASRKTemplate
+	SRKAttributesFromConfig           = xkmssdk.SRKAttributesFromConfig
 	ServiceClose                      = xkmssdk.ServiceClose
 	ServiceDeleteKey                  = xkmssdk.ServiceDeleteKey
 	ServiceDeleteKeyByID              = xkmssdk.ServiceDeleteKeyByID
@@ -380,6 +384,8 @@ type (
 	HealthResponse                     = xkmssdk.HealthResponse
 	ImportKeyRequest                   = xkmssdk.ImportKeyRequest
 	ImportKeyResponse                  = xkmssdk.ImportKeyResponse
+	ImportPIVKeyRequest                = xkmssdk.ImportPIVKeyRequest
+	ImportPIVKeyResponse               = xkmssdk.ImportPIVKeyResponse
 	InitStatusResponse                 = xkmssdk.InitStatusResponse
 	IsRevokedRequest                   = xkmssdk.IsRevokedRequest
 	IsRevokedResponse                  = xkmssdk.IsRevokedResponse
@@ -570,6 +576,35 @@ var (
 	// qualifying data.
 	PeerChannelBinding = xkmssdk.PeerChannelBinding
 	PeerQualifyingData = xkmssdk.PeerQualifyingData
+)
+
+// Device-trust primitives (go-xkms sdk/go attestation_peer.go): recognising a
+// peer's TCG device credential and binding evidence to the TLS connection it
+// arrived on. Pure aliases; go-trusted-platform's validator is the consumer.
+type (
+	// PeerDevIDPolicy is what a TCG device credential is checked against.
+	PeerDevIDPolicy = xkmssdk.PeerDevIDPolicy
+	// PeerTLSEvidence pairs a peer's evidence with its connection's binding.
+	PeerTLSEvidence = xkmssdk.PeerTLSEvidence
+	// PeerDevIDError reports a certificate that is not a usable credential.
+	PeerDevIDError = xkmssdk.PeerDevIDError
+	// PeerDevIDPolicyError reports a PeerDevIDPolicy that cannot be evaluated.
+	PeerDevIDPolicyError = xkmssdk.PeerDevIDPolicyError
+)
+
+var (
+	// PeerVerifyIDevID checks a device identity credential (IDevID/LDevID).
+	PeerVerifyIDevID = xkmssdk.PeerVerifyIDevID
+	// PeerVerifyIAK checks an attestation key credential (IAK/LAK).
+	PeerVerifyIAK = xkmssdk.PeerVerifyIAK
+	// PeerIsIDevID reports the device identity shape; never authorization.
+	PeerIsIDevID = xkmssdk.PeerIsIDevID
+	// PeerIsIAK reports the attestation key shape; never authorization.
+	PeerIsIAK = xkmssdk.PeerIsIAK
+	// PeerEvidenceFromTLS pairs evidence with the TLS connection's binding.
+	PeerEvidenceFromTLS = xkmssdk.PeerEvidenceFromTLS
+	// PeerQualifyingDataFromTLS derives the quote's qualifying data from TLS.
+	PeerQualifyingDataFromTLS = xkmssdk.PeerQualifyingDataFromTLS
 )
 
 // TPM lifecycle and EK credential challenge (go-xkms#798). The lifecycle

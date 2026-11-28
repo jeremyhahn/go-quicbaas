@@ -205,6 +205,7 @@ func TestIsProjectServiceGRPC(t *testing.T) {
 		"auth":         isAuthService,
 		"iam":          isIAMService,
 		"kv":           isKVService,
+		"query":        isQueryService,
 		"health":       isHealthService,
 		"cluster":      isClusterService,
 		"vector":       isVectorService,

@@ -214,12 +214,19 @@ A host that has not wired the corresponding manager gets a typed
 `*embedded.ServiceNotConfiguredError` naming the service, never a nil-pointer
 panic.
 
-`IAM.Session/Touch` is deliberately absent: no transport carries it, because
-`service.SessionManager` exposes no activity-update operation. Calling it
-yields "unknown method", which matches gRPC's `Unimplemented`.
+`IAM.Session/Touch` records activity on a session through
+`SessionManager.UpdateActivity`. The server stamps the time, so a
+client-supplied timestamp is not carried. With a `Subject` on the context,
+touching a session the subject does not own returns
+`*embedded.PermissionDeniedError`, the same self-scoping as the other
+`IAM.Session` verbs above.
 
-`IAM.Audit` and `IAM.GDPR` are not yet in the embedded table; use the gRPC,
-Unix, or REST transport for those.
+The embedded table also serves `IAM.Audit` (`Query`, `Get`, `Record`,
+`RecordAsync`, `Delete`) and `IAM.GDPR` (`GrantConsent`, `WithdrawConsent`,
+`GetConsent`, `ListConsents`, `RequestExport`, `GetExportStatus`,
+`GenerateExport`, `RequestDeletion`, `CancelDeletion`, `GetDeletionStatus`).
+As with the other IAM services, a host that has not wired the manager gets
+the typed `*embedded.ServiceNotConfiguredError`.
 
 ## TLS Configuration
 

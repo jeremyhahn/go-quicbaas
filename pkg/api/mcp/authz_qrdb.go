@@ -80,15 +80,16 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// and removed with them in issue #905.
 	// TestMCPPermissions_EveryMappedToolIsRegistered now makes that class of
 	// entry impossible to add back.
-	"quicbaas_query":        {"kv", "range"},
-	"quicbaas_scan_index":   {"index", "scan"},
-	"quicbaas_batch_get":    {"batch", "execute"},
-	"quicbaas_batch_put":    {"batch", "execute"},
-	"quicbaas_batch_delete": {"batch", "execute"},
-	"qrdb_get":              {"kv", "get"},
-	"qrdb_list":             {"kv", "list"},
-	"qrdb_put":              {"kv", "put"},
-	"qrdb_delete":           {"kv", "delete"},
+	"quicbaas_query":         {"kv", "range"},
+	"quicbaas_scan_index":    {"index", "scan"},
+	"quicbaas_batch_get":     {"batch", "execute"},
+	"quicbaas_batch_put":     {"batch", "execute"},
+	"quicbaas_batch_delete":  {"batch", "execute"},
+	"quicbaas_batch_execute": {"batch", "execute"},
+	"qrdb_get":               {"kv", "get"},
+	"qrdb_list":              {"kv", "list"},
+	"qrdb_put":               {"kv", "put"},
+	"qrdb_delete":            {"kv", "delete"},
 	// The quicbaas_kv_* names of the same entity tools (addKVEntityTool): a
 	// full node serves them in place of the qrdb_* names go-qrdb owns there
 	// (CA ruling 574). quicbaas_kv_list answers every entity's Data, so it
@@ -753,6 +754,9 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_iam_user_delete":      {"users", "delete"},
 	"quicbaas_iam_user_assign_role": {"roles", "assign"},
 	"quicbaas_iam_user_revoke_role": {"roles", "unassign"},
+	// Approve and reject mirror REST's /iam/users/{id}/approve and /reject routes.
+	"quicbaas_iam_user_approve": {"users", "enable"},
+	"quicbaas_iam_user_reject":  {"users", "disable"},
 
 	// WebAuthn credential administration. These are admin verbs over
 	// another user's authenticators, so they carry the same user-admin

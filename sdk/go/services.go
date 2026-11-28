@@ -91,6 +91,11 @@ type SecurityService interface {
 	// not-configured error until an embedder registers an attestor.
 	Attestation() AttestationService
 
+	// TPMPolicy returns the go-xkms TPM-policy client: named policies,
+	// their PCR captures and approvals, and the objects assigned to them,
+	// served on every transport. It is always non-nil.
+	TPMPolicy() XKMSTPMPolicyService
+
 	// SSH exposes SSH key, known-hosts, and authorized-keys management.
 	// This is the single canonical SDK entry point for the SSH surface —
 	// callers never import go-xkms's SSH client directly.
@@ -253,6 +258,8 @@ type securityService struct {
 
 	attestationOnce sync.Once
 	attestationSvc  AttestationService
+	tpmPolicyOnce   sync.Once
+	tpmPolicySvc    XKMSTPMPolicyService
 
 	sshOnce     sync.Once
 	sshSvc      SSHService
@@ -774,6 +781,11 @@ type XKMSBarrierService = xkmstransport.BarrierService
 // XKMSPIVService is a re-export of the go-xkms PIVService interface
 // for Personal Identity Verification operations.
 type XKMSPIVService = xkmstransport.PIVService
+
+// XKMSTPMPolicyService is a re-export of the go-xkms TPMPolicyService
+// interface: named TPM policies, their approvals and the objects bound to
+// them.
+type XKMSTPMPolicyService = xkmstransport.TPMPolicyService
 
 // XKMSFIDO2Service is a re-export of the go-xkms FIDO2Service interface
 // for FIDO2/WebAuthn operations.

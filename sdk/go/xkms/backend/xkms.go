@@ -12,21 +12,30 @@ type Backend = xkmssdk.ServiceBackend
 // backend provisions PIV slots, and SetPIVBackendResolver installs the
 // resolver used to locate the backend serving a given device.
 // PIVCertificateStorage holds the certificate installed in each slot.
+//
+// ImportPIVKey installs an externally held private key in a slot; a
+// PIVKeyGenerator that can accept one also implements PIVKeyImporter.
+// An imported key's attestation asserts residency, not exclusivity; see go-xkms ImportPIVKey.
 type (
+	ImportPIVKeyRequest   = xkmssdk.ImportPIVKeyRequest
+	ImportPIVKeyResponse  = xkmssdk.ImportPIVKeyResponse
 	PIVCertificateStorage = xkmssdk.PIVCertificateStorage
 	PIVKeyGenerator       = xkmssdk.PIVKeyGenerator
+	PIVKeyImporter        = xkmssdk.PIVKeyImporter
 	PIVManagerConfig      = xkmssdk.PIVManagerConfig
 )
 
 var (
 	GeneratePIVKey        = xkmssdk.GeneratePIVKey
 	GetPIVCertificate     = xkmssdk.GetPIVCertificate
+	ImportPIVKey          = xkmssdk.ImportPIVKey
 	InitializePIV         = xkmssdk.InitializePIV
 	ListPIVSlots          = xkmssdk.ListPIVSlots
 	ResetPIV              = xkmssdk.XKMSResetPIV
 	SetPIVBackendResolver = xkmssdk.SetPIVBackendResolver
 	StorePIVCertificate   = xkmssdk.StorePIVCertificate
 
+	ErrPIVImportNotSupported    = xkmssdk.ErrPIVImportNotSupported
 	ErrPIVInvalidSlot           = xkmssdk.ServiceErrPIVInvalidSlot
 	ErrPIVNoAttestationMaterial = xkmssdk.ErrPIVNoAttestationMaterial
 	ErrPIVNotInitialized        = xkmssdk.ServiceErrPIVNotInitialized

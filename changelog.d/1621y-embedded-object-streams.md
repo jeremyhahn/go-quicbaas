@@ -1,0 +1,3 @@
+### Fixed
+
+- The embedded transport now serves the ObjectStorage `StreamPutObject` and `StreamGetObject` verbs and the ObjectTransfer `StreamFetchObjects` verb instead of refusing them. A streamed put reaches the service as one `PutObject` carrying every metadata field (content type, tenant, tags, replication, archive and retention policies, target backend) and stores nothing when its context is canceled or the upload ends before its last chunk; a streamed get returns the object as offset-ordered chunks; a streamed fetch returns one response per requested object, and service errors keep their type (#1621).

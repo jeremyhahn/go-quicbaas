@@ -145,6 +145,14 @@ func TestEmbeddedPEPCheck_Denied(t *testing.T) {
 	assert.Equal(t, iamsdk.EffectDeny, resp.Effect)
 }
 
+func TestHandleIAMPEPCheck_WrongRequestType(t *testing.T) {
+	svc := newPolicyVerbsService(t)
+
+	_, err := handleIAMPEPCheck(tenantCtx(policyConditionsTenant), svc, &iamsdk.CheckBatchRequest{})
+	var typeErr *InvalidRequestTypeError
+	require.ErrorAs(t, err, &typeErr)
+}
+
 func TestEmbeddedPEPCheckBatch_Success(t *testing.T) {
 	tr := newIAMVerbsTransport(t, newPolicyVerbsService(t))
 	client := iamsdk.NewPEPClient(tr)
@@ -267,6 +275,7 @@ func TestEmbeddedPEPCheckBatch_WithoutStopOnDenyEvaluatesEveryCheck(t *testing.T
 func TestIAMPolicySessionPEPDispatchKeysRegistered(t *testing.T) {
 	for _, key := range []string{
 		"quicbaas.IAM.Policy/Simulate",
+		"quicbaas.IAM.PEP/Check",
 		"quicbaas.IAM.PEP/CheckBatch",
 	} {
 		_, ok := iamUnaryHandlers[key]

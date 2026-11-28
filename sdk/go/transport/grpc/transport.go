@@ -275,6 +275,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// The Query service's Execute verb maps onto the QuicBaaS Query stream
+	// RPC (go-quicbaas#1612).
+	if isQueryService(service) {
+		return newQueryHandler(conn).handleRequest(ctx, method, req)
+	}
+
 	// Check if this is a Health service request and route through health handler.
 	// Health services use plain Go structs which don't implement proto.Message,
 	// so we need to convert them to protobuf types before calling gRPC.
@@ -454,6 +460,13 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// TPM-policy verbs carry go-xkms wire structs too; go-xkms serves them
+	// on the xkms.v1 KeystoreService, and pbconv.TPMPolicyClient converts.
+	// This branch also serves the Unix transport.
+	if isTPMPolicyService(service) {
+		return newTPMPolicyHandler(conn).handleRequest(ctx, method, req)
+	}
+
 	// Check if this is an Operations service request and route through the
 	// operations handler. The SDK operations client uses plain Go structs which
 	// don't implement proto.Message, so we need to convert them to the generated
@@ -526,6 +539,16 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 
 	if isTimeSeriesService(service) {
 		return handleTimeSeriesRequest(ctx, conn, method, req)
+	}
+
+	// Backup and Cache: plain Go SDK structs converted to the generated
+	// QuicBaaS backup and cache RPC types. Served here and, verbatim, on the
+	// Unix transport.
+	if isBackupService(service) {
+		return handleBackupRequest(ctx, conn, method, req)
+	}
+	if isCacheService(service) {
+		return handleCacheRequest(ctx, conn, method, req)
 	}
 
 	// Build full method path for other services.

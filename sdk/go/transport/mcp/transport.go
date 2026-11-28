@@ -327,6 +327,11 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		return nil, errors.NewConnection("mcp.doRequest", "transport is closed")
 	}
 
+	// No MCP tool serves the TPM-policy verbs; refuse before any round trip.
+	if isMCPTPMPolicyService(service) {
+		return nil, newTPMPolicyUnsupportedError(method)
+	}
+
 	// Ensure MCP session is initialized
 	if err := t.ensureInitialized(ctx); err != nil {
 		return nil, err
@@ -380,6 +385,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// generic path below.
 	if verb, ok := ollamaVerbs[method]; ok && isMCPOllamaService(service) {
 		return t.requestToolVerb(ctx, "mcp.ollama."+method, verb, reqBody)
+	}
+
+	// Batch Execute decodes into the client type; the rest keep the generic
+	// path below.
+	if verb, ok := batchVerbs[method]; ok && isMCPBatchService(service) {
+		return t.requestToolVerb(ctx, "mcp.batch."+method, verb, reqBody)
 	}
 
 	// These KMS verbs decode into the client types; the rest keep the

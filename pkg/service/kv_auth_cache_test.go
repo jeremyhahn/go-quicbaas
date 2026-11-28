@@ -171,7 +171,7 @@ func TestKVService_Get_CacheHit_EventualConsistency(t *testing.T) {
 	require.NoError(t, err)
 
 	// Pre-populate the cache
-	cacheMock.data[string(key)] = []byte(`{"name":"cached"}`)
+	cacheMock.data[kvCacheKey(1, key)] = []byte(`{"name":"cached"}`)
 
 	req := &GetRequest{
 		EntityType:  "user",
@@ -297,6 +297,44 @@ func TestKVService_Put_SpecificShardID(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, uint64(5), qrdbProvider.lastShardID.Load())
+}
+
+// TestKVService_Cache_KeepsShardsApart: the same tenant key on two shards is
+// two values, so the cache keys on the shard (go-quicbaas#1537, Codex P1).
+func TestKVService_Cache_KeepsShardsApart(t *testing.T) {
+	qrdbProvider := newSvcBoostMockQRDBProvider(nil, nil)
+
+	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
+	db := svc.(*quicBaaS)
+	cacheMock := newKVAuthCacheMock()
+	db.cacheManager = cacheMock
+
+	ctx := tenantctx.WithSystem(context.Background())
+	for shard, data := range map[uint64]string{2: "two", 3: "three"} {
+		_, err := svc.Put(ctx, &PutRequest{
+			EntityType: "user",
+			ID:         801,
+			Data:       []byte(data),
+			ShardID:    shard,
+		})
+		require.NoError(t, err)
+	}
+
+	for shard, want := range map[uint64]string{2: "two", 3: "three"} {
+		resp, err := svc.Get(ctx, &GetRequest{
+			EntityType:  "user",
+			ID:          801,
+			ShardID:     shard,
+			Consistency: ConsistencyLevelEventual,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		assert.Equal(t, want, string(resp.Data), "shard %d", shard)
+	}
+
+	_, err := svc.Delete(ctx, &DeleteRequest{EntityType: "user", ID: 801, ShardID: 2})
+	require.NoError(t, err)
+	assert.Len(t, cacheMock.data, 1, "a delete on shard 2 leaves shard 3's value cached")
 }
 
 // =============================================================================

@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -879,5 +881,68 @@ func TestServerBatchDelete(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, resp)
 		mockSvc.AssertExpectations(t)
+	})
+}
+
+func TestServerBatchExecute(t *testing.T) {
+	srv, mockSvc := createConvertersTestServer(t)
+	ctx := context.Background()
+
+	t.Run("batch execute converts operations and results", func(t *testing.T) {
+		mockSvc.On("BatchExecute", mock.Anything, mock.MatchedBy(func(req *service.BatchExecuteRequest) bool {
+			return len(req.Operations) == 2 &&
+				req.Operations[0].Type == service.BatchExecutePut &&
+				req.Operations[0].EntityType == "users" &&
+				req.Operations[0].Key == "a" &&
+				string(req.Operations[0].Value) == "v" &&
+				req.Operations[1].Type == service.BatchExecuteDelete &&
+				req.Operations[1].Key == "b"
+		})).Return(&service.BatchExecuteResponse{
+			Results: []*service.BatchExecuteResult{{Succeeded: true}, {Succeeded: false}},
+		}, nil).Once()
+
+		resp, err := srv.BatchExecute(ctx, &pb.BatchExecuteRequest{
+			Operations: []*pb.BatchExecuteOperation{
+				{Type: pb.BatchExecuteOpType_BATCH_EXECUTE_OP_TYPE_PUT, EntityType: "users", Key: "a", Value: []byte("v")},
+				{Type: pb.BatchExecuteOpType_BATCH_EXECUTE_OP_TYPE_DELETE, EntityType: "users", Key: "b"},
+			},
+		})
+
+		require.NoError(t, err)
+		require.Len(t, resp.Results, 2)
+		assert.True(t, resp.Results[0].Succeeded)
+		assert.False(t, resp.Results[1].Succeeded)
+		mockSvc.AssertExpectations(t)
+	})
+
+	t.Run("batch execute service error", func(t *testing.T) {
+		mockSvc.On("BatchExecute", mock.Anything, mock.Anything).
+			Return(nil, assert.AnError).Once()
+
+		resp, err := srv.BatchExecute(ctx, &pb.BatchExecuteRequest{
+			Operations: []*pb.BatchExecuteOperation{
+				{Type: pb.BatchExecuteOpType_BATCH_EXECUTE_OP_TYPE_DELETE, EntityType: "users", Key: "a"},
+			},
+		})
+
+		require.Error(t, err)
+		assert.Nil(t, resp)
+		mockSvc.AssertExpectations(t)
+	})
+
+	t.Run("batch execute rejects an empty batch", func(t *testing.T) {
+		resp, err := srv.BatchExecute(ctx, &pb.BatchExecuteRequest{})
+
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		assert.Nil(t, resp)
+	})
+
+	t.Run("batch execute rejects an unspecified type", func(t *testing.T) {
+		resp, err := srv.BatchExecute(ctx, &pb.BatchExecuteRequest{
+			Operations: []*pb.BatchExecuteOperation{{EntityType: "users", Key: "a"}},
+		})
+
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		assert.Nil(t, resp)
 	})
 }

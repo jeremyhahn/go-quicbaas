@@ -48,15 +48,19 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.KV/ListEntityTypes": handleListEntityTypes,
 
 	// Batch operations
-	"quicbaas.Batch/Put":    handleBatchPut,
-	"quicbaas.Batch/Get":    handleBatchGet,
-	"quicbaas.Batch/Delete": handleBatchDelete,
+	"quicbaas.Batch/Put":     handleBatchPut,
+	"quicbaas.Batch/Get":     handleBatchGet,
+	"quicbaas.Batch/Delete":  handleBatchDelete,
+	"quicbaas.Batch/Execute": handleBatchExecute,
 
 	// Transaction operations
 	"quicbaas.Transaction/Execute": handleTransaction,
 
 	// Capabilities report
 	"quicbaas.Capabilities/Get": handleCapabilitiesGet,
+
+	// Query operations (Query and ScanIndex are streams)
+	"quicbaas.Query/Execute": handleQueryExecute,
 
 	// Cluster operations
 	"quicbaas.Cluster/Status":             handleClusterStatus,
@@ -340,6 +344,26 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.PIV/ExportPIVCertificate": handlePIVExportCertificate,
 	"quicbaas.PIV/GeneratePIVCSR":       handlePIVGenerateCSR,
 
+	// TPMPolicy: Security().TPMPolicy(). The embedded node has no
+	// TPM-policy service, so every verb answers a typed Unimplemented.
+	"quicbaas.TPMPolicy/TPMPolicyCreate":          tpmPolicyRefusal("TPMPolicyCreate"),
+	"quicbaas.TPMPolicy/TPMPolicyGet":             tpmPolicyRefusal("TPMPolicyGet"),
+	"quicbaas.TPMPolicy/TPMPolicyList":            tpmPolicyRefusal("TPMPolicyList"),
+	"quicbaas.TPMPolicy/TPMPolicyUpdate":          tpmPolicyRefusal("TPMPolicyUpdate"),
+	"quicbaas.TPMPolicy/TPMPolicyRevoke":          tpmPolicyRefusal("TPMPolicyRevoke"),
+	"quicbaas.TPMPolicy/TPMPolicyVerify":          tpmPolicyRefusal("TPMPolicyVerify"),
+	"quicbaas.TPMPolicy/TPMPolicyDelete":          tpmPolicyRefusal("TPMPolicyDelete"),
+	"quicbaas.TPMPolicy/TPMPolicyObjects":         tpmPolicyRefusal("TPMPolicyObjects"),
+	"quicbaas.TPMPolicy/TPMPolicySetAutoUnseal":   tpmPolicyRefusal("TPMPolicySetAutoUnseal"),
+	"quicbaas.TPMPolicy/TPMPolicySetDescription":  tpmPolicyRefusal("TPMPolicySetDescription"),
+	"quicbaas.TPMPolicy/TPMObjectPolicy":          tpmPolicyRefusal("TPMObjectPolicy"),
+	"quicbaas.TPMPolicy/TPMPolicyRotateAuthority": tpmPolicyRefusal("TPMPolicyRotateAuthority"),
+	"quicbaas.TPMPolicy/GetTenantTPMMode":         tpmPolicyRefusal("GetTenantTPMMode"),
+	"quicbaas.TPMPolicy/SetTenantTPMMode":         tpmPolicyRefusal("SetTenantTPMMode"),
+	"quicbaas.TPMPolicy/TenantVTPMStatus":         tpmPolicyRefusal("TenantVTPMStatus"),
+	"quicbaas.TPMPolicy/TenantVTPMStart":          tpmPolicyRefusal("TenantVTPMStart"),
+	"quicbaas.TPMPolicy/TenantVTPMStop":           tpmPolicyRefusal("TenantVTPMStop"),
+
 	// FIDO2: the tenant-scoped WebAuthn ceremony surface
 	// (Security().Auth().FIDO2()), xkms wire types verbatim; the tenant
 	// rides the context (transport.ContextWithTenant).
@@ -529,6 +553,7 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.ObjectStorage/BatchPutObjects":    handleObjBatchPutObjects,
 	"quicbaas.ObjectStorage/BatchGetObjects":    handleObjBatchGetObjects,
 	"quicbaas.ObjectStorage/BatchDeleteObjects": handleObjBatchDeleteObjects,
+	"quicbaas.ObjectTransfer/FetchObject":       handleTransferFetchObject,
 
 	// Messaging service handlers
 	"quicbaas.Messaging/CreateChannel":   handleMessagingCreateChannel,
@@ -547,14 +572,17 @@ var unaryHandlers = map[string]handlerFunc{
 
 // streamHandlers maps service/method to stream handler functions for O(1) dispatch.
 var streamHandlers = map[string]streamHandlerFunc{
-	"quicbaas.KV/List":                         handleListStream,
-	"quicbaas.KV/Watch":                        handleWatchStream,
-	"quicbaas.Query/Query":                     handleQueryStream,
-	"quicbaas.Query/ScanIndex":                 handleScanIndexStream,
-	"quicbaas.TimeSeries/Query":                handleTimeSeriesQueryStream,
-	"quicbaas.Orchestrator/SubscribeJobEvents": handleSubscribeJobEventsStream,
-	"quicbaas.Orchestrator/InferenceStream":    handleOrchestratorInferenceStream,
-	registryService + "/Watch":                 handleRegistryWatchStream,
+	"quicbaas.KV/List":                           handleListStream,
+	"quicbaas.KV/Watch":                          handleWatchStream,
+	"quicbaas.Query/Query":                       handleQueryStream,
+	"quicbaas.Query/ScanIndex":                   handleScanIndexStream,
+	"quicbaas.TimeSeries/Query":                  handleTimeSeriesQueryStream,
+	"quicbaas.Orchestrator/SubscribeJobEvents":   handleSubscribeJobEventsStream,
+	"quicbaas.Orchestrator/InferenceStream":      handleOrchestratorInferenceStream,
+	registryService + "/Watch":                   handleRegistryWatchStream,
+	"quicbaas.ObjectStorage/StreamPutObject":     handleObjStreamPutObject,
+	"quicbaas.ObjectStorage/StreamGetObject":     handleObjStreamGetObject,
+	"quicbaas.ObjectTransfer/StreamFetchObjects": handleTransferStreamFetchObjects,
 }
 
 // New creates a new embedded transport with the given service.

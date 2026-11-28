@@ -45,9 +45,10 @@ type MockQuicBaaS struct {
 	ListEntityTypesFunc func(ctx context.Context, req *service.ListEntityTypesRequest) (*service.ListEntityTypesResponse, error)
 
 	// Batch Service function fields
-	BatchPutFunc    func(ctx context.Context, req *service.BatchPutRequest) (*service.BatchPutResponse, error)
-	BatchGetFunc    func(ctx context.Context, req *service.BatchGetRequest) (*service.BatchGetResponse, error)
-	BatchDeleteFunc func(ctx context.Context, req *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error)
+	BatchPutFunc     func(ctx context.Context, req *service.BatchPutRequest) (*service.BatchPutResponse, error)
+	BatchGetFunc     func(ctx context.Context, req *service.BatchGetRequest) (*service.BatchGetResponse, error)
+	BatchDeleteFunc  func(ctx context.Context, req *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error)
+	BatchExecuteFunc func(ctx context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error)
 
 	// Transaction Service function fields
 	TransactionFunc func(ctx context.Context, req *service.TransactionRequest) (*service.TransactionResponse, error)
@@ -248,6 +249,13 @@ func (m *MockQuicBaaS) BatchDelete(ctx context.Context, req *service.BatchDelete
 		return m.BatchDeleteFunc(ctx, req)
 	}
 	return &service.BatchDeleteResponse{}, nil
+}
+
+func (m *MockQuicBaaS) BatchExecute(ctx context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error) {
+	if m.BatchExecuteFunc != nil {
+		return m.BatchExecuteFunc(ctx, req)
+	}
+	return &service.BatchExecuteResponse{}, nil
 }
 
 // =============================================================================

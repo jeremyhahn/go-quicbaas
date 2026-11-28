@@ -253,6 +253,22 @@ func (e *InvalidPageTokenError) Error() string {
 		strconv.Quote(e.Value) + " is not a non-negative decimal offset"
 }
 
+// UnsupportedQueryFieldError indicates a query request field the query
+// service cannot honour; it matches one index value by equality, without a
+// cursor.
+type UnsupportedQueryFieldError struct {
+	Service string
+	Method  string
+	Field   string
+	Value   string
+}
+
+// Error implements the error interface.
+func (e *UnsupportedQueryFieldError) Error() string {
+	return "INVALID_INPUT: embedded: " + e.Service + "/" + e.Method + ": " + e.Field + " " +
+		strconv.Quote(e.Value) + " is not supported (equality on a string or bytes value, no cursor)"
+}
+
 // ServiceNotConfiguredError indicates a sub-service is not configured.
 type ServiceNotConfiguredError struct {
 	Service string
@@ -286,6 +302,49 @@ func NewStreamNotSupportedError(service, method string) *StreamNotSupportedError
 	return &StreamNotSupportedError{
 		Service: service,
 		Method:  method,
+	}
+}
+
+// EmptyServiceResponseError indicates the service returned neither a
+// response nor an error. Reporting it keeps a missing result from reaching
+// the client as a zero-valued response that reads as a real answer.
+type EmptyServiceResponseError struct {
+	Service string
+	Method  string
+}
+
+// Error implements the error interface.
+func (e *EmptyServiceResponseError) Error() string {
+	return "INTERNAL: embedded: service returned no response for: " + e.Service + "/" + e.Method
+}
+
+// NewEmptyServiceResponseError creates a new EmptyServiceResponseError.
+func NewEmptyServiceResponseError(service, method string) *EmptyServiceResponseError {
+	return &EmptyServiceResponseError{
+		Service: service,
+		Method:  method,
+	}
+}
+
+// IncompleteStreamError indicates a client stream ended or began without a
+// message the verb requires, such as an upload's metadata or its last chunk.
+type IncompleteStreamError struct {
+	Service string
+	Method  string
+	Reason  string
+}
+
+// Error implements the error interface.
+func (e *IncompleteStreamError) Error() string {
+	return "INVALID_ARGUMENT: embedded: incomplete stream for " + e.Service + "/" + e.Method + ": " + e.Reason
+}
+
+// NewIncompleteStreamError creates a new IncompleteStreamError.
+func NewIncompleteStreamError(service, method, reason string) *IncompleteStreamError {
+	return &IncompleteStreamError{
+		Service: service,
+		Method:  method,
+		Reason:  reason,
 	}
 }
 
@@ -454,9 +513,10 @@ func transportErrorCode(err error) (errors.ErrorCode, bool) {
 		notConfigured   *ServiceNotConfiguredError
 		streamNotServed *StreamNotSupportedError
 		denied          *PermissionDeniedError
+		incomplete      *IncompleteStreamError
 	)
 	switch {
-	case stderrors.As(err, &invalidRequest), stderrors.As(err, &invalidUserID):
+	case stderrors.As(err, &invalidRequest), stderrors.As(err, &invalidUserID), stderrors.As(err, &incomplete):
 		return errors.CodeInvalidInput, true
 	case stderrors.As(err, &denied):
 		return errors.CodeForbidden, true

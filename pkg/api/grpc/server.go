@@ -1056,6 +1056,7 @@ func (s *Server) BatchPut(ctx context.Context, req *pb.BatchPutRequest) (*pb.Bat
 			Data:        putReq.Data,
 			Consistency: protoToServiceConsistency(putReq.Consistency),
 			WriteMode:   extractWriteMode(ctx),
+			ShardID:     putReq.ShardId,
 		})
 	}
 
@@ -1121,6 +1122,7 @@ func (s *Server) BatchGet(ctx context.Context, req *pb.BatchGetRequest) (*pb.Bat
 			ID:          getReq.Id,
 			Consistency: protoToServiceConsistency(getReq.Consistency),
 			TimeoutMs:   5000, // Default timeout
+			ShardID:     getReq.ShardId,
 		})
 	}
 
@@ -1180,6 +1182,7 @@ func (s *Server) BatchDelete(ctx context.Context, req *pb.BatchDeleteRequest) (*
 			EntityType:  delReq.EntityType,
 			ID:          delReq.Id,
 			Consistency: protoToServiceConsistency(delReq.Consistency),
+			ShardID:     delReq.ShardId,
 		})
 	}
 
@@ -1216,6 +1219,62 @@ func (s *Server) BatchDelete(ctx context.Context, req *pb.BatchDeleteRequest) (*
 
 	s.metrics.requestsTotal.With("BatchDelete", "success").Inc()
 	return resp, nil
+}
+
+// batchExecuteOpTypes maps a proto BatchExecuteOpType to its service
+// counterpart. A type missing from the map is rejected.
+var batchExecuteOpTypes = map[pb.BatchExecuteOpType]service.BatchExecuteOpType{
+	pb.BatchExecuteOpType_BATCH_EXECUTE_OP_TYPE_PUT:    service.BatchExecutePut,
+	pb.BatchExecuteOpType_BATCH_EXECUTE_OP_TYPE_DELETE: service.BatchExecuteDelete,
+}
+
+// BatchExecute applies a mixed list of puts and deletes atomically.
+func (s *Server) BatchExecute(ctx context.Context, req *pb.BatchExecuteRequest) (*pb.BatchExecuteResponse, error) {
+	start := time.Now()
+	defer func() {
+		s.metrics.requestDuration.With("BatchExecute").Observe(time.Since(start).Seconds())
+	}()
+
+	s.metrics.batchSizeHist.With("execute").Observe(float64(len(req.Operations)))
+
+	s.logger.WithField("batch_size", len(req.Operations)).Debug("Processing atomic BatchExecute request")
+
+	if len(req.Operations) == 0 {
+		s.metrics.requestsTotal.With("BatchExecute", "invalid").Inc()
+		return nil, status.Error(codes.InvalidArgument, "batch cannot be empty")
+	}
+
+	serviceReq := &service.BatchExecuteRequest{
+		Operations: make([]*service.BatchExecuteOperation, 0, len(req.Operations)),
+	}
+	for _, op := range req.Operations {
+		opType, ok := batchExecuteOpTypes[op.Type]
+		if !ok {
+			s.metrics.requestsTotal.With("BatchExecute", "invalid").Inc()
+			return nil, status.Error(codes.InvalidArgument, "type must be PUT or DELETE for all operations")
+		}
+		serviceReq.Operations = append(serviceReq.Operations, &service.BatchExecuteOperation{
+			Type:       opType,
+			EntityType: op.EntityType,
+			Key:        op.Key,
+			Value:      op.Value,
+		})
+	}
+
+	serviceResp, err := s.service.BatchExecute(ctx, serviceReq)
+	if err != nil {
+		s.metrics.requestsTotal.With("BatchExecute", "error").Inc()
+		s.logger.WithError(err).Error("Batch execute failed")
+		return nil, toProtoError(err)
+	}
+
+	results := make([]*pb.BatchExecuteResult, 0, len(serviceResp.Results))
+	for _, result := range serviceResp.Results {
+		results = append(results, &pb.BatchExecuteResult{Succeeded: result.Succeeded})
+	}
+
+	s.metrics.requestsTotal.With("BatchExecute", "success").Inc()
+	return &pb.BatchExecuteResponse{Results: results}, nil
 }
 
 // Transaction performs an atomic compare-and-swap transaction.

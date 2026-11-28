@@ -16,6 +16,7 @@ package kv
 
 import (
 	"context"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -309,7 +310,12 @@ type watchRequest struct {
 
 // startWatch initiates a watch stream.
 func (c *client) startWatch(ctx context.Context, req *watchRequest) (Watcher, error) {
-	stream, err := c.transport.RequestStream(ctx, serviceName, "Watch", req)
+	serviceReq, err := req.serviceRequest()
+	if err != nil {
+		return nil, err
+	}
+
+	stream, err := c.transport.RequestStream(ctx, serviceName, "Watch", serviceReq)
 	if err != nil {
 		return nil, err
 	}
@@ -324,6 +330,37 @@ func (c *client) startWatch(ctx context.Context, req *watchRequest) (Watcher, er
 	go w.receiveLoop()
 
 	return w, nil
+}
+
+// serviceRequest maps the watch onto the request the KV Watch handler
+// accepts. The put and delete filters travel as service filters and are also
+// applied by the watcher, so they hold whatever the server honours.
+func (r *watchRequest) serviceRequest() (*service.WatchRequest, error) {
+	if r.StartRevision > math.MaxInt64 {
+		return nil, errors.NewInvalidInput("kv.Watch", "start revision exceeds the maximum revision")
+	}
+
+	key := r.Key
+	if r.IsPrefix {
+		key = r.Prefix
+	}
+
+	var filters []service.WatchEventType
+	if r.FilterPut {
+		filters = append(filters, service.WatchEventTypePut)
+	}
+	if r.FilterDelete {
+		filters = append(filters, service.WatchEventTypeDelete)
+	}
+
+	return &service.WatchRequest{
+		Key:            []byte(key),
+		IsPrefix:       r.IsPrefix,
+		StartRevision:  int64(r.StartRevision),
+		PrevKV:         r.PrevKV,
+		ProgressNotify: r.ProgressNotify,
+		Filters:        filters,
+	}, nil
 }
 
 // watcher implements the Watcher interface.
@@ -384,26 +421,75 @@ func (w *watcher) receiveLoop() {
 				return
 			}
 
-			event, ok := msg.(*WatchEvent)
-			if !ok {
-				continue
-			}
+			for _, event := range watchEvents(msg) {
+				// Apply filters
+				if w.options.FilterPut && event.Type == EventPut {
+					continue
+				}
+				if w.options.FilterDelete && event.Type == EventDelete {
+					continue
+				}
 
-			// Apply filters
-			if w.options.FilterPut && event.Type == EventPut {
-				continue
-			}
-			if w.options.FilterDelete && event.Type == EventDelete {
-				continue
-			}
-
-			select {
-			case w.events <- event:
-			case <-w.done:
-				return
+				select {
+				case w.events <- event:
+				case <-w.done:
+					return
+				}
 			}
 		}
 	}
+}
+
+// watchEvents extracts the events a stream message carries. The KV Watch
+// handler sends *service.WatchResponse batches; the creation confirmation and
+// progress notifications carry no events.
+func watchEvents(msg interface{}) []*WatchEvent {
+	switch m := msg.(type) {
+	case *service.WatchResponse:
+		events := make([]*WatchEvent, 0, len(m.Events))
+		for _, e := range m.Events {
+			if event, ok := fromServiceEvent(e); ok {
+				events = append(events, event)
+			}
+		}
+		return events
+	case *WatchEvent:
+		return []*WatchEvent{m}
+	default:
+		return nil
+	}
+}
+
+// fromServiceEvent maps a service watch event onto a WatchEvent. An event of
+// unspecified type is reported as not mapped rather than guessed.
+func fromServiceEvent(e *service.WatchEvent) (*WatchEvent, bool) {
+	if e == nil {
+		return nil, false
+	}
+
+	var eventType EventType
+	switch e.Type {
+	case service.WatchEventTypePut:
+		eventType = EventPut
+	case service.WatchEventTypeDelete:
+		eventType = EventDelete
+	default:
+		return nil, false
+	}
+
+	var revision uint64
+	if e.Revision > 0 {
+		revision = uint64(e.Revision)
+	}
+
+	return &WatchEvent{
+		Type:      eventType,
+		Key:       string(e.Key),
+		Value:     e.Value,
+		PrevValue: e.PrevValue,
+		Revision:  revision,
+		Timestamp: time.Unix(0, e.Timestamp),
+	}, true
 }
 
 // Validation functions

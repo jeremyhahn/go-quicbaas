@@ -53,12 +53,14 @@ import (
 // =============================================================================
 
 const (
-	acmeServiceName    = "quicbaas.ACME"
-	trustServiceName   = "quicbaas.Trust"
-	fido2ServiceName   = "quicbaas.FIDO2"
-	pivServiceName     = "quicbaas.PIV"
-	authServiceName    = "quicbaas.Auth"
-	certExtServiceName = "quicbaas.Certificate"
+	acmeServiceName  = "quicbaas.ACME"
+	trustServiceName = "quicbaas.Trust"
+	fido2ServiceName = "quicbaas.FIDO2"
+	pivServiceName   = "quicbaas.PIV"
+	// tpmPolicyServiceName carries the go-xkms TPMPolicyService verbs.
+	tpmPolicyServiceName = "quicbaas.TPMPolicy"
+	authServiceName      = "quicbaas.Auth"
+	certExtServiceName   = "quicbaas.Certificate"
 )
 
 // =============================================================================
@@ -1913,6 +1915,137 @@ func (c *authFactorsImpl) Relabel(ctx context.Context, factorID, label string) e
 // authServiceImpl is the concrete AuthService. It composes the existing
 // AuthClient with the new factor-typed sub-services. AuthClient methods are
 // delegated to the underlying client.auth() so behavior is unchanged.
+// tpmPolicyTransportClient implements the go-xkms TPMPolicyService over a
+// quicbaas transport. Every verb is sent as service "quicbaas.TPMPolicy"
+// with the go-xkms method name and the go-xkms wire struct passed verbatim;
+// each transport bridges that to the route the mounted go-xkms module
+// serves. The tenant-addressed verbs (GetTenantTPMMode, TenantVTPMStatus,
+// TenantVTPMStart, TenantVTPMStop) send the tenant ID string itself.
+type tpmPolicyTransportClient struct {
+	t transport.Transport
+}
+
+var _ XKMSTPMPolicyService = (*tpmPolicyTransportClient)(nil)
+
+// tpmPolicyCall refuses a nil context or request, sends the verb and
+// asserts the response type. A nil response with no error is reported as
+// not found, as the PIV client does.
+func tpmPolicyCall[Resp any](ctx context.Context, t transport.Transport, method string, req interface{}, reqNil bool) (*Resp, error) {
+	op := "tpmpolicy." + method
+	if ctx == nil {
+		return nil, sdkerrors.NewInvalidInput(op, "context is required")
+	}
+	if reqNil {
+		return nil, sdkerrors.NewInvalidInput(op, "request is required")
+	}
+	resp, err := t.Request(ctx, tpmPolicyServiceName, method, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, sdkerrors.NewNotFound(op, "no response")
+	}
+	out, ok := resp.(*Resp)
+	if !ok {
+		return nil, sdkerrors.NewInternal(op, "invalid response type")
+	}
+	return out, nil
+}
+
+// tpmPolicyTenantCall sends a tenant-addressed verb; the tenant ID is
+// required.
+func tpmPolicyTenantCall[Resp any](ctx context.Context, t transport.Transport, method, tenantID string) (*Resp, error) {
+	if ctx != nil && tenantID == "" {
+		return nil, sdkerrors.NewInvalidInput("tpmpolicy."+method, "tenant ID is required")
+	}
+	return tpmPolicyCall[Resp](ctx, t, method, tenantID, false)
+}
+
+func (c *tpmPolicyTransportClient) TPMPolicyCreate(ctx context.Context, req *xkmstransport.TPMPolicyCreateRequest) (*xkmstransport.TPMPolicy, error) {
+	return tpmPolicyCall[xkmstransport.TPMPolicy](ctx, c.t, "TPMPolicyCreate", req, req == nil)
+}
+
+func (c *tpmPolicyTransportClient) TPMPolicyGet(ctx context.Context, req *xkmstransport.TPMPolicyRequest) (*xkmstransport.TPMPolicy, error) {
+	return tpmPolicyCall[xkmstransport.TPMPolicy](ctx, c.t, "TPMPolicyGet", req, req == nil)
+}
+
+func (c *tpmPolicyTransportClient) TPMPolicyList(ctx context.Context, req *xkmstransport.TPMPolicyListRequest) (*xkmstransport.TPMPolicyListResponse, error) {
+	return tpmPolicyCall[xkmstransport.TPMPolicyListResponse](ctx, c.t, "TPMPolicyList", req, req == nil)
+}
+
+func (c *tpmPolicyTransportClient) TPMPolicyUpdate(ctx context.Context, req *xkmstransport.TPMPolicyRequest) (*xkmstransport.TPMPolicy, error) {
+	return tpmPolicyCall[xkmstransport.TPMPolicy](ctx, c.t, "TPMPolicyUpdate", req, req == nil)
+}
+
+func (c *tpmPolicyTransportClient) TPMPolicyRevoke(ctx context.Context, req *xkmstransport.TPMPolicyRequest) (*xkmstransport.TPMPolicy, error) {
+	return tpmPolicyCall[xkmstransport.TPMPolicy](ctx, c.t, "TPMPolicyRevoke", req, req == nil)
+}
+
+func (c *tpmPolicyTransportClient) TPMPolicyVerify(ctx context.Context, req *xkmstransport.TPMPolicyRequest) (*xkmstransport.TPMPolicyVerifyResponse, error) {
+	return tpmPolicyCall[xkmstransport.TPMPolicyVerifyResponse](ctx, c.t, "TPMPolicyVerify", req, req == nil)
+}
+
+func (c *tpmPolicyTransportClient) TPMPolicyDelete(ctx context.Context, req *xkmstransport.TPMPolicyDeleteRequest) error {
+	op := "tpmpolicy.TPMPolicyDelete"
+	if ctx == nil {
+		return sdkerrors.NewInvalidInput(op, "context is required")
+	}
+	if req == nil {
+		return sdkerrors.NewInvalidInput(op, "request is required")
+	}
+	_, err := c.t.Request(ctx, tpmPolicyServiceName, "TPMPolicyDelete", req)
+	return err
+}
+
+func (c *tpmPolicyTransportClient) TPMPolicyObjects(ctx context.Context, req *xkmstransport.TPMPolicyRequest) (*xkmstransport.TPMPolicyObjectsResponse, error) {
+	return tpmPolicyCall[xkmstransport.TPMPolicyObjectsResponse](ctx, c.t, "TPMPolicyObjects", req, req == nil)
+}
+
+func (c *tpmPolicyTransportClient) TPMPolicySetAutoUnseal(ctx context.Context, req *xkmstransport.TPMPolicyAutoUnsealRequest) (*xkmstransport.TPMPolicy, error) {
+	return tpmPolicyCall[xkmstransport.TPMPolicy](ctx, c.t, "TPMPolicySetAutoUnseal", req, req == nil)
+}
+
+func (c *tpmPolicyTransportClient) TPMPolicySetDescription(ctx context.Context, req *xkmstransport.TPMPolicyDescriptionRequest) (*xkmstransport.TPMPolicy, error) {
+	return tpmPolicyCall[xkmstransport.TPMPolicy](ctx, c.t, "TPMPolicySetDescription", req, req == nil)
+}
+
+func (c *tpmPolicyTransportClient) TPMObjectPolicy(ctx context.Context, req *xkmstransport.TPMObjectPolicyRequest) (*xkmstransport.TPMObjectPolicyResponse, error) {
+	return tpmPolicyCall[xkmstransport.TPMObjectPolicyResponse](ctx, c.t, "TPMObjectPolicy", req, req == nil)
+}
+
+func (c *tpmPolicyTransportClient) TPMPolicyRotateAuthority(ctx context.Context, req *xkmstransport.TPMAuthorityRotateRequest) (*xkmstransport.TPMAuthorityRotateResponse, error) {
+	return tpmPolicyCall[xkmstransport.TPMAuthorityRotateResponse](ctx, c.t, "TPMPolicyRotateAuthority", req, req == nil)
+}
+
+func (c *tpmPolicyTransportClient) GetTenantTPMMode(ctx context.Context, tenantID string) (*xkmstransport.TenantTPMModeResponse, error) {
+	return tpmPolicyTenantCall[xkmstransport.TenantTPMModeResponse](ctx, c.t, "GetTenantTPMMode", tenantID)
+}
+
+func (c *tpmPolicyTransportClient) SetTenantTPMMode(ctx context.Context, req *xkmstransport.SetTenantTPMModeRequest) (*xkmstransport.TenantTPMModeResponse, error) {
+	return tpmPolicyCall[xkmstransport.TenantTPMModeResponse](ctx, c.t, "SetTenantTPMMode", req, req == nil)
+}
+
+func (c *tpmPolicyTransportClient) TenantVTPMStatus(ctx context.Context, tenantID string) (*xkmstransport.TenantVTPMStatusResponse, error) {
+	return tpmPolicyTenantCall[xkmstransport.TenantVTPMStatusResponse](ctx, c.t, "TenantVTPMStatus", tenantID)
+}
+
+func (c *tpmPolicyTransportClient) TenantVTPMStart(ctx context.Context, tenantID string) (*xkmstransport.TenantVTPMStatusResponse, error) {
+	return tpmPolicyTenantCall[xkmstransport.TenantVTPMStatusResponse](ctx, c.t, "TenantVTPMStart", tenantID)
+}
+
+func (c *tpmPolicyTransportClient) TenantVTPMStop(ctx context.Context, tenantID string) (*xkmstransport.TenantVTPMStatusResponse, error) {
+	return tpmPolicyTenantCall[xkmstransport.TenantVTPMStatusResponse](ctx, c.t, "TenantVTPMStop", tenantID)
+}
+
+// TPMPolicy returns the go-xkms TPM-policy client over the configured
+// transport, built once per securityService.
+func (s *securityService) TPMPolicy() XKMSTPMPolicyService {
+	s.tpmPolicyOnce.Do(func() {
+		s.tpmPolicySvc = &tpmPolicyTransportClient{t: s.c.transport}
+	})
+	return s.tpmPolicySvc
+}
+
 type authServiceImpl struct {
 	AuthClient
 	c       *client

@@ -107,7 +107,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.Auth", "RevokeAllSessions"}:       gapAmbiguous + "quicbaas_iam_session_revoke_all",
 
 	// --- Batch / Query / Transaction --------------------------------------
-	{"quicbaas.Batch", "Execute"}:       gapNoTool,
 	{"quicbaas.Query", "Execute"}:       gapNameDrift + "quicbaas_query",
 	{"quicbaas.Transaction", "Execute"}: gapNameDrift + "quicbaas_transaction",
 
@@ -154,9 +153,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.IAM.Invite", "GetInvite"}:           gapNoTool,
 
 	{"quicbaas.IAM.Policy", "GetEffectivePermissions"}: gapNoTool,
-
-	{"quicbaas.IAM.User", "Approve"}: gapNoTool,
-	{"quicbaas.IAM.User", "Reject"}:  gapNoTool,
 
 	// --- Object storage ----------------------------------------------------
 	// The whole admin surface is registered under quicbaas_object_admin_*; the

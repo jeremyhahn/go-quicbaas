@@ -15,6 +15,8 @@ package objectstorage
 
 import (
 	"context"
+	stderrors "errors"
+	"io"
 	"sync/atomic"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -921,6 +923,7 @@ type streamGetReader struct {
 	bytesRead int64
 	totalSize int64
 	closed    bool
+	eof       bool // set once the stream has ended; later Reads return io.EOF
 }
 
 // Read reads data from the stream.
@@ -937,19 +940,19 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 		return n, nil
 	}
 
+	// The stream has ended; never call Recv on a finished stream.
+	if r.eof {
+		return 0, io.EOF
+	}
+
 	// Receive next chunk from stream.
-	resp, err := r.stream.Recv()
+	chunk, err := r.recvChunk("streamGetReader.Read")
 	if err != nil {
-		return 0, errors.Wrap(err, errors.CodeConnection, "streamGetReader.Read", "failed to receive chunk")
-	}
-
-	if resp == nil {
-		return 0, errors.NewInternal("streamGetReader.Read", "nil chunk from server")
-	}
-
-	chunk, ok := resp.(*ObjectChunk)
-	if !ok {
-		return 0, errors.NewInternal("streamGetReader.Read", "invalid chunk type")
+		if stderrors.Is(err, io.EOF) {
+			r.eof = true
+			return 0, io.EOF
+		}
+		return 0, err
 	}
 
 	// Update metadata from first chunk if not set.
@@ -957,9 +960,11 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 		r.totalSize = chunk.TotalSize
 	}
 
-	// If this is the last chunk with no data, signal EOF.
-	if chunk.IsLast && len(chunk.Data) == 0 {
-		return 0, errors.NewInternal("streamGetReader.Read", "end of stream")
+	if chunk.IsLast {
+		r.eof = true
+		if len(chunk.Data) == 0 {
+			return 0, io.EOF
+		}
 	}
 
 	// Copy chunk data to output buffer.
@@ -995,18 +1000,9 @@ func (r *streamGetReader) ReadMetadata() (*ObjectMetadata, error) {
 	}
 
 	// Receive first chunk to get metadata.
-	resp, err := r.stream.Recv()
+	chunk, err := r.recvChunk("streamGetReader.ReadMetadata")
 	if err != nil {
-		return nil, errors.Wrap(err, errors.CodeConnection, "streamGetReader.ReadMetadata", "failed to receive metadata")
-	}
-
-	if resp == nil {
-		return nil, errors.NewInternal("streamGetReader.ReadMetadata", "nil response from server")
-	}
-
-	chunk, ok := resp.(*ObjectChunk)
-	if !ok {
-		return nil, errors.NewInternal("streamGetReader.ReadMetadata", "invalid chunk type")
+		return nil, err
 	}
 
 	// Store metadata.
@@ -1023,6 +1019,29 @@ func (r *streamGetReader) ReadMetadata() (*ObjectMetadata, error) {
 	}
 
 	return r.metadata, nil
+}
+
+// recvChunk receives the next chunk. A stream that ends in an error delivers
+// that error as its final message; it is returned as the stream's failure.
+func (r *streamGetReader) recvChunk(op string) (*ObjectChunk, error) {
+	resp, err := r.stream.Recv()
+	if err != nil {
+		return nil, errors.Wrap(err, errors.CodeConnection, op, "failed to receive chunk")
+	}
+
+	switch m := resp.(type) {
+	case *ObjectChunk:
+		if m == nil {
+			return nil, errors.NewInternal(op, "nil chunk from server")
+		}
+		return m, nil
+	case error:
+		return nil, m
+	case nil:
+		return nil, errors.NewInternal(op, "nil chunk from server")
+	default:
+		return nil, errors.NewInternal(op, "invalid chunk type")
+	}
 }
 
 // TotalSize returns the total object size in bytes.

@@ -78,7 +78,7 @@ func handleObjGetObject(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 
 	// Accept service type directly
-	if r, ok := req.(*service.GetObjectRequest); ok {
+	if r, ok := req.(*service.GetObjectRequest); ok && r != nil {
 		svcResp, err := objSvc.GetObject(ctx, r)
 		if err != nil {
 			return nil, err
@@ -88,7 +88,7 @@ func handleObjGetObject(ctx context.Context, svc service.QuicBaaS, req interface
 
 	// Accept SDK client type and convert
 	sdkReq, ok := req.(*objclient.GetObjectRequest)
-	if !ok {
+	if !ok || sdkReq == nil {
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "GetObject",
 			"*objectstorage.GetObjectRequest",

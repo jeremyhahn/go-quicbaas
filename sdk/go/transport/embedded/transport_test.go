@@ -105,6 +105,10 @@ type mockQuicBaaS struct {
 	addNodeFunc           func(ctx context.Context, req *service.AddNodeRequest) (*service.AddNodeResponse, error)
 	clusterStatusFunc     func(ctx context.Context, req *service.ClusterStatusRequest) (*service.ClusterStatusResponse, error)
 	writePointFunc        func(ctx context.Context, req *service.WritePointRequest) (*service.WritePointResponse, error)
+	tsQueryFunc           func(ctx context.Context, req *service.TSQueryRequest) (*service.TSQueryResponse, error)
+	removeNodeFunc        func(ctx context.Context, req *service.RemoveNodeRequest) (*service.RemoveNodeResponse, error)
+	rebalanceFunc         func(ctx context.Context, req *service.RebalanceClusterRequest) (*service.RebalanceClusterResponse, error)
+	rebalanceProgressFunc func(ctx context.Context, req *service.GetRebalanceProgressRequest) (*service.GetRebalanceProgressResponse, error)
 	putFunc               func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
 	getFunc               func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
 	deleteFunc            func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error)
@@ -114,6 +118,7 @@ type mockQuicBaaS struct {
 	batchPutFunc          func(ctx context.Context, req *service.BatchPutRequest) (*service.BatchPutResponse, error)
 	batchGetFunc          func(ctx context.Context, req *service.BatchGetRequest) (*service.BatchGetResponse, error)
 	batchDeleteFunc       func(ctx context.Context, req *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error)
+	batchExecuteFunc      func(ctx context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error)
 	transactionFunc       func(ctx context.Context, req *service.TransactionRequest) (*service.TransactionResponse, error)
 	healthFunc            func(ctx context.Context, req *service.HealthRequest) (*service.HealthResponse, error)
 	livenessFunc          func(ctx context.Context, req *service.LivenessRequest) (*service.LivenessResponse, error)
@@ -121,8 +126,19 @@ type mockQuicBaaS struct {
 	queryFunc             func(ctx context.Context, req *service.QueryRequest, stream chan<- *service.QueryResponse) error
 	scanIndexFunc         func(ctx context.Context, req *service.ScanRequest, stream chan<- *service.ScanResponse) error
 	timeSeriesQueryFunc   func(ctx context.Context, req *service.TimeSeriesQueryRequest, stream chan<- *service.TimeSeriesQueryResponse) error
+	loginFunc             func(ctx context.Context, req *service.LoginRequest) (*service.LoginResponse, error)
 	validateTokenFunc     func(ctx context.Context, req *service.ValidateTokenRequest) (*service.ValidateTokenResponse, error)
 	introspectTokenFunc   func(ctx context.Context, req *service.IntrospectTokenRequest) (*service.TokenIntrospection, error)
+	createAuthRoleFunc    func(ctx context.Context, req *service.AuthCreateRoleRequest) (*service.AuthCreateRoleResponse, error)
+	deleteAuthRoleFunc    func(ctx context.Context, req *service.AuthDeleteRoleRequest) (*service.AuthDeleteRoleResponse, error)
+	listAuthRolesFunc     func(ctx context.Context, req *service.AuthListRolesRequest) (*service.AuthListRolesResponse, error)
+	assignRoleFunc        func(ctx context.Context, req *service.AuthAssignRoleRequest) (*service.AuthAssignRoleResponse, error)
+	revokeRoleFunc        func(ctx context.Context, req *service.AuthRevokeRoleRequest) (*service.AuthRevokeRoleResponse, error)
+	migrateDataFunc       func(ctx context.Context, req *service.MigrateDataRequest) (*service.MigrateDataResponse, error)
+	migrationProgressFunc func(ctx context.Context, req *service.GetMigrationProgressRequest) (*service.GetMigrationProgressResponse, error)
+	replaceNodeFunc       func(ctx context.Context, req *service.ReplaceNodeRequest) (*service.ReplaceNodeResponse, error)
+	upgradeNodeFunc       func(ctx context.Context, req *service.UpgradeNodeRequest) (*service.UpgradeNodeResponse, error)
+	upgradeStatusFunc     func(ctx context.Context, req *service.GetUpgradeStatusRequest) (*service.GetUpgradeStatusResponse, error)
 	kmsService            service.KMSService
 	secretsService        service.SecretsService
 	parameterStoreService service.ParameterStoreService
@@ -199,6 +215,13 @@ func (m *mockQuicBaaS) BatchDelete(ctx context.Context, req *service.BatchDelete
 	return &service.BatchDeleteResponse{}, nil
 }
 
+func (m *mockQuicBaaS) BatchExecute(ctx context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error) {
+	if m.batchExecuteFunc != nil {
+		return m.batchExecuteFunc(ctx, req)
+	}
+	return &service.BatchExecuteResponse{}, nil
+}
+
 // Transaction operations
 func (m *mockQuicBaaS) Transaction(ctx context.Context, req *service.TransactionRequest) (*service.TransactionResponse, error) {
 	if m.transactionFunc != nil {
@@ -246,6 +269,9 @@ func (m *mockQuicBaaS) AddNode(ctx context.Context, req *service.AddNodeRequest)
 }
 
 func (m *mockQuicBaaS) RemoveNode(ctx context.Context, req *service.RemoveNodeRequest) (*service.RemoveNodeResponse, error) {
+	if m.removeNodeFunc != nil {
+		return m.removeNodeFunc(ctx, req)
+	}
 	return &service.RemoveNodeResponse{Success: true}, nil
 }
 
@@ -254,10 +280,16 @@ func (m *mockQuicBaaS) CreateShard(ctx context.Context, req *service.CreateShard
 }
 
 func (m *mockQuicBaaS) RebalanceCluster(ctx context.Context, req *service.RebalanceClusterRequest) (*service.RebalanceClusterResponse, error) {
+	if m.rebalanceFunc != nil {
+		return m.rebalanceFunc(ctx, req)
+	}
 	return &service.RebalanceClusterResponse{JobID: "job1"}, nil
 }
 
 func (m *mockQuicBaaS) GetRebalanceProgress(ctx context.Context, req *service.GetRebalanceProgressRequest) (*service.GetRebalanceProgressResponse, error) {
+	if m.rebalanceProgressFunc != nil {
+		return m.rebalanceProgressFunc(ctx, req)
+	}
 	return &service.GetRebalanceProgressResponse{Status: "completed"}, nil
 }
 
@@ -284,6 +316,9 @@ func (m *mockQuicBaaS) VerifyBackup(ctx context.Context, req *service.VerifyBack
 
 // Auth operations
 func (m *mockQuicBaaS) Login(ctx context.Context, req *service.LoginRequest) (*service.LoginResponse, error) {
+	if m.loginFunc != nil {
+		return m.loginFunc(ctx, req)
+	}
 	return &service.LoginResponse{AccessToken: "token"}, nil
 }
 
@@ -312,22 +347,37 @@ func (m *mockQuicBaaS) IntrospectToken(ctx context.Context, req *service.Introsp
 // RBAC operations
 
 func (m *mockQuicBaaS) CreateAuthRole(ctx context.Context, req *service.AuthCreateRoleRequest) (*service.AuthCreateRoleResponse, error) {
+	if m.createAuthRoleFunc != nil {
+		return m.createAuthRoleFunc(ctx, req)
+	}
 	return &service.AuthCreateRoleResponse{}, nil
 }
 
 func (m *mockQuicBaaS) DeleteAuthRole(ctx context.Context, req *service.AuthDeleteRoleRequest) (*service.AuthDeleteRoleResponse, error) {
+	if m.deleteAuthRoleFunc != nil {
+		return m.deleteAuthRoleFunc(ctx, req)
+	}
 	return &service.AuthDeleteRoleResponse{}, nil
 }
 
 func (m *mockQuicBaaS) ListAuthRoles(ctx context.Context, req *service.AuthListRolesRequest) (*service.AuthListRolesResponse, error) {
+	if m.listAuthRolesFunc != nil {
+		return m.listAuthRolesFunc(ctx, req)
+	}
 	return &service.AuthListRolesResponse{}, nil
 }
 
 func (m *mockQuicBaaS) AssignRole(ctx context.Context, req *service.AuthAssignRoleRequest) (*service.AuthAssignRoleResponse, error) {
+	if m.assignRoleFunc != nil {
+		return m.assignRoleFunc(ctx, req)
+	}
 	return &service.AuthAssignRoleResponse{}, nil
 }
 
 func (m *mockQuicBaaS) RevokeRole(ctx context.Context, req *service.AuthRevokeRoleRequest) (*service.AuthRevokeRoleResponse, error) {
+	if m.revokeRoleFunc != nil {
+		return m.revokeRoleFunc(ctx, req)
+	}
 	return &service.AuthRevokeRoleResponse{}, nil
 }
 
@@ -396,6 +446,9 @@ func (m *mockQuicBaaS) WriteBatch(ctx context.Context, req *service.WriteBatchRe
 }
 
 func (m *mockQuicBaaS) TSQuery(ctx context.Context, req *service.TSQueryRequest) (*service.TSQueryResponse, error) {
+	if m.tsQueryFunc != nil {
+		return m.tsQueryFunc(ctx, req)
+	}
 	return &service.TSQueryResponse{}, nil
 }
 
@@ -417,22 +470,37 @@ func (m *mockQuicBaaS) ListMetrics(ctx context.Context, req *service.TSListMetri
 
 // Operations
 func (m *mockQuicBaaS) MigrateData(ctx context.Context, req *service.MigrateDataRequest) (*service.MigrateDataResponse, error) {
+	if m.migrateDataFunc != nil {
+		return m.migrateDataFunc(ctx, req)
+	}
 	return &service.MigrateDataResponse{MigrationID: "mig1"}, nil
 }
 
 func (m *mockQuicBaaS) GetMigrationProgress(ctx context.Context, req *service.GetMigrationProgressRequest) (*service.GetMigrationProgressResponse, error) {
+	if m.migrationProgressFunc != nil {
+		return m.migrationProgressFunc(ctx, req)
+	}
 	return &service.GetMigrationProgressResponse{Progress: 50.0}, nil
 }
 
 func (m *mockQuicBaaS) ReplaceNode(ctx context.Context, req *service.ReplaceNodeRequest) (*service.ReplaceNodeResponse, error) {
+	if m.replaceNodeFunc != nil {
+		return m.replaceNodeFunc(ctx, req)
+	}
 	return &service.ReplaceNodeResponse{JobID: "replace1"}, nil
 }
 
 func (m *mockQuicBaaS) UpgradeNode(ctx context.Context, req *service.UpgradeNodeRequest) (*service.UpgradeNodeResponse, error) {
+	if m.upgradeNodeFunc != nil {
+		return m.upgradeNodeFunc(ctx, req)
+	}
 	return &service.UpgradeNodeResponse{JobID: "upgrade1"}, nil
 }
 
 func (m *mockQuicBaaS) GetUpgradeStatus(ctx context.Context, req *service.GetUpgradeStatusRequest) (*service.GetUpgradeStatusResponse, error) {
+	if m.upgradeStatusFunc != nil {
+		return m.upgradeStatusFunc(ctx, req)
+	}
 	return &service.GetUpgradeStatusResponse{Status: "completed"}, nil
 }
 
@@ -1909,7 +1977,7 @@ func TestTransport_AllAuthOperations(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("Login", func(t *testing.T) {
-		req := &service.LoginRequest{}
+		req := &service.ExtendedLoginRequest{Username: "alice"}
 		resp, err := transport.Request(ctx, "quicbaas.Auth", "Login", req)
 		require.NoError(t, err)
 		assert.NotNil(t, resp)

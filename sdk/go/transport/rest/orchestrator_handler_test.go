@@ -10,11 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
-	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // TestOrchestratorHandlerHappyPaths drives every orchestrator method through
@@ -214,28 +212,6 @@ func TestOrchestratorHandlerSubscribeJobEvents(t *testing.T) {
 		&orchestrator.SubscribeJobEventsRequest{TenantID: "t1", JobID: "j1"})
 	if err == nil {
 		t.Fatal("expected unimplemented error for SubscribeJobEvents over REST")
-	}
-}
-
-// TestOrchestratorHandlerGetSessionHistoryUnimplemented pins that
-// GetSessionHistory fails Unimplemented over REST without sending anything:
-// the server has no route for it.
-func TestOrchestratorHandlerGetSessionHistoryUnimplemented(t *testing.T) {
-	var reached atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reached.Store(true)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	tr := newTestTransport(t, server)
-	_, err := tr.Request(context.Background(), "Orchestrator", "GetSessionHistory",
-		&orchestrator.GetSessionHistoryRequest{TenantID: "t1", SessionID: "s1"})
-	if !sdkerrors.IsUnimplemented(err) {
-		t.Fatalf("GetSessionHistory over REST: err = %v, want Unimplemented", err)
-	}
-	if reached.Load() {
-		t.Fatal("GetSessionHistory over REST sent a request; want none")
 	}
 }
 

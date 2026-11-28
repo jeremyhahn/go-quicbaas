@@ -147,6 +147,10 @@ func (m *mockService) BatchDelete(ctx context.Context, req *service.BatchDeleteR
 	return nil, nil
 }
 
+func (m *mockService) BatchExecute(ctx context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error) {
+	return nil, nil
+}
+
 // Transaction Operations (not implemented).
 func (m *mockService) Transaction(ctx context.Context, req *service.TransactionRequest) (*service.TransactionResponse, error) {
 	return nil, nil
