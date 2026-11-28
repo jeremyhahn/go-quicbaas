@@ -2092,10 +2092,13 @@ const (
 // payload: at this point the payload is attacker-controlled, and echoing it
 // into a log is an injection surface. An empty secret or signature is a
 // refusal, never a bypass — a misconfigured deployment must not silently accept
-// unsigned deliveries.
+// unsigned deliveries. In FIPS mode a secret shorter than 14 bytes is refused.
 func (g *GiteaBackend) VerifyWebhook(payload []byte, signature string, secret []byte) error {
 	if len(secret) == 0 {
 		return &WebhookUnverifiedError{Type: ForgeGitea, Reason: "no signing secret is configured"}
+	}
+	if fipsEnabled() && len(secret) < minFIPSWebhookSecretBytes {
+		return &WebhookUnverifiedError{Type: ForgeGitea, Reason: "signing secret is shorter than the 14 bytes FIPS 140-3 requires"}
 	}
 	if signature == "" {
 		return &WebhookUnverifiedError{Type: ForgeGitea, Reason: "delivery carried no signature"}

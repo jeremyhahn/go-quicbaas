@@ -72,7 +72,7 @@ func (limitEval) Evaluate(_ context.Context, raw json.RawMessage, input any) (De
 	return Decision{Allow: true}, nil
 }
 
-var keys = hmacKeys{"acme": []byte("acme-key"), "other": []byte("other-key")}
+var keys = hmacKeys{"acme": []byte("acme-tenant-policy-key"), "other": []byte("other-tenant-policy-key")}
 
 func doc(kind Kind, spec string) Document {
 	return Document{Kind: kind, Name: "cap", Tenant: "acme", Version: 1, Spec: json.RawMessage(spec)}

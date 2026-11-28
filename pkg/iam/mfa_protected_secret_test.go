@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	"crypto/fips140"
 	"strings"
 	"testing"
 	"time"
@@ -57,7 +58,7 @@ func TestProtectedSharedSecretDecodesIntoEnclave(t *testing.T) {
 	// enclave, not stored as its encoded text.
 	assert.Equal(t, 20, key.Size())
 
-	algorithm, err := convertAlgorithm("test.protected", MFAAlgorithmSHA1)
+	algorithm, err := convertAlgorithm("test.protected", wantDefaultMFAAlgorithm())
 	require.NoError(t, err)
 
 	auth, err := otp.NewAuthenticator(otp.Config{
@@ -84,7 +85,7 @@ func TestProtectedSharedSecretDecodesIntoEnclave(t *testing.T) {
 	fromApp := totpCodesForBracket(t, testTOTPSecret, MFAConfig{
 		Digits:    6,
 		Period:    30,
-		Algorithm: MFAAlgorithmSHA1,
+		Algorithm: wantDefaultMFAAlgorithm(),
 	}, before, after)
 	assert.Contains(t, fromApp, fromEnclave,
 		"the sealed key must derive the same code the enrolled authenticator app shows")
@@ -108,7 +109,7 @@ func TestProtectedSharedSecretDecodesIntoEnclave(t *testing.T) {
 // later in the next step fails while nothing is wrong. The third assertion is
 // the other half, that bracketing does not degrade into accepting anything.
 func TestTOTPCodesForBracketCoversATimeStepBoundary(t *testing.T) {
-	config := MFAConfig{Digits: 6, Period: 30, Algorithm: MFAAlgorithmSHA1}
+	config := MFAConfig{Digits: 6, Period: 30, Algorithm: wantDefaultMFAAlgorithm()}
 
 	// 1700000010 is a multiple of 30, so it is exactly a step boundary.
 	boundary := time.Unix(1700000010, 0).UTC()
@@ -220,7 +221,7 @@ func TestVerifyCodeRejectsStoredSecretWithTruncatedBase32Tail(t *testing.T) {
 				UserID:      40050,
 				TenantID:    "tenant-truncated",
 				Secret:      testTOTPSecret + tc.tail,
-				Algorithm:   MFAAlgorithmSHA1,
+				Algorithm:   wantDefaultMFAAlgorithm(),
 				Digits:      6,
 				Period:      30,
 				Issuer:      "QuicBaaS",
@@ -257,7 +258,7 @@ func storeCorruptSecretWithChallenge(t *testing.T, m *DefaultMFAManager, stored 
 		UserID:      40003,
 		TenantID:    "tenant-corrupt",
 		Secret:      stored,
-		Algorithm:   MFAAlgorithmSHA1,
+		Algorithm:   wantDefaultMFAAlgorithm(),
 		Digits:      6,
 		Period:      30,
 		Issuer:      "QuicBaaS",
@@ -340,7 +341,7 @@ func TestVerifyChallengeDoesNotHideCorruptSecretBehindBackupCode(t *testing.T) {
 	// corrupt the stored secret underneath them.
 	require.NoError(t, m.storage.SaveSecret(ctx, &MFASecret{
 		ID: uuid.New().String(), UserID: 40003, TenantID: "tenant-corrupt",
-		Secret: testTOTPSecret, Algorithm: MFAAlgorithmSHA1, Digits: 6, Period: 30,
+		Secret: testTOTPSecret, Algorithm: wantDefaultMFAAlgorithm(), Digits: 6, Period: 30,
 		Issuer: "QuicBaaS", AccountName: "corrupt@example.com", Verified: true, Created: time.Now(),
 	}))
 	codes, err := m.GenerateBackupCodes(ctx, 40003, "tenant-corrupt")
@@ -392,9 +393,15 @@ func TestVerifyChallengeKeepsBackupRecoveryForDisallowedAlgorithm(t *testing.T) 
 	// enrollment already in place — the migration case, not a fresh enrollment.
 	// Derived while SHA-1 is still allowed, because the generator applies the
 	// same policy and would refuse to produce it afterwards.
-	totpCode := generateValidTOTPCode(t, testTOTPSecret, MFAConfig{
-		Digits: 6, Period: 30, Algorithm: MFAAlgorithmSHA1,
-	})
+	// Under FIPS 140-only mode the generator already refuses SHA-1, and
+	// VerifyCode rejects the algorithm before it compares any code, so any
+	// well-formed 6-digit code exercises the same path there.
+	totpCode := "000000"
+	if !fips140.Enabled() {
+		totpCode = generateValidTOTPCode(t, testTOTPSecret, MFAConfig{
+			Digits: 6, Period: 30, Algorithm: MFAAlgorithmSHA1,
+		})
+	}
 
 	forceFIPSPolicy(t)
 
@@ -431,7 +438,7 @@ func TestDestroyedSharedSecretFailsClosed(t *testing.T) {
 	key, err := protectedSharedSecret("test.protected", testTOTPSecret)
 	require.NoError(t, err)
 
-	algorithm, err := convertAlgorithm("test.protected", MFAAlgorithmSHA1)
+	algorithm, err := convertAlgorithm("test.protected", wantDefaultMFAAlgorithm())
 	require.NoError(t, err)
 
 	auth, err := otp.NewAuthenticator(otp.Config{
@@ -446,7 +453,7 @@ func TestDestroyedSharedSecretFailsClosed(t *testing.T) {
 	code := generateValidTOTPCode(t, testTOTPSecret, MFAConfig{
 		Digits:    6,
 		Period:    30,
-		Algorithm: MFAAlgorithmSHA1,
+		Algorithm: wantDefaultMFAAlgorithm(),
 	})
 	submitted, err := enclave.NewMemoryEnclaveFromString(code)
 	require.NoError(t, err)
@@ -467,8 +474,8 @@ func TestDestroyedSharedSecretFailsClosed(t *testing.T) {
 func TestCheckTOTPCode(t *testing.T) {
 	ctx := context.Background()
 	m := newProtectedSecretTestManager(t)
-	provisioned := mfaProvisioningParams{Algorithm: MFAAlgorithmSHA1, Digits: 6, Period: 30}
-	config := MFAConfig{Algorithm: MFAAlgorithmSHA1, Digits: 6, Period: 30}
+	provisioned := mfaProvisioningParams{Algorithm: wantDefaultMFAAlgorithm(), Digits: 6, Period: 30}
+	config := MFAConfig{Algorithm: wantDefaultMFAAlgorithm(), Digits: 6, Period: 30}
 
 	code := generateValidTOTPCode(t, testTOTPSecret, config)
 	require.NoError(t, m.checkTOTPCode(ctx, "test.check", testTOTPSecret, code, provisioned))
@@ -499,7 +506,7 @@ func TestVerifyCodeAcceptsSecretEnrolledBeforeProtectedMemory(t *testing.T) {
 		UserID:      40002,
 		TenantID:    "tenant-legacy",
 		Secret:      testTOTPSecret,
-		Algorithm:   MFAAlgorithmSHA1,
+		Algorithm:   wantDefaultMFAAlgorithm(),
 		Digits:      6,
 		Period:      30,
 		Issuer:      "QuicBaaS",
@@ -592,7 +599,7 @@ func TestVerifyCodeRejectsCorruptStoredSecret(t *testing.T) {
 		UserID:    40003,
 		TenantID:  "tenant-corrupt",
 		Secret:    "not a base32 secret!!",
-		Algorithm: MFAAlgorithmSHA1,
+		Algorithm: wantDefaultMFAAlgorithm(),
 		Digits:    6,
 		Period:    30,
 		Issuer:    "QuicBaaS",

@@ -1418,7 +1418,7 @@ func signGitea(t *testing.T, payload, secret []byte) string {
 func TestVerifyWebhook_AcceptsOnlyAGenuineSignature(t *testing.T) {
 	backend, _ := newGiteaFixture(t)
 	payload := []byte(`{"action":"opened"}`)
-	secret := []byte("s3cret")
+	secret := []byte("gitea-webhook-s3cret")
 
 	if err := backend.VerifyWebhook(payload, signGitea(t, payload, secret), secret); err != nil {
 		t.Fatalf("a genuine delivery was rejected: %v", err)
@@ -1436,7 +1436,7 @@ func TestVerifyWebhook_AcceptsOnlyAGenuineSignature(t *testing.T) {
 func TestVerifyWebhook_FailsClosedOnEveryUnverifiablePath(t *testing.T) {
 	backend, _ := newGiteaFixture(t)
 	payload := []byte(`{"action":"opened"}`)
-	secret := []byte("s3cret")
+	secret := []byte("gitea-webhook-s3cret")
 	genuine := signGitea(t, payload, secret)
 
 	cases := map[string]struct {
@@ -1448,7 +1448,7 @@ func TestVerifyWebhook_FailsClosedOnEveryUnverifiablePath(t *testing.T) {
 		"no signature sent":       {payload, "", secret},
 		"signature is not hex":    {payload, "not-hex-at-all", secret},
 		"signature of a lie":      {[]byte(`{"action":"tampered"}`), genuine, secret},
-		"signed by the wrong key": {payload, signGitea(t, payload, []byte("other")), secret},
+		"signed by the wrong key": {payload, signGitea(t, payload, []byte("another-webhook-secret")), secret},
 		"truncated signature":     {payload, genuine[:len(genuine)-2], secret},
 	}
 	for name, tc := range cases {
@@ -1475,12 +1475,41 @@ func TestVerifyWebhook_NeverQuotesTheUnverifiedPayload(t *testing.T) {
 	marker := "ATTACKER-CONTROLLED-MARKER"
 	payload := []byte(`{"action":"` + marker + `"}`)
 
-	err := backend.VerifyWebhook(payload, "deadbeef", []byte("s3cret"))
+	err := backend.VerifyWebhook(payload, "deadbeef", []byte("gitea-webhook-s3cret"))
 	if err == nil {
 		t.Fatal("expected a refusal")
 	}
 	if strings.Contains(err.Error(), marker) {
 		t.Error("the unverified payload was quoted into an error message")
+	}
+}
+
+// TestVerifyWebhook_FIPSRefusesAShortSecret: in FIPS mode a secret shorter
+// than 14 bytes is refused with the usual unverified error, never passed to
+// HMAC (which would panic the process).
+func TestVerifyWebhook_FIPSRefusesAShortSecret(t *testing.T) {
+	original := fipsEnabled
+	fipsEnabled = func() bool { return true }
+	t.Cleanup(func() { fipsEnabled = original })
+
+	backend, _ := newGiteaFixture(t)
+
+	err := backend.VerifyWebhook([]byte("{}"), strings.Repeat("00", 32), []byte("thirteen-byte"))
+	if !errors.Is(err, ErrWebhookUnverified) {
+		t.Fatalf("a 13-byte secret in FIPS mode: err = %v, want ErrWebhookUnverified", err)
+	}
+	var unverified *WebhookUnverifiedError
+	if !errors.As(err, &unverified) {
+		t.Fatalf("err = %T, want *WebhookUnverifiedError", err)
+	}
+	if !strings.Contains(unverified.Reason, "14 bytes") {
+		t.Errorf("Reason = %q, want it to name the 14-byte minimum", unverified.Reason)
+	}
+
+	payload := []byte(`{"action":"opened"}`)
+	secret := []byte("fourteen-bytes")
+	if err := backend.VerifyWebhook(payload, signGitea(t, payload, secret), secret); err != nil {
+		t.Fatalf("a 14-byte secret in FIPS mode must verify: %v", err)
 	}
 }
 

@@ -36,7 +36,9 @@ var adminECDSACurves = map[elliptic.Curve]struct{}{
 
 // validateAdminCSR checks the admin CSR before provisioning writes anything:
 // qrdb signs it only after the admin user exists, so a CSR refused there
-// would leave an admin behind with no certificate.
+// would leave an admin behind with no certificate. The key policy is checked
+// before the signature, so a key outside the policy is reported as that, and
+// its signature is never verified with an algorithm FIPS mode refuses.
 func validateAdminCSR(csrPEM string) error {
 	block, _ := pem.Decode([]byte(csrPEM))
 	if block == nil || block.Type != "CERTIFICATE REQUEST" {
@@ -46,10 +48,13 @@ func validateAdminCSR(csrPEM string) error {
 	if err != nil {
 		return &ProvisionAdminCSRInvalidError{Reason: "unparseable request", Cause: err}
 	}
+	if err := checkAdminKey(csr.PublicKey); err != nil {
+		return err
+	}
 	if err := csr.CheckSignature(); err != nil {
 		return &ProvisionAdminCSRInvalidError{Reason: "signature does not verify", Cause: err}
 	}
-	return checkAdminKey(csr.PublicKey)
+	return nil
 }
 
 // checkAdminKey enforces the admin certificate key policy.
