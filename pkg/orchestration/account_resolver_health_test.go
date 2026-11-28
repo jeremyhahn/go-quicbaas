@@ -76,6 +76,35 @@ func TestAccountResolver_PinnedAccount_Errored(t *testing.T) {
 	}
 }
 
+func TestAccountResolver_PinnedAccount_AwaitingCredential(t *testing.T) {
+	resolver, store, _ := setupResolver(t)
+	ctx := context.Background()
+
+	account := &Account{
+		ID:       "default-claude",
+		TenantID: "tenant-a",
+		Provider: AccountProviderClaude,
+		Status:   AccountStatusAwaitingCredential,
+	}
+	if err := store.Create(ctx, account); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if account.Selectable(time.Now()) {
+		t.Fatal("Selectable() = true for an account awaiting its credential")
+	}
+
+	_, err := resolver.Resolve(ctx, AccountResolveRequest{
+		TenantID: "tenant-a", Provider: AccountProviderClaude, AccountID: "default-claude",
+	})
+	if !errors.Is(err, ErrAccountAwaitingCredential) {
+		t.Fatalf("Resolve() error = %v (%T), want ErrAccountAwaitingCredential", err, err)
+	}
+	var awaiting *AccountAwaitingCredentialError
+	if !errors.As(err, &awaiting) || awaiting.AccountID != "default-claude" || awaiting.Provider != AccountProviderClaude {
+		t.Fatalf("Resolve() error = %#v, want *AccountAwaitingCredentialError naming the account", err)
+	}
+}
+
 // touchFailingAccountStore fails every Touch while behaving normally otherwise.
 // It stands in for a store outage during the usage stamp.
 type touchFailingAccountStore struct {

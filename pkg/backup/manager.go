@@ -84,7 +84,13 @@ var (
 	globalBackupMetricsOnce sync.Once
 )
 
-// NewBackupManager creates a new backup manager.
+// wholeStoreShardID is the shard id a backup uses when the manager has no
+// raft node: the store is the embedded node's keyspace, written as a single
+// shard.
+const wholeStoreShardID uint64 = 0
+
+// NewBackupManager creates a new backup manager. A nil raft is accepted:
+// backups then snapshot the whole store as one shard.
 func NewBackupManager(
 	config *Config,
 	storage interfaces.Storage,
@@ -98,12 +104,10 @@ func NewBackupManager(
 		return nil, &InvalidConfigError{Field: "storage", Message: "storage is required"}
 	}
 	// raft may be nil when the caller has a real qrdb engine node
-	// providing consensus (s.qrdbNode path). Backup snapshots degrade
-	// gracefully: GetNodeHostInfo returns an empty info so no shard
-	// snapshots are captured; GetShardRaftState returns (0, 0) via
-	// the nil-safe guard in createShardSnapshot. A nil raft is therefore
-	// accepted so the backup manager can still manage metadata, scheduling,
-	// and restore without requiring a standalone no-op raft node.
+	// providing consensus (s.qrdbNode path). Its shard topology is not
+	// visible through this interface, so CreateBackup snapshots the whole
+	// store as one shard (wholeStoreShardID) with zero Raft index and
+	// term, and RestoreBackup writes that shard back through storage.
 	if log == nil {
 		return nil, &InvalidConfigError{Field: "logger", Message: "logger is required"}
 	}
@@ -279,27 +283,34 @@ func (m *BackupManager) CreateBackup(ctx context.Context, backupType BackupType)
 		},
 	}
 
-	// Create Raft snapshots for each shard. When raft is nil the engine
-	// is backed by a real qrdb node whose shard topology is not
-	// accessible via this interface; treat it as zero shards so the
-	// backup still persists KV metadata and scheduling state.
-	var nodeInfo *interfaces.NodeHostInfo
-	if m.raft != nil {
-		nodeInfo = m.raft.GetNodeHostInfo(interfaces.NodeHostInfoOption{})
-	}
-	if nodeInfo == nil {
-		nodeInfo = &interfaces.NodeHostInfo{}
-	}
-
-	backup.Metadata.NumShards = len(nodeInfo.ShardInfoList)
-
-	for _, shardInfo := range nodeInfo.ShardInfoList {
-		snapshot, err := m.createShardSnapshot(ctx, shardInfo.ShardID)
+	// With no raft node the store is the embedded node's keyspace: take
+	// one whole-store snapshot as shard wholeStoreShardID. With a raft
+	// node, snapshot each shard it reports; a nil or empty NodeHostInfo
+	// gives zero shards.
+	if m.raft == nil {
+		backup.Metadata.NumShards = 1
+		snapshot, err := m.createShardSnapshot(ctx, wholeStoreShardID)
 		if err != nil {
 			m.metrics.backupErrors.Inc()
-			return nil, api.NewShardOperationError("backup.CreateBackup", dberrors.ErrSnapshot, shardInfo.ShardID, "create snapshot", err)
+			return nil, api.NewShardOperationError("backup.CreateBackup", dberrors.ErrSnapshot, wholeStoreShardID, "create snapshot", err)
 		}
-		backup.Shards[shardInfo.ShardID] = snapshot
+		backup.Shards[wholeStoreShardID] = snapshot
+	} else {
+		nodeInfo := m.raft.GetNodeHostInfo(interfaces.NodeHostInfoOption{})
+		if nodeInfo == nil {
+			nodeInfo = &interfaces.NodeHostInfo{}
+		}
+
+		backup.Metadata.NumShards = len(nodeInfo.ShardInfoList)
+
+		for _, shardInfo := range nodeInfo.ShardInfoList {
+			snapshot, err := m.createShardSnapshot(ctx, shardInfo.ShardID)
+			if err != nil {
+				m.metrics.backupErrors.Inc()
+				return nil, api.NewShardOperationError("backup.CreateBackup", dberrors.ErrSnapshot, shardInfo.ShardID, "create snapshot", err)
+			}
+			backup.Shards[shardInfo.ShardID] = snapshot
+		}
 	}
 
 	// Serialize backup to buffer
@@ -567,6 +578,19 @@ func (m *BackupManager) RestoreBackup(ctx context.Context, backupID string, opts
 }
 
 // restoreShardSnapshot restores a single shard snapshot.
+// KeyValue is one key/value pair a restore writes back.
+type KeyValue struct {
+	Key   []byte
+	Value []byte
+}
+
+// BatchWriter is the optional capability of a backup data store that
+// applies many writes in few round trips. RestoreBackup uses it when the
+// store has it, and writes key by key otherwise.
+type BatchWriter interface {
+	WriteBatch(ctx context.Context, kvs []KeyValue) error
+}
+
 func (m *BackupManager) restoreShardSnapshot(ctx context.Context, snapshot *ShardSnapshot, opts *RestoreOptions) error {
 	// Verify snapshot checksum
 	if opts.VerifyChecksum {
@@ -575,8 +599,10 @@ func (m *BackupManager) restoreShardSnapshot(ctx context.Context, snapshot *Shar
 		}
 	}
 
-	// Parse and restore key-value pairs
+	// Decode every key-value pair first, so the store can apply them in
+	// few round trips instead of one write per key.
 	reader := bytes.NewReader(snapshot.Data)
+	var kvs []KeyValue
 
 	for {
 		key, value, err := readKeyValue(reader)
@@ -589,13 +615,30 @@ func (m *BackupManager) restoreShardSnapshot(ctx context.Context, snapshot *Shar
 
 		// Skip existing keys if requested
 		if opts.SkipExisting {
-			if _, err := m.storage.Get(key); err == nil {
+			if _, err := m.storage.GetWithContext(ctx, key); err == nil {
 				continue
 			}
 		}
 
-		// Restore key-value pair
-		if err := m.storage.Set(key, value); err != nil {
+		kvs = append(kvs, KeyValue{Key: key, Value: value})
+	}
+
+	if len(kvs) == 0 {
+		return nil
+	}
+
+	if bw, ok := m.storage.(BatchWriter); ok {
+		if err := bw.WriteBatch(ctx, kvs); err != nil {
+			return api.NewOperationFailedError("restore keys", err)
+		}
+		return nil
+	}
+
+	for _, kv := range kvs {
+		if err := ctx.Err(); err != nil {
+			return api.NewOperationFailedError("restore key", err)
+		}
+		if err := m.storage.SetWithContext(ctx, kv.Key, kv.Value); err != nil {
 			return api.NewOperationFailedError("restore key", err)
 		}
 	}

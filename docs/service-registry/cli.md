@@ -9,14 +9,14 @@ mcp, unix, embedded) and acts on the authenticated tenant. `--output` selects
 
 | Command | Flags / arguments |
 |---|---|
-| `registry register` | `--service` `--id` `--address` (required), `--ttl` seconds (default 15), `--meta key=value` (repeatable) |
+| `registry register` | `--service` `--id` `--instance-address` (required), `--ttl` seconds (default 15), `--meta key=value` (repeatable) |
 | `registry renew <leaseID>` | — |
 | `registry deregister <leaseID>` | — |
 | `registry resolve <service>` | — |
 | `registry watch <service>` | `--from-revision N` (0: changes from now), `--max-events N` (exit after N changes; 0 runs until interrupted) |
 
 ```bash
-quicbaas registry register --service api --id node-a --address 10.0.4.7:8443 --ttl 15 --meta zone=z1
+quicbaas registry register --service api --id node-a --instance-address 10.0.4.7:8443 --ttl 15 --meta zone=z1
 quicbaas registry renew 42
 quicbaas registry resolve api --output json
 quicbaas registry watch api

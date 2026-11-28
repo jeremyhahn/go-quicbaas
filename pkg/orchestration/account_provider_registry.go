@@ -84,6 +84,11 @@ type ProviderDescriptor struct {
 	// are false. Configuration may override a built-in's fields; it never
 	// changes this flag.
 	BuiltIn bool
+
+	// DefaultAccount marks a frontier provider: a default install creates one
+	// default account for it in every tenant, waiting for its credential.
+	// Adding a frontier provider is one built-in entry with this set.
+	DefaultAccount bool
 }
 
 // BuiltinAccountProviders returns the descriptors QuicBaaS ships.
@@ -106,6 +111,7 @@ func BuiltinAccountProviders() []ProviderDescriptor {
 			AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN",
 			OAuthCapable:      true,
 			BuiltIn:           true,
+			DefaultAccount:    true,
 		},
 		{
 			Provider:    AccountProviderCodex,
@@ -115,8 +121,9 @@ func BuiltinAccountProviders() []ProviderDescriptor {
 			// variable, so there is no honest equivalent of
 			// CLAUDE_CODE_OAUTH_TOKEN to ship. An operator pooling API keys
 			// sets access_token_env_key (or Env) on the account explicitly.
-			OAuthCapable: true,
-			BuiltIn:      true,
+			OAuthCapable:   true,
+			BuiltIn:        true,
+			DefaultAccount: true,
 		},
 		{
 			Provider:    AccountProviderOpenCode,
@@ -209,6 +216,8 @@ func (d ProviderDescriptor) merge(override ProviderDescriptor) ProviderDescripto
 	// endpoint for a provider is an unambiguous statement that its accounts
 	// can run the refresh grant.
 	merged.OAuthCapable = d.OAuthCapable || override.OAuthCapable || override.TokenEndpoint != ""
+	// A config override can never clear a built-in's frontier flag.
+	merged.DefaultAccount = d.DefaultAccount || override.DefaultAccount
 	return merged
 }
 
@@ -244,6 +253,22 @@ func (r *AccountProviderRegistry) OAuthCapableProviders() []AccountProvider {
 	providers := make([]AccountProvider, 0, len(r.descriptors))
 	for provider, descriptor := range r.descriptors {
 		if descriptor.OAuthCapable {
+			providers = append(providers, provider)
+		}
+	}
+	sort.Slice(providers, func(i, j int) bool { return providers[i] < providers[j] })
+	return providers
+}
+
+// DefaultAccountProviders returns the providers a default install creates a
+// default account for, sorted by name.
+func (r *AccountProviderRegistry) DefaultAccountProviders() []AccountProvider {
+	if r == nil {
+		return nil
+	}
+	providers := make([]AccountProvider, 0, len(r.descriptors))
+	for provider, descriptor := range r.descriptors {
+		if descriptor.DefaultAccount {
 			providers = append(providers, provider)
 		}
 	}

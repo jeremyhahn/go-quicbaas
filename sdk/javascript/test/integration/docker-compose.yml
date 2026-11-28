@@ -1,15 +1,10 @@
-# JavaScript SDK integration environment: one standalone QuicBaaS server and a
-# Node runner that executes the jest integration suites against it. Driven by
-# `make integration-test-sdk-js` and `make integration-test-sdk-js-<pkg>`; the
-# suites never run on the host.
+# JavaScript SDK integration environment: one standalone server and a Node runner for the jest suites.
 services:
   central:
     image: ${QUICBAAS_IMAGE:-quicbaas:latest}
-    # The hostname lands in the SANs of the server certificate the built-in CA
-    # issues at first boot, so the runner can verify https://central:8080.
+    # The hostname is in the server certificate's SANs, so the runner can verify https://central:8080.
     hostname: central
-    # Standalone daemon (no Raft) on the suite's own configuration; the image's
-    # default `--config /data/config.yaml` names a file nothing supplies.
+    # Standalone daemon on the suite's own configuration.
     entrypoint: ["/usr/local/bin/quicbaasd"]
     command: ["start", "--config", "/etc/quicbaas/quicbaas.yaml", "--data-dir", "/data"]
     volumes:
@@ -18,11 +13,7 @@ services:
     networks:
       - sdk-js-net
     healthcheck:
-      # The runtime image has no curl; busybox wget is what it ships. REST is
-      # TLS-only and this probe cannot be handed the daemon's own CA, so it
-      # checks readiness on loopback without verifying the certificate (the
-      # Go suites' compose files use `curl -k` for the same probe). The test
-      # runner verifies the certificate against the CA chain.
+      # The runtime image has no curl; it ships busybox wget.
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "--no-check-certificate", "https://localhost:8080/api/v1/health/ready"]
       interval: 5s
       timeout: 5s
@@ -36,8 +27,7 @@ services:
         condition: service_healthy
     environment:
       - QUICBAAS_URL=https://central:8080
-      # The server certificate is issued by the daemon's own CA at first boot;
-      # Node trusts its chain from the daemon's data volume.
+      # Node trusts the chain of the daemon's own CA from its data volume.
       - NODE_EXTRA_CA_CERTS=/quicbaas-data/certs/ca-chain.crt
       - JS_TEST_PATTERN=${JS_TEST_PATTERN:-integration}
     working_dir: /sdk

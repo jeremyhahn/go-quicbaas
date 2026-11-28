@@ -1293,12 +1293,8 @@ func main() {
     }
     defer client.Close()
 
-    // Create a compressed and encrypted backup
-    backupResp, err := client.Backup().Create(ctx, &backup.BackupRequest{
-        Destination: "s3://my-bucket/quicbaas-backups/",
-        Compress:    true,
-        Encrypt:     true,
-    })
+    // Create a full backup in the server's configured backup storage
+    backupResp, err := client.Backup().Create(ctx, &backup.BackupRequest{})
     if err != nil {
         log.Fatalf("Backup failed: %v", err)
     }
@@ -1306,7 +1302,7 @@ func main() {
     fmt.Printf("Backup created:\n")
     fmt.Printf("  ID: %s\n", backupResp.BackupID)
     fmt.Printf("  Size: %d bytes\n", backupResp.Size)
-    fmt.Printf("  Duration: %v\n", backupResp.Duration)
+    fmt.Printf("  Status: %s\n", backupResp.Status)
     fmt.Printf("  Created: %v\n", backupResp.CreatedAt)
 
     // List all available backups
