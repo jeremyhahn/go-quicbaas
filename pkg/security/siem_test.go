@@ -19,13 +19,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
+
 	"bytes"
 	"context"
-	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -34,14 +36,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSIEMExporter_NewWithNilConfig(t *testing.T) {
-	log := createTestLogger(t)
-	_, err := NewSIEMExporter(nil, log)
-	require.Error(t, err)
+func TestSIEMExporter_NewInvalidConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      *SIEMConfig
+		wantCode string
+	}{
+		{name: "nil config", cfg: nil, wantCode: ErrCodeSIEMConfigNil},
+		{name: "missing endpoint", cfg: &SIEMConfig{Enabled: true, Endpoint: ""}, wantCode: ErrCodeSIEMEndpointMissing},
+		{name: "invalid endpoint", cfg: &SIEMConfig{Enabled: true, Endpoint: "://invalid"}, wantCode: ErrCodeSIEMEndpointInvalid},
+		{name: "invalid scheme", cfg: &SIEMConfig{Enabled: true, Endpoint: "ftp://example.com"}, wantCode: ErrCodeSIEMSchemeInvalid},
+	}
 
-	siemErr, ok := err.(*SIEMError)
-	require.True(t, ok)
-	assert.Equal(t, ErrCodeSIEMConfigNil, siemErr.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewSIEMExporter(tt.cfg, createTestLogger(t))
+			var siemErr *SIEMError
+			require.ErrorAs(t, err, &siemErr)
+			assert.Equal(t, tt.wantCode, siemErr.Code)
+		})
+	}
 }
 
 func TestSIEMExporter_NewDisabled(t *testing.T) {
@@ -59,58 +73,11 @@ func TestSIEMExporter_NewDisabled(t *testing.T) {
 	exporter.Start()
 	assert.False(t, exporter.IsRunning())
 
-	// Send should be no-op
+	// Send and Flush should be no-ops
 	event := &AuditEvent{Username: "test"}
 	err = exporter.Send(event)
 	assert.NoError(t, err)
-}
-
-func TestSIEMExporter_NewWithMissingEndpoint(t *testing.T) {
-	log := createTestLogger(t)
-
-	cfg := &SIEMConfig{
-		Enabled:  true,
-		Endpoint: "",
-	}
-
-	_, err := NewSIEMExporter(cfg, log)
-	require.Error(t, err)
-
-	siemErr, ok := err.(*SIEMError)
-	require.True(t, ok)
-	assert.Equal(t, ErrCodeSIEMEndpointMissing, siemErr.Code)
-}
-
-func TestSIEMExporter_NewWithInvalidEndpoint(t *testing.T) {
-	log := createTestLogger(t)
-
-	cfg := &SIEMConfig{
-		Enabled:  true,
-		Endpoint: "://invalid",
-	}
-
-	_, err := NewSIEMExporter(cfg, log)
-	require.Error(t, err)
-
-	siemErr, ok := err.(*SIEMError)
-	require.True(t, ok)
-	assert.Equal(t, ErrCodeSIEMEndpointInvalid, siemErr.Code)
-}
-
-func TestSIEMExporter_NewWithInvalidScheme(t *testing.T) {
-	log := createTestLogger(t)
-
-	cfg := &SIEMConfig{
-		Enabled:  true,
-		Endpoint: "ftp://example.com",
-	}
-
-	_, err := NewSIEMExporter(cfg, log)
-	require.Error(t, err)
-
-	siemErr, ok := err.(*SIEMError)
-	require.True(t, ok)
-	assert.Equal(t, ErrCodeSIEMSchemeInvalid, siemErr.Code)
+	assert.NoError(t, exporter.Flush())
 }
 
 func TestSIEMExporter_NewWithDefaults(t *testing.T) {
@@ -167,6 +134,7 @@ func TestSIEMExporter_SendNilEvent(t *testing.T) {
 
 func TestSIEMExporter_JSONFormat(t *testing.T) {
 	var receivedEvents []SIEMJSONEvent
+	var receivedMu sync.Mutex
 	var receivedCount atomic.Int64
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +157,9 @@ func TestSIEMExporter_JSONFormat(t *testing.T) {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
+			receivedMu.Lock()
 			receivedEvents = append(receivedEvents, event)
+			receivedMu.Unlock()
 		}
 		receivedCount.Add(int64(len(lines)))
 		w.WriteHeader(http.StatusOK)
@@ -228,11 +198,11 @@ func TestSIEMExporter_JSONFormat(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
+	poll.Until(t, 10*time.Second, func() bool { return receivedCount.Load() > 0 }, "the exporter flushes the event")
 
-	assert.Greater(t, receivedCount.Load(), int64(0))
-	if len(receivedEvents) > 0 {
+	receivedMu.Lock()
+	defer receivedMu.Unlock()
+	if assert.NotEmpty(t, receivedEvents) {
 		lastEvent := receivedEvents[len(receivedEvents)-1]
 		assert.Equal(t, "quicbaas", lastEvent.Source)
 		assert.Equal(t, "audit", lastEvent.EventType)
@@ -242,7 +212,7 @@ func TestSIEMExporter_JSONFormat(t *testing.T) {
 }
 
 func TestSIEMExporter_CEFFormat(t *testing.T) {
-	var receivedData string
+	var received atomic.Value // string: the last request body
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "text/plain", r.Header.Get("Content-Type"))
@@ -252,7 +222,7 @@ func TestSIEMExporter_CEFFormat(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		receivedData = string(body)
+		received.Store(string(body))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -288,8 +258,8 @@ func TestSIEMExporter_CEFFormat(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
+	poll.Until(t, 10*time.Second, func() bool { return received.Load() != nil }, "the exporter flushes the event")
+	receivedData, _ := received.Load().(string)
 
 	// Verify CEF format
 	assert.Contains(t, receivedData, "CEF:0|TestVendor|TestProduct|2.0|")
@@ -299,7 +269,7 @@ func TestSIEMExporter_CEFFormat(t *testing.T) {
 }
 
 func TestSIEMExporter_LEEFFormat(t *testing.T) {
-	var receivedData string
+	var received atomic.Value // string: the last request body
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "text/plain", r.Header.Get("Content-Type"))
@@ -309,7 +279,7 @@ func TestSIEMExporter_LEEFFormat(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		receivedData = string(body)
+		received.Store(string(body))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -346,8 +316,8 @@ func TestSIEMExporter_LEEFFormat(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
+	poll.Until(t, 10*time.Second, func() bool { return received.Load() != nil }, "the exporter flushes the event")
+	receivedData, _ := received.Load().(string)
 
 	// Verify LEEF format
 	assert.Contains(t, receivedData, "LEEF:2.0|TestVendor|TestProduct|3.0|")
@@ -428,18 +398,17 @@ func TestSIEMExporter_RetryOnFailure(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for retries
-	time.Sleep(500 * time.Millisecond)
-
-	// Should have made 3 attempts
-	assert.GreaterOrEqual(t, requestCount.Load(), int32(3))
+	// Two refusals, then the third attempt succeeds.
+	poll.Until(t, 10*time.Second, func() bool { return requestCount.Load() >= 3 }, "the exporter retries until the third attempt")
+	poll.Until(t, 10*time.Second, func() bool { sent, _ := exporter.GetStats(); return sent >= 1 }, "the retried event counts as sent")
 }
 
 func TestSIEMExporter_CustomHeaders(t *testing.T) {
-	var receivedHeaders http.Header
+	var received atomic.Pointer[http.Header]
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedHeaders = r.Header.Clone()
+		h := r.Header.Clone()
+		received.Store(&h)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -474,8 +443,8 @@ func TestSIEMExporter_CustomHeaders(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
+	poll.Until(t, 10*time.Second, func() bool { return received.Load() != nil }, "the exporter flushes the event")
+	receivedHeaders := *received.Load()
 
 	assert.Equal(t, "Bearer test-token", receivedHeaders.Get("Authorization"))
 	assert.Equal(t, "custom-value", receivedHeaders.Get("X-Custom-Header"))
@@ -497,7 +466,7 @@ func TestSIEMExporter_BatchFlush(t *testing.T) {
 		Endpoint:      server.URL,
 		Format:        SIEMFormatJSON,
 		BatchSize:     5,
-		FlushInterval: 5 * time.Second, // Long interval to ensure batch size triggers flush
+		FlushInterval: time.Hour, // never fires in the test: only the batch size can flush
 	}
 
 	exporter, err := NewSIEMExporter(cfg, log)
@@ -518,10 +487,7 @@ func TestSIEMExporter_BatchFlush(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Wait for batch flush
-	time.Sleep(200 * time.Millisecond)
-
-	assert.Greater(t, receivedBatches.Load(), int32(0))
+	poll.Until(t, 10*time.Second, func() bool { return receivedBatches.Load() > 0 }, "a full batch flushes before the flush interval")
 }
 
 func TestSIEMExporter_GetStats(t *testing.T) {
@@ -558,8 +524,7 @@ func TestSIEMExporter_GetStats(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Wait for flush
-	time.Sleep(300 * time.Millisecond)
+	poll.Until(t, 10*time.Second, func() bool { sent, _ := exporter.GetStats(); return sent >= 3 }, "the three events are sent")
 
 	sent, errors := exporter.GetStats()
 	assert.GreaterOrEqual(t, sent, int64(3))
@@ -603,59 +568,6 @@ func TestSIEMExporter_SeverityMapping(t *testing.T) {
 	}
 }
 
-func TestSIEMExporter_SignatureIDMapping(t *testing.T) {
-	log := createTestLogger(t)
-
-	cfg := &SIEMConfig{
-		Enabled:  true,
-		Endpoint: "https://siem.example.com",
-		Format:   SIEMFormatJSON,
-	}
-
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	testCases := []struct {
-		action   string
-		expected string
-	}{
-		{ActionAuthenticate, "1001"},
-		{ActionAuthorize, "1002"},
-		{ActionRead, "2001"},
-		{ActionWrite, "2002"},
-		{ActionDelete, "2003"},
-		{ActionKeyRotate, "6001"},
-		{ActionTenantSwitch, "8001"},
-		{"unknown_action", "9999"},
-	}
-
-	for _, tc := range testCases {
-		sigID := exporter.mapSignatureID(tc.action)
-		assert.Equal(t, tc.expected, sigID, "Action: %s", tc.action)
-	}
-}
-
-func TestSIEMExporter_CEFEscaping(t *testing.T) {
-	log := createTestLogger(t)
-
-	cfg := &SIEMConfig{
-		Enabled:  true,
-		Endpoint: "https://siem.example.com",
-		Format:   SIEMFormatCEF,
-	}
-
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	// Test header escaping
-	result := exporter.escapeCEF("test|pipe\\backslash")
-	assert.Equal(t, "test\\|pipe\\\\backslash", result)
-
-	// Test value escaping
-	result = exporter.escapeCEFValue("test=equals\nnewline\rcarriage")
-	assert.Equal(t, "test\\=equals\\nnewline\\rcarriage", result)
-}
-
 func TestSIEMExporter_LEEFEscaping(t *testing.T) {
 	log := createTestLogger(t)
 
@@ -682,35 +594,32 @@ func TestSIEMExporter_LEEFEscaping(t *testing.T) {
 }
 
 func TestSIEMError_Error(t *testing.T) {
-	t.Run("with cause", func(t *testing.T) {
-		cause := io.EOF
-		err := &SIEMError{
-			Code:    ErrCodeSIEMRequestFailed,
-			Message: "request failed",
-			Cause:   cause,
-		}
-		expected := "SIEM_REQUEST_FAILED: request failed: EOF"
-		assert.Equal(t, expected, err.Error())
-	})
-
-	t.Run("without cause", func(t *testing.T) {
-		err := &SIEMError{
-			Code:    ErrCodeSIEMConfigNil,
-			Message: "config is nil",
-		}
-		expected := "SIEM_CONFIG_NIL: config is nil"
-		assert.Equal(t, expected, err.Error())
-	})
-}
-
-func TestSIEMError_Unwrap(t *testing.T) {
-	cause := io.EOF
-	err := &SIEMError{
-		Code:    ErrCodeSIEMRequestFailed,
-		Message: "request failed",
-		Cause:   cause,
+	tests := []struct {
+		name       string
+		err        *SIEMError
+		wantString string
+		wantUnwrap error
+	}{
+		{
+			name:       "with cause",
+			err:        &SIEMError{Code: ErrCodeSIEMRequestFailed, Message: "request failed", Cause: io.EOF},
+			wantString: "SIEM_REQUEST_FAILED: request failed: EOF",
+			wantUnwrap: io.EOF,
+		},
+		{
+			name:       "without cause",
+			err:        &SIEMError{Code: ErrCodeSIEMConfigNil, Message: "config is nil"},
+			wantString: "SIEM_CONFIG_NIL: config is nil",
+			wantUnwrap: nil,
+		},
 	}
-	assert.Equal(t, cause, err.Unwrap())
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.wantString, tt.err.Error())
+			assert.Equal(t, tt.wantUnwrap, tt.err.Unwrap())
+		})
+	}
 }
 
 func TestSIEMExporter_DoubleStart(t *testing.T) {
@@ -825,9 +734,29 @@ func TestAuditLogger_SIEMExporterIntegration(t *testing.T) {
 		err = al.siemExporter.Send(event)
 		assert.NoError(t, err)
 
-		// Wait for flush
-		time.Sleep(200 * time.Millisecond)
+		pollSIEMSent(t, al.siemExporter, 1)
 	}
+}
+
+// siemPending is the number of events the exporter holds for its next flush.
+func siemPending(s *SIEMExporter) int {
+	s.batchMu.Lock()
+	defer s.batchMu.Unlock()
+	return len(s.batch)
+}
+
+// pollSIEMPending waits until AuditLogger.Log's fire-and-forget goroutine has
+// handed an event to the exporter (it holds n events for its next flush).
+func pollSIEMPending(t *testing.T, s *SIEMExporter, n int) {
+	t.Helper()
+	require.NotNil(t, s, "the audit logger has a SIEM exporter")
+	poll.Until(t, 10*time.Second, func() bool { return siemPending(s) >= n }, "%d event(s) reach the SIEM exporter", n)
+}
+
+// pollSIEMSent waits until the exporter has delivered n events.
+func pollSIEMSent(t *testing.T, s *SIEMExporter, n int64) {
+	t.Helper()
+	poll.Until(t, 10*time.Second, func() bool { sent, _ := s.GetStats(); return sent >= n }, "the SIEM exporter delivers %d event(s)", n)
 }
 
 // TestAuditLogger_SendToSIEMIntegration tests the sendToSIEM function
@@ -856,8 +785,7 @@ func TestAuditLogger_SendToSIEMIntegration(t *testing.T) {
 	err = al.Log(context.Background(), event)
 	assert.NoError(t, err)
 
-	// Give goroutine time to execute
-	time.Sleep(50 * time.Millisecond)
+	pollSIEMPending(t, al.siemExporter, 1)
 }
 
 // TestAuditLogger_BothSyslogAndSIEM tests both outputs together
@@ -888,8 +816,7 @@ func TestAuditLogger_BothSyslogAndSIEM(t *testing.T) {
 	err = al.Log(context.Background(), event)
 	assert.NoError(t, err)
 
-	// Give goroutines time to execute
-	time.Sleep(100 * time.Millisecond)
+	pollSIEMPending(t, al.siemExporter, 1)
 }
 
 func TestLog_WithSIEMExporter(t *testing.T) {
@@ -988,6 +915,7 @@ func TestDoHTTPRequest_SuccessfulResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		assert.Equal(t, "Bearer token123", r.Header.Get("Authorization"))
+		assert.Equal(t, "custom-value", r.Header.Get("X-Custom"))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -996,7 +924,10 @@ func TestDoHTTPRequest_SuccessfulResponse(t *testing.T) {
 		Enabled:  true,
 		Endpoint: server.URL,
 		Format:   SIEMFormatJSON,
-		Headers:  map[string]string{"Authorization": "Bearer token123"},
+		Headers: map[string]string{
+			"Authorization": "Bearer token123",
+			"X-Custom":      "custom-value",
+		},
 	}
 
 	log := createTestLogger(t)
@@ -1028,37 +959,6 @@ func TestDoHTTPRequest_ServerError(t *testing.T) {
 	var siemErr *SIEMError
 	assert.ErrorAs(t, err, &siemErr)
 	assert.Equal(t, ErrCodeSIEMStatusCode, siemErr.Code)
-}
-
-// ---------------------------------------------------------------------------
-// flushLoop / Flush (audit.go:755,800 -- 90% covered)
-// ---------------------------------------------------------------------------
-
-func TestSIEMExporter_FlushEmptyBatch(t *testing.T) {
-	cfg := &SIEMConfig{
-		Enabled:  true,
-		Endpoint: "http://localhost:9999",
-		Format:   SIEMFormatJSON,
-	}
-
-	log := createTestLogger(t)
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	// Flush with empty batch should be no-op
-	err = exporter.Flush()
-	require.NoError(t, err)
-}
-
-func TestSIEMExporter_FlushDisabled(t *testing.T) {
-	cfg := &SIEMConfig{Enabled: false}
-
-	log := createTestLogger(t)
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	err = exporter.Flush()
-	require.NoError(t, err)
 }
 
 // ---------------------------------------------------------------------------
@@ -1198,56 +1098,58 @@ func TestFormatJSONBatch_EmptyEvents(t *testing.T) {
 	assert.Empty(t, data)
 }
 
-func TestNewAuditLogger_WithSIEMEnabled(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestNewAuditLogger_SIEM(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer ts.Close()
+	defer server.Close()
 
-	log := createTestLogger(t)
-
-	cfg := &AuditConfig{
-		Enabled:       true,
-		SIEM:          true,
-		SIEMEndpoint:  ts.URL,
-		FlushInterval: 100 * time.Millisecond,
-	}
-
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	require.NotNil(t, al)
-	assert.NotNil(t, al.siemExporter)
-	close(al.shutdown)
-	al.siemExporter.Close()
-}
-
-func TestNewAuditLogger_WithSIEMConfig(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	log := createTestLogger(t)
-
-	cfg := &AuditConfig{
-		Enabled: true,
-		SIEM:    true,
-		SIEMConfig: &SIEMConfig{
-			Enabled:       true,
-			Endpoint:      ts.URL,
-			Format:        SIEMFormatJSON,
-			BatchSize:     5,
-			FlushInterval: 50 * time.Millisecond,
+	tests := []struct {
+		name    string
+		cfg     *AuditConfig
+		wantErr bool
+	}{
+		{
+			name: "legacy endpoint",
+			cfg:  &AuditConfig{Enabled: true, SIEM: true, SIEMEndpoint: server.URL},
 		},
-		FlushInterval: 100 * time.Millisecond,
+		{
+			name: "explicit config",
+			cfg: &AuditConfig{
+				Enabled:    true,
+				SIEM:       true,
+				SIEMConfig: &SIEMConfig{Enabled: true, Endpoint: server.URL, Format: SIEMFormatCEF},
+			},
+		},
+		{
+			name:    "legacy empty endpoint",
+			cfg:     &AuditConfig{Enabled: true, SIEM: true, SIEMEndpoint: "", FlushInterval: time.Second},
+			wantErr: true,
+		},
+		{
+			name: "explicit config invalid scheme",
+			cfg: &AuditConfig{
+				Enabled:       true,
+				SIEM:          true,
+				SIEMConfig:    &SIEMConfig{Enabled: true, Endpoint: "ftp://invalid-scheme.example.com"},
+				FlushInterval: time.Second,
+			},
+			wantErr: true,
+		},
 	}
 
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	require.NotNil(t, al)
-	assert.NotNil(t, al.siemExporter)
-	close(al.shutdown)
-	al.siemExporter.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			al, err := NewAuditLogger(tt.cfg, createTestLogger(t))
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			defer al.Close()
+			assert.NotNil(t, al.siemExporter)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1365,212 +1267,56 @@ func TestSIEMExporter_FlushWithRetryExhausted(t *testing.T) {
 
 	// Flush should fail after retries exhausted
 	err = exporter.Flush()
-	assert.Error(t, err)
-}
-
-// ---------------------------------------------------------------------------
-// doHTTPRequest - cover the request creation error path
-// ---------------------------------------------------------------------------
-
-func TestDoHTTPRequest_WithHeaders(t *testing.T) {
-	var receivedHeaders http.Header
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedHeaders = r.Header
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	log := createTestLogger(t)
-
-	exporter, err := NewSIEMExporter(&SIEMConfig{
-		Enabled:       true,
-		Endpoint:      ts.URL,
-		Format:        SIEMFormatJSON,
-		BatchSize:     10,
-		FlushInterval: 50 * time.Millisecond,
-		Headers: map[string]string{
-			"Authorization": "Bearer test-token",
-			"X-Custom":      "custom-value",
-		},
-	}, log)
-	require.NoError(t, err)
-
-	err = exporter.doHTTPRequest([]byte(`{"test":"data"}`), "application/json")
-	assert.NoError(t, err)
-	assert.Equal(t, "Bearer test-token", receivedHeaders.Get("Authorization"))
-	assert.Equal(t, "custom-value", receivedHeaders.Get("X-Custom"))
-}
-
-// ---------------------------------------------------------------------------
-// SIEM CEF and LEEF format coverage
-// ---------------------------------------------------------------------------
-
-func TestSIEMExporter_FormatBatch_CEF(t *testing.T) {
-	log := createTestLogger(t)
-
-	exporter, err := NewSIEMExporter(&SIEMConfig{
-		Enabled:       true,
-		Endpoint:      "http://localhost:9999",
-		Format:        SIEMFormatCEF,
-		BatchSize:     10,
-		FlushInterval: 1 * time.Second,
-	}, log)
-	require.NoError(t, err)
-
-	events := []*AuditEvent{
-		{
-			Timestamp: time.Now(),
-			EventID:   "evt-cef-1",
-			Action:    ActionAuthenticate,
-			Resource:  "auth",
-			Result:    ResultSuccess,
-			UserID:    "user1",
-		},
-	}
-
-	data, contentType, formatErr := exporter.formatBatch(events)
-	assert.NoError(t, formatErr)
-	assert.NotEmpty(t, data)
-	assert.NotEmpty(t, contentType)
-}
-
-func TestSIEMExporter_FormatBatch_LEEF(t *testing.T) {
-	log := createTestLogger(t)
-
-	exporter, err := NewSIEMExporter(&SIEMConfig{
-		Enabled:       true,
-		Endpoint:      "http://localhost:9999",
-		Format:        SIEMFormatLEEF,
-		BatchSize:     10,
-		FlushInterval: 1 * time.Second,
-	}, log)
-	require.NoError(t, err)
-
-	events := []*AuditEvent{
-		{
-			Timestamp: time.Now(),
-			EventID:   "evt-leef-1",
-			Action:    ActionDelete,
-			Resource:  "key",
-			Result:    ResultFailure,
-			UserID:    "user2",
-			IPAddress: "192.0.2.1",
-		},
-	}
-
-	data, contentType, formatErr := exporter.formatBatch(events)
-	assert.NoError(t, formatErr)
-	assert.NotEmpty(t, data)
-	assert.NotEmpty(t, contentType)
-}
-
-func TestSIEMExporter_FormatBatch_UnknownFormat(t *testing.T) {
-	log := createTestLogger(t)
-
-	exporter, err := NewSIEMExporter(&SIEMConfig{
-		Enabled:       true,
-		Endpoint:      "http://localhost:9999",
-		Format:        SIEMFormat("unknown"),
-		BatchSize:     10,
-		FlushInterval: 1 * time.Second,
-	}, log)
-	require.NoError(t, err)
-
-	events := []*AuditEvent{
-		{Timestamp: time.Now(), EventID: "evt-unknown", Action: ActionRead, Resource: "test"},
-	}
-
-	_, _, formatErr := exporter.formatBatch(events)
-	assert.Error(t, formatErr)
-
 	var siemErr *SIEMError
-	assert.ErrorAs(t, formatErr, &siemErr)
+	require.ErrorAs(t, err, &siemErr)
+	assert.Equal(t, ErrCodeSIEMRetryExhausted, siemErr.Code)
 }
 
 // ---------------------------------------------------------------------------
-// SIEMExporter - cover Send when disabled
+// formatBatch dispatch for every format
 // ---------------------------------------------------------------------------
 
-func TestSIEMExporter_SendWhenDisabled(t *testing.T) {
-	log := createTestLogger(t)
-
-	exporter, err := NewSIEMExporter(&SIEMConfig{
-		Enabled:       false,
-		Endpoint:      "http://localhost:9999",
-		Format:        SIEMFormatJSON,
-		FlushInterval: 1 * time.Second,
-	}, log)
-	require.NoError(t, err)
-
-	err = exporter.Send(&AuditEvent{
-		EventID: "evt-disabled",
-		Action:  ActionRead,
-	})
-	assert.NoError(t, err)
-}
-
-// ---------------------------------------------------------------------------
-// SIEMExporter - Start when already started
-// ---------------------------------------------------------------------------
-
-func TestSIEMExporter_StartIdempotent(t *testing.T) {
-	log := createTestLogger(t)
-
-	exporter, err := NewSIEMExporter(&SIEMConfig{
-		Enabled:       true,
-		Endpoint:      "http://localhost:9999",
-		Format:        SIEMFormatJSON,
-		BatchSize:     10,
-		FlushInterval: 50 * time.Millisecond,
-	}, log)
-	require.NoError(t, err)
-	defer exporter.Close()
-
-	// Start multiple times - should be idempotent
-	exporter.Start()
-	exporter.Start()
-	exporter.Start()
-}
-
-func TestDoHTTPRequest_Non2xxResponse(t *testing.T) {
-	log := createTestLogger(t)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(500)
-	}))
-	defer ts.Close()
-
-	exporter := &SIEMExporter{client: &http.Client{},
-		config: &SIEMConfig{Enabled: true, Endpoint: ts.URL},
-		logger: log,
+func TestSIEMExporter_FormatBatch(t *testing.T) {
+	tests := []struct {
+		name            string
+		format          SIEMFormat
+		wantContentType string
+		wantPrefix      string
+		wantErrCode     string
+	}{
+		{name: "json", format: SIEMFormatJSON, wantContentType: "application/x-ndjson", wantPrefix: "{"},
+		{name: "cef", format: SIEMFormatCEF, wantContentType: "text/plain", wantPrefix: "CEF:0|"},
+		{name: "leef", format: SIEMFormatLEEF, wantContentType: "text/plain", wantPrefix: "LEEF:2.0|"},
+		{name: "unknown format", format: SIEMFormat("unknown-format"), wantErrCode: ErrCodeSIEMFormatUnknown},
 	}
-	assert.Error(t, exporter.doHTTPRequest([]byte("test"), "application/json"))
-}
 
-// TestNewAuditLogger_SIEMInvalidScheme tests NewAuditLogger when SIEM is enabled
-// but the endpoint uses an unsupported scheme, triggering the SIEM exporter
-// creation error at audit.go:1468-1474.
-func TestNewAuditLogger_SIEMInvalidScheme(t *testing.T) {
-	log := createTestLogger(t)
-	_, err := NewAuditLogger(&AuditConfig{
-		Enabled:       true,
-		SIEM:          true,
-		SIEMConfig:    &SIEMConfig{Enabled: true, Endpoint: "ftp://invalid-scheme.example.com"},
-		FlushInterval: time.Second,
-	}, log)
-	assert.Error(t, err, "should fail when SIEM endpoint has invalid scheme")
-}
+	events := []*AuditEvent{
+		{Timestamp: time.Now(), EventID: "evt-fmt-1", Action: ActionRead, Resource: "data", Result: ResultSuccess, Username: "alice"},
+		{Timestamp: time.Now(), EventID: "evt-fmt-2", Action: ActionWrite, Resource: "keys", Result: ResultFailure, ErrorMsg: "timeout"},
+	}
 
-// TestNewAuditLogger_SIEMEmptyEndpoint tests NewAuditLogger when SIEM is enabled
-// with a nil SIEMConfig, which creates legacy config with empty endpoint.
-func TestNewAuditLogger_SIEMEmptyEndpoint(t *testing.T) {
-	log := createTestLogger(t)
-	_, err := NewAuditLogger(&AuditConfig{
-		Enabled:       true,
-		SIEM:          true,
-		SIEMEndpoint:  "",
-		FlushInterval: time.Second,
-	}, log)
-	assert.Error(t, err, "should fail when SIEM endpoint is empty")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exporter, err := NewSIEMExporter(&SIEMConfig{
+				Enabled:  true,
+				Endpoint: "http://localhost:9200",
+				Format:   tt.format,
+			}, createTestLogger(t))
+			require.NoError(t, err)
+
+			data, contentType, err := exporter.formatBatch(events)
+			if tt.wantErrCode != "" {
+				var siemErr *SIEMError
+				require.ErrorAs(t, err, &siemErr)
+				assert.Equal(t, tt.wantErrCode, siemErr.Code)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantContentType, contentType)
+			assert.True(t, bytes.HasPrefix(data, []byte(tt.wantPrefix)), "payload %q", data)
+			assert.Contains(t, string(data), "evt-fmt-2")
+		})
+	}
 }
 
 // TestDoHTTPRequest_CreateError tests doHTTPRequest when http.NewRequest
@@ -1584,45 +1330,6 @@ func TestDoHTTPRequest_CreateError(t *testing.T) {
 	}
 	err := exporter.doHTTPRequest([]byte("test"), "application/json")
 	assert.Error(t, err, "should fail with invalid URL")
-}
-
-// TestDoHTTPRequest_WithCustomHeaders tests doHTTPRequest with custom headers,
-// covering the header iteration at audit.go:861-863.
-func TestDoHTTPRequest_WithCustomHeaders(t *testing.T) {
-	log := createTestLogger(t)
-
-	var receivedAuth string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedAuth = r.Header.Get("Authorization")
-		w.WriteHeader(200)
-	}))
-	defer ts.Close()
-
-	exporter := &SIEMExporter{
-		client: &http.Client{},
-		config: &SIEMConfig{
-			Enabled:  true,
-			Endpoint: ts.URL,
-			Headers:  map[string]string{"Authorization": "Bearer test-token"},
-		},
-		logger: log,
-	}
-	err := exporter.doHTTPRequest([]byte("test"), "application/json")
-	require.NoError(t, err)
-	assert.Equal(t, "Bearer test-token", receivedAuth)
-}
-
-// TestFormatBatch_UnknownFormat tests formatBatch with an unknown format,
-// covering audit.go:893-894.
-func TestFormatBatch_UnknownFormat(t *testing.T) {
-	log := createTestLogger(t)
-	exporter := &SIEMExporter{
-		config: &SIEMConfig{Enabled: true, Format: "invalid-format"},
-		logger: log,
-	}
-	events := []*AuditEvent{{Action: "test", Result: "success"}}
-	_, _, err := exporter.formatBatch(events)
-	assert.Error(t, err, "should fail with unknown format")
 }
 
 // TestSendEvents_FormatBatchError tests sendEvents when formatBatch fails,
@@ -1682,90 +1389,11 @@ func TestAuditLogger_SIEMExporter_Full(t *testing.T) {
 		err = al.siemExporter.Send(event)
 		assert.NoError(t, err)
 
-		// Wait for flush
-		time.Sleep(200 * time.Millisecond)
+		pollSIEMSent(t, al.siemExporter, 1)
 
-		// Get stats
-		sent, errs := al.siemExporter.GetStats()
-		assert.GreaterOrEqual(t, sent, int64(0))
-		assert.GreaterOrEqual(t, errs, int64(0))
+		_, errs := al.siemExporter.GetStats()
+		assert.Equal(t, int64(0), errs)
 	}
-}
-
-// ---------------------------------------------------------------------------
-// audit.go -- buildCEFExtension
-// ---------------------------------------------------------------------------
-
-func TestSIEMExporter_BuildCEFExtensionAllFields(t *testing.T) {
-	cfg := &SIEMConfig{
-		Enabled:    true,
-		Endpoint:   "http://localhost:9200",
-		Format:     SIEMFormatCEF,
-		CEFVendor:  "QuicBaaS",
-		CEFProduct: "QuicBaaS",
-		CEFVersion: "1.0",
-	}
-	log := createTestLogger(t)
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	event := &AuditEvent{
-		Timestamp: time.Date(2025, 6, 15, 10, 30, 0, 0, time.UTC),
-		EventID:   "evt-100",
-		Username:  "admin",
-		UserID:    "uid-1",
-		Action:    ActionWrite,
-		Resource:  "keys",
-		Result:    ResultSuccess,
-		IPAddress: "10.0.0.1",
-		NodeID:    "node-1",
-		ShardID:   42,
-		ErrorMsg:  "timeout occurred",
-		Details:   map[string]string{"detail1": "val1", "detail2": "val2", "detail3": "val3"},
-	}
-
-	ext := exporter.buildCEFExtension(event)
-
-	assert.Contains(t, ext, "rt=")
-	assert.Contains(t, ext, "src=10.0.0.1")
-	assert.Contains(t, ext, "suser=admin")
-	assert.Contains(t, ext, "suid=uid-1")
-	assert.Contains(t, ext, "act=")
-	assert.Contains(t, ext, "cs1=")
-	assert.Contains(t, ext, "cs1Label=resource")
-	assert.Contains(t, ext, "outcome=success")
-	assert.Contains(t, ext, "cs2=node-1")
-	assert.Contains(t, ext, "cs2Label=nodeId")
-	assert.Contains(t, ext, "cs3=42")
-	assert.Contains(t, ext, "cs3Label=shardId")
-	assert.Contains(t, ext, "msg=timeout occurred")
-	assert.Contains(t, ext, "externalId=evt-100")
-}
-
-func TestSIEMExporter_BuildCEFExtensionMinimalFields(t *testing.T) {
-	cfg := &SIEMConfig{
-		Enabled:  true,
-		Endpoint: "http://localhost:9200",
-		Format:   SIEMFormatCEF,
-	}
-	log := createTestLogger(t)
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	event := &AuditEvent{
-		Timestamp: time.Now(),
-		Action:    ActionRead,
-		Resource:  "data",
-		Result:    ResultSuccess,
-	}
-
-	ext := exporter.buildCEFExtension(event)
-
-	assert.Contains(t, ext, "rt=")
-	assert.Contains(t, ext, "act=")
-	assert.NotContains(t, ext, "src=")
-	assert.NotContains(t, ext, "suser=")
-	assert.NotContains(t, ext, "msg=")
 }
 
 // ---------------------------------------------------------------------------
@@ -1822,7 +1450,7 @@ func TestSIEMExporter_MapCEFSeverityAllPaths(t *testing.T) {
 // audit.go -- mapEventName
 // ---------------------------------------------------------------------------
 
-func TestSIEMExporter_MapEventNameKnownActions(t *testing.T) {
+func TestSIEMExporter_MapEventName(t *testing.T) {
 	cfg := &SIEMConfig{
 		Enabled:  true,
 		Endpoint: "http://localhost:9200",
@@ -1846,162 +1474,15 @@ func TestSIEMExporter_MapEventNameKnownActions(t *testing.T) {
 		t.Run(action, func(t *testing.T) {
 			event := &AuditEvent{Action: action, Result: ResultSuccess}
 			name := exporter.mapEventName(event)
-			assert.NotEmpty(t, name)
 			assert.Contains(t, name, " - success")
+			assert.NotContains(t, name, "unknown")
 		})
 	}
-}
 
-func TestSIEMExporter_MapEventNameUnknownAction(t *testing.T) {
-	cfg := &SIEMConfig{
-		Enabled:  true,
-		Endpoint: "http://localhost:9200",
-		Format:   SIEMFormatCEF,
-	}
-	log := createTestLogger(t)
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	event := &AuditEvent{Action: "custom.unknown.action", Result: ResultFailure}
-	name := exporter.mapEventName(event)
-	assert.Contains(t, name, "custom.unknown.action")
-	assert.Contains(t, name, " - failure")
-}
-
-// ---------------------------------------------------------------------------
-// audit.go -- buildLEEFExtension
-// ---------------------------------------------------------------------------
-
-func TestSIEMExporter_BuildLEEFExtensionAllFields(t *testing.T) {
-	cfg := &SIEMConfig{
-		Enabled:     true,
-		Endpoint:    "http://localhost:9200",
-		Format:      SIEMFormatLEEF,
-		LEEFVendor:  "QuicBaaS",
-		LEEFProduct: "QuicBaaS",
-		LEEFVersion: "1.0",
-	}
-	log := createTestLogger(t)
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	event := &AuditEvent{
-		Timestamp: time.Date(2025, 6, 15, 10, 30, 0, 0, time.UTC),
-		EventID:   "evt-200",
-		Username:  "bob",
-		UserID:    "uid-2",
-		Action:    ActionDelete,
-		Resource:  "secrets",
-		Result:    ResultDenied,
-		IPAddress: "192.0.2.10",
-		NodeID:    "node-2",
-		ShardID:   7,
-		ErrorMsg:  "permission denied",
-		Details:   map[string]string{"reason": "rbac"},
-	}
-
-	ext := exporter.buildLEEFExtension(event)
-
-	assert.Contains(t, ext, "devTime=")
-	assert.Contains(t, ext, "src=192.0.2.10")
-	assert.Contains(t, ext, "usrName=bob")
-	assert.Contains(t, ext, "identSrc=uid-2")
-	assert.Contains(t, ext, "action=")
-	assert.Contains(t, ext, "resource=secrets")
-	assert.Contains(t, ext, "result=denied")
-	assert.Contains(t, ext, "reason=rbac")
-}
-
-func TestSIEMExporter_BuildLEEFExtensionMinimalFields(t *testing.T) {
-	cfg := &SIEMConfig{
-		Enabled:  true,
-		Endpoint: "http://localhost:9200",
-		Format:   SIEMFormatLEEF,
-	}
-	log := createTestLogger(t)
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	event := &AuditEvent{
-		Timestamp: time.Now(),
-		Action:    ActionRead,
-		Resource:  "data",
-		Result:    ResultSuccess,
-	}
-
-	ext := exporter.buildLEEFExtension(event)
-
-	assert.Contains(t, ext, "devTime=")
-	assert.Contains(t, ext, "action=")
-	assert.NotContains(t, ext, "src=")
-	assert.NotContains(t, ext, "usrName=")
-}
-
-// ---------------------------------------------------------------------------
-// audit.go -- SIEM format batch: LEEF and CEF full paths
-// ---------------------------------------------------------------------------
-
-func TestSIEMExporter_FormatCEFBatch(t *testing.T) {
-	cfg := &SIEMConfig{
-		Enabled:  true,
-		Endpoint: "http://localhost:9200",
-		Format:   SIEMFormatCEF,
-	}
-	log := createTestLogger(t)
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	events := []*AuditEvent{
-		{Timestamp: time.Now(), Action: ActionRead, Resource: "data", Result: ResultSuccess, Username: "alice"},
-		{Timestamp: time.Now(), Action: ActionWrite, Resource: "keys", Result: ResultFailure, ErrorMsg: "timeout"},
-	}
-
-	data, contentType, err := exporter.formatCEFBatch(events)
-	require.NoError(t, err)
-	assert.Equal(t, "text/plain", contentType)
-	assert.Contains(t, string(data), "CEF:0|")
-}
-
-func TestSIEMExporter_FormatLEEFBatch(t *testing.T) {
-	cfg := &SIEMConfig{
-		Enabled:  true,
-		Endpoint: "http://localhost:9200",
-		Format:   SIEMFormatLEEF,
-	}
-	log := createTestLogger(t)
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	events := []*AuditEvent{
-		{Timestamp: time.Now(), Action: ActionDelete, Resource: "data", Result: ResultDenied, Username: "bob"},
-	}
-
-	data, contentType, err := exporter.formatLEEFBatch(events)
-	require.NoError(t, err)
-	assert.Equal(t, "text/plain", contentType)
-	assert.Contains(t, string(data), "LEEF:2.0|")
-}
-
-func TestSIEMExporter_FormatBatchUnknownFormat(t *testing.T) {
-	cfg := &SIEMConfig{
-		Enabled:  true,
-		Endpoint: "http://localhost:9200",
-		Format:   "unknown-format",
-	}
-	log := createTestLogger(t)
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	events := []*AuditEvent{
-		{Timestamp: time.Now(), Action: ActionRead, Resource: "data", Result: ResultSuccess},
-	}
-
-	_, _, fmtErr := exporter.formatBatch(events)
-	require.Error(t, fmtErr)
-
-	var siemErr *SIEMError
-	assert.True(t, errors.As(fmtErr, &siemErr))
-	assert.Equal(t, ErrCodeSIEMFormatUnknown, siemErr.Code)
+	t.Run("unknown action falls back to the action string", func(t *testing.T) {
+		event := &AuditEvent{Action: "custom.unknown.action", Result: ResultFailure}
+		assert.Equal(t, "custom.unknown.action - failure", exporter.mapEventName(event))
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -2076,41 +1557,6 @@ func TestSIEMExporter_SendAndFlushLEEFFormat(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// audit.go -- doHTTPRequest error paths
-// ---------------------------------------------------------------------------
-
-func TestSIEMExporter_DoHTTPRequestServerError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	cfg := &SIEMConfig{
-		Enabled:    true,
-		Endpoint:   server.URL,
-		Format:     SIEMFormatJSON,
-		MaxRetries: 0,
-	}
-	log := createTestLogger(t)
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
-
-	err = exporter.Send(&AuditEvent{
-		Timestamp: time.Now(),
-		Action:    ActionRead,
-		Resource:  "data",
-		Result:    ResultSuccess,
-	})
-	require.NoError(t, err)
-
-	flushErr := exporter.Flush()
-	require.Error(t, flushErr)
-
-	var siemErr *SIEMError
-	assert.True(t, errors.As(flushErr, &siemErr))
-}
-
-// ---------------------------------------------------------------------------
 // audit.go -- SIEM CEF escape helpers
 // ---------------------------------------------------------------------------
 
@@ -2166,50 +1612,10 @@ func TestSIEMExporter_EscapeCEFValue(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SIEMError tests
-// ---------------------------------------------------------------------------
-
-func TestSIEMError_ErrorWithCause(t *testing.T) {
-	cause := errors.New("network timeout")
-	err := &SIEMError{
-		Code:    ErrCodeSIEMRequestFailed,
-		Message: "request failed",
-		Cause:   cause,
-	}
-
-	got := err.Error()
-	assert.Contains(t, got, ErrCodeSIEMRequestFailed)
-	assert.Contains(t, got, "request failed")
-	assert.Contains(t, got, "network timeout")
-}
-
-func TestSIEMError_ErrorWithoutCause(t *testing.T) {
-	err := &SIEMError{
-		Code:    ErrCodeSIEMConfigNil,
-		Message: "config is nil",
-	}
-
-	got := err.Error()
-	assert.Contains(t, got, ErrCodeSIEMConfigNil)
-	assert.Contains(t, got, "config is nil")
-}
-
-func TestSIEMError_UnwrapCause(t *testing.T) {
-	cause := errors.New("root cause")
-	err := &SIEMError{Code: "TEST", Message: "msg", Cause: cause}
-	assert.Equal(t, cause, err.Unwrap())
-}
-
-func TestSIEMError_UnwrapNilCause(t *testing.T) {
-	err := &SIEMError{Code: "TEST", Message: "msg"}
-	assert.Nil(t, err.Unwrap())
-}
-
-// ---------------------------------------------------------------------------
 // mapSignatureID
 // ---------------------------------------------------------------------------
 
-func TestSIEMExporter_MapSignatureIDKnownActions(t *testing.T) {
+func TestSIEMExporter_MapSignatureID(t *testing.T) {
 	cfg := &SIEMConfig{Enabled: true, Endpoint: "http://localhost:9200", Format: SIEMFormatCEF}
 	log := createTestLogger(t)
 	exporter, err := NewSIEMExporter(cfg, log)
@@ -2244,6 +1650,7 @@ func TestSIEMExporter_MapSignatureIDKnownActions(t *testing.T) {
 		ActionTenantDEKRotate:    "8006",
 		ActionTenantDEKDelete:    "8007",
 		ActionTenantAccessDenied: "8008",
+		"unknown_action":         "9999",
 	}
 
 	for action, expected := range actions {
@@ -2254,20 +1661,9 @@ func TestSIEMExporter_MapSignatureIDKnownActions(t *testing.T) {
 	}
 }
 
-func TestSIEMExporter_MapSignatureIDUnknownAction(t *testing.T) {
-	cfg := &SIEMConfig{Enabled: true, Endpoint: "http://localhost:9200", Format: SIEMFormatCEF}
-	log := createTestLogger(t)
-	exporter, err := NewSIEMExporter(cfg, log)
-	require.NoError(t, err)
+// Tests for buildCEFExtension
 
-	assert.Equal(t, "9999", exporter.mapSignatureID("unknown_action"))
-}
-
-// Tests for buildCEFExtension with all fields
-
-func TestSIEMExporter_BuildCEFExtension_AllFieldsPopulated(t *testing.T) {
-	log := createTestLogger(t)
-
+func TestSIEMExporter_BuildCEFExtension(t *testing.T) {
 	exporter := &SIEMExporter{
 		config: &SIEMConfig{
 			Enabled:    true,
@@ -2275,81 +1671,72 @@ func TestSIEMExporter_BuildCEFExtension_AllFieldsPopulated(t *testing.T) {
 			CEFProduct: "TestProduct",
 			CEFVersion: "1.0",
 		},
-		logger: log,
+		logger: createTestLogger(t),
 	}
 
-	event := &AuditEvent{
-		EventID:   "evt-123",
-		Timestamp: time.Now(),
-		UserID:    "user-001",
-		Username:  "alice",
-		Action:    ActionRead,
-		Resource:  "keys/test",
-		Result:    ResultSuccess,
-		IPAddress: "192.0.2.100",
-		NodeID:    "node-1",
-		ShardID:   42,
-		ErrorMsg:  "some error",
-		Details: map[string]string{
-			"detail1": "value1",
-			"detail2": "value2",
-			"detail3": "value3",
-			"detail4": "value4", // This should be included
+	tests := []struct {
+		name        string
+		event       *AuditEvent
+		contains    []string
+		notContains []string
+	}{
+		{
+			name: "all fields populated",
+			event: &AuditEvent{
+				EventID:   "evt-123",
+				Timestamp: time.Now(),
+				UserID:    "user-001",
+				Username:  "alice",
+				Action:    ActionRead,
+				Resource:  "keys/test",
+				Result:    ResultSuccess,
+				IPAddress: "192.0.2.100",
+				NodeID:    "node-1",
+				ShardID:   42,
+				ErrorMsg:  "some error",
+				Details: map[string]string{
+					"detail1": "value1",
+					"detail2": "value2",
+					"detail3": "value3",
+					"detail4": "value4",
+				},
+			},
+			contains: []string{
+				"rt=", "src=192.0.2.100", "suser=alice", "suid=user-001", "act=read",
+				"cs1=keys/test", "cs1Label=resource", "outcome=success",
+				"cs2=node-1", "cs2Label=nodeId", "cs3=42", "cs3Label=shardId",
+				"msg=some error", "externalId=evt-123",
+			},
+		},
+		{
+			name: "minimal fields only",
+			event: &AuditEvent{
+				Timestamp: time.Now(),
+				Action:    ActionRead,
+				Resource:  "test",
+				Result:    ResultSuccess,
+			},
+			contains:    []string{"rt=", "act=read"},
+			notContains: []string{"src=", "suser=", "nodeId", "msg="},
 		},
 	}
 
-	extension := exporter.buildCEFExtension(event)
-
-	assert.Contains(t, extension, "rt=")
-	assert.Contains(t, extension, "src=192.0.2.100")
-	assert.Contains(t, extension, "suser=alice")
-	assert.Contains(t, extension, "suid=user-001")
-	assert.Contains(t, extension, "act=read")
-	assert.Contains(t, extension, "cs1=keys/test")
-	assert.Contains(t, extension, "cs1Label=resource")
-	assert.Contains(t, extension, "outcome=success")
-	assert.Contains(t, extension, "cs2=node-1")
-	assert.Contains(t, extension, "cs2Label=nodeId")
-	assert.Contains(t, extension, "cs3=42")
-	assert.Contains(t, extension, "cs3Label=shardId")
-	assert.Contains(t, extension, "msg=some error")
-	assert.Contains(t, extension, "externalId=evt-123")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			extension := exporter.buildCEFExtension(tt.event)
+			for _, want := range tt.contains {
+				assert.Contains(t, extension, want)
+			}
+			for _, unwanted := range tt.notContains {
+				assert.NotContains(t, extension, unwanted)
+			}
+		})
+	}
 }
 
-func TestSIEMExporter_BuildCEFExtension_MinimalFieldsOnly(t *testing.T) {
-	log := createTestLogger(t)
+// Tests for buildLEEFExtension
 
-	exporter := &SIEMExporter{
-		config: &SIEMConfig{
-			Enabled:    true,
-			CEFVendor:  "TestVendor",
-			CEFProduct: "TestProduct",
-			CEFVersion: "1.0",
-		},
-		logger: log,
-	}
-
-	event := &AuditEvent{
-		Timestamp: time.Now(),
-		Action:    ActionRead,
-		Resource:  "test",
-		Result:    ResultSuccess,
-	}
-
-	extension := exporter.buildCEFExtension(event)
-
-	assert.Contains(t, extension, "rt=")
-	assert.Contains(t, extension, "act=read")
-	assert.NotContains(t, extension, "src=")
-	assert.NotContains(t, extension, "suser=")
-	assert.NotContains(t, extension, "nodeId")
-}
-
-// Tests for buildLEEFExtension with all fields
-
-func TestSIEMExporter_BuildLEEFExtension_AllFieldsPopulated(t *testing.T) {
-	log := createTestLogger(t)
-
+func TestSIEMExporter_BuildLEEFExtension(t *testing.T) {
 	exporter := &SIEMExporter{
 		config: &SIEMConfig{
 			Enabled:     true,
@@ -2357,129 +1744,64 @@ func TestSIEMExporter_BuildLEEFExtension_AllFieldsPopulated(t *testing.T) {
 			LEEFProduct: "TestProduct",
 			LEEFVersion: "1.0",
 		},
-		logger: log,
+		logger: createTestLogger(t),
 	}
 
-	event := &AuditEvent{
-		EventID:   "evt-123",
-		Timestamp: time.Now(),
-		UserID:    "user-001",
-		Username:  "alice",
-		Action:    ActionWrite,
-		Resource:  "keys/test",
-		Result:    ResultFailure,
-		IPAddress: "192.0.2.100",
-		NodeID:    "node-1",
-		ShardID:   42,
-		ErrorMsg:  "permission denied",
-		Details: map[string]string{
-			"custom_key": "custom_value",
+	tests := []struct {
+		name        string
+		event       *AuditEvent
+		contains    []string
+		notContains []string
+	}{
+		{
+			name: "all fields populated",
+			event: &AuditEvent{
+				EventID:   "evt-123",
+				Timestamp: time.Now(),
+				UserID:    "user-001",
+				Username:  "alice",
+				Action:    ActionWrite,
+				Resource:  "keys/test",
+				Result:    ResultFailure,
+				IPAddress: "192.0.2.100",
+				NodeID:    "node-1",
+				ShardID:   42,
+				ErrorMsg:  "permission denied",
+				Details: map[string]string{
+					"custom_key": "custom_value",
+				},
+			},
+			contains: []string{
+				"devTime=", "src=192.0.2.100", "usrName=alice", "identSrc=user-001",
+				"action=write", "resource=keys/test", "result=failure", "sev=",
+				"nodeId=node-1", "shardId=42", "reason=permission denied",
+				"eventId=evt-123", "custom_key=custom_value",
+			},
+		},
+		{
+			name: "minimal fields only",
+			event: &AuditEvent{
+				Timestamp: time.Now(),
+				Action:    ActionRead,
+				Resource:  "data",
+				Result:    ResultSuccess,
+			},
+			contains:    []string{"devTime=", "action="},
+			notContains: []string{"src=", "usrName="},
 		},
 	}
 
-	extension := exporter.buildLEEFExtension(event)
-
-	assert.Contains(t, extension, "devTime=")
-	assert.Contains(t, extension, "src=192.0.2.100")
-	assert.Contains(t, extension, "usrName=alice")
-	assert.Contains(t, extension, "identSrc=user-001")
-	assert.Contains(t, extension, "action=write")
-	assert.Contains(t, extension, "resource=keys/test")
-	assert.Contains(t, extension, "result=failure")
-	assert.Contains(t, extension, "sev=")
-	assert.Contains(t, extension, "nodeId=node-1")
-	assert.Contains(t, extension, "shardId=42")
-	assert.Contains(t, extension, "reason=permission denied")
-	assert.Contains(t, extension, "eventId=evt-123")
-	assert.Contains(t, extension, "custom_key=custom_value")
-}
-
-// Tests for mapEventName with unknown action
-
-func TestSIEMExporter_MapEventName_UnknownActionType(t *testing.T) {
-	log := createTestLogger(t)
-
-	exporter := &SIEMExporter{
-		config: &SIEMConfig{Enabled: true},
-		logger: log,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			extension := exporter.buildLEEFExtension(tt.event)
+			for _, want := range tt.contains {
+				assert.Contains(t, extension, want)
+			}
+			for _, unwanted := range tt.notContains {
+				assert.NotContains(t, extension, unwanted)
+			}
+		})
 	}
-
-	event := &AuditEvent{
-		Action: "unknown.action",
-		Result: ResultSuccess,
-	}
-
-	name := exporter.mapEventName(event)
-	assert.Equal(t, "unknown.action - success", name)
-}
-
-func TestSIEMExporter_MapEventName_AllKnownActionTypes(t *testing.T) {
-	log := createTestLogger(t)
-
-	exporter := &SIEMExporter{
-		config: &SIEMConfig{Enabled: true},
-		logger: log,
-	}
-
-	actions := []string{
-		ActionAuthenticate,
-		ActionAuthorize,
-		ActionRead,
-		ActionWrite,
-		ActionDelete,
-		ActionBackup,
-		ActionRestore,
-		ActionClusterJoin,
-		ActionClusterLeave,
-		ActionUserCreate,
-		ActionUserDelete,
-		ActionRoleCreate,
-		ActionRoleUpdate,
-		ActionKeyRotate,
-		ActionKeyGenerate,
-		ActionKeyExport,
-		ActionKeyImport,
-		ActionKeyDelete,
-		ActionConfigChange,
-		ActionSchemaChange,
-		ActionTenantSwitch,
-		ActionCrossTenantRead,
-		ActionCrossTenantWrite,
-		ActionCrossTenantDelete,
-		ActionTenantDEKCreate,
-		ActionTenantDEKRotate,
-		ActionTenantDEKDelete,
-		ActionTenantAccessDenied,
-	}
-
-	for _, action := range actions {
-		event := &AuditEvent{
-			Action: action,
-			Result: ResultSuccess,
-		}
-		name := exporter.mapEventName(event)
-		assert.Contains(t, name, "success")
-		assert.NotContains(t, name, "unknown")
-	}
-}
-
-// Tests for formatJSONBatch error handling
-
-func TestSIEMExporter_FormatJSONBatch_WithEmptyBatch(t *testing.T) {
-	log := createTestLogger(t)
-
-	exporter := &SIEMExporter{
-		config: &SIEMConfig{
-			Enabled: true,
-			Format:  SIEMFormatJSON,
-		},
-		logger: log,
-	}
-
-	data, contentType, err := exporter.formatJSONBatch([]*AuditEvent{})
-	require.NoError(t, err)
-	assert.Equal(t, "application/x-ndjson", contentType)
-	assert.Empty(t, data)
 }
 
 // Tests for AuditLogger.Log with SIEM exporter
@@ -2515,89 +1837,7 @@ func TestAuditLogger_Log_WithSIEMExporterConfigured(t *testing.T) {
 	err = al.Log(context.Background(), event)
 	require.NoError(t, err)
 
-	// Give time for async SIEM send
-	time.Sleep(50 * time.Millisecond)
-}
-
-// Tests for mapCEFSeverity with all cases
-
-func TestSIEMExporter_MapCEFSeverity_WithAllCases(t *testing.T) {
-	log := createTestLogger(t)
-
-	exporter := &SIEMExporter{
-		config: &SIEMConfig{Enabled: true},
-		logger: log,
-	}
-
-	tests := []struct {
-		name     string
-		event    *AuditEvent
-		minLevel int
-		maxLevel int
-	}{
-		{
-			name:     "denied access",
-			event:    &AuditEvent{Action: ActionRead, Result: ResultDenied},
-			minLevel: 7,
-			maxLevel: 9,
-		},
-		{
-			name:     "failed auth",
-			event:    &AuditEvent{Action: ActionAuthenticate, Result: ResultFailure},
-			minLevel: 6,
-			maxLevel: 8,
-		},
-		{
-			name:     "failed key operation",
-			event:    &AuditEvent{Action: ActionKeyRotate, Result: ResultFailure},
-			minLevel: 5,
-			maxLevel: 7,
-		},
-		{
-			name:     "general failure",
-			event:    &AuditEvent{Action: ActionRead, Result: ResultFailure},
-			minLevel: 3,
-			maxLevel: 5,
-		},
-		{
-			name:     "key export success",
-			event:    &AuditEvent{Action: ActionKeyExport, Result: ResultSuccess},
-			minLevel: 4,
-			maxLevel: 6,
-		},
-		{
-			name:     "tenant switch success",
-			event:    &AuditEvent{Action: ActionTenantSwitch, Result: ResultSuccess},
-			minLevel: 4,
-			maxLevel: 6,
-		},
-		{
-			name:     "user create success",
-			event:    &AuditEvent{Action: ActionUserCreate, Result: ResultSuccess},
-			minLevel: 3,
-			maxLevel: 5,
-		},
-		{
-			name:     "normal operation",
-			event:    &AuditEvent{Action: ActionRead, Result: ResultSuccess},
-			minLevel: 0,
-			maxLevel: 2,
-		},
-		{
-			name:     "unknown result",
-			event:    &AuditEvent{Action: ActionRead, Result: "unknown"},
-			minLevel: 2,
-			maxLevel: 4,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			severity := exporter.mapCEFSeverity(tt.event)
-			assert.GreaterOrEqual(t, severity, tt.minLevel)
-			assert.LessOrEqual(t, severity, tt.maxLevel)
-		})
-	}
+	pollSIEMPending(t, al.siemExporter, 1)
 }
 
 func TestAuditLogger_GetSIEMExporterReturnsNil(t *testing.T) {
@@ -2635,75 +1875,6 @@ func TestAuditLogger_CreatesSIEMExporter(t *testing.T) {
 	assert.NotNil(t, al.GetSIEMExporter())
 }
 
-func TestNewAuditLogger_LegacySIEMConfig(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	cfg := &AuditConfig{
-		Enabled:      true,
-		SIEM:         true,
-		SIEMEndpoint: server.URL,
-		SIEMConfig:   nil,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	assert.NotNil(t, al.siemExporter)
-}
-
-func TestNewAuditLogger_ExplicitSIEMConfig(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	cfg := &AuditConfig{
-		Enabled: true,
-		SIEM:    true,
-		SIEMConfig: &SIEMConfig{
-			Enabled:  true,
-			Endpoint: server.URL,
-			Format:   SIEMFormatCEF,
-		},
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	assert.NotNil(t, al.siemExporter)
-}
-
-// ---------------------------------------------------------------------------
-// SIEMError
-// ---------------------------------------------------------------------------
-
-func TestSIEMError_IncludesCause(t *testing.T) {
-	cause := errors.New("network timeout")
-	err := &SIEMError{Code: ErrCodeSIEMRequestFailed, Message: "request failed", Cause: cause}
-	got := err.Error()
-	assert.Contains(t, got, ErrCodeSIEMRequestFailed)
-	assert.Contains(t, got, "network timeout")
-}
-
-func TestSIEMError_ExcludesNilCause(t *testing.T) {
-	err := &SIEMError{Code: ErrCodeSIEMConfigNil, Message: "nil config"}
-	got := err.Error()
-	assert.Contains(t, got, ErrCodeSIEMConfigNil)
-}
-
-func TestSIEMError_UnwrapReturnsCause(t *testing.T) {
-	cause := errors.New("inner")
-	err := &SIEMError{Code: "TEST", Message: "test", Cause: cause}
-	assert.Equal(t, cause, err.Unwrap())
-}
-
 // TestAuditLogger_SyslogAndSIEM tests syslog and SIEM output paths.
 func TestAuditLogger_SyslogAndSIEM(t *testing.T) {
 	cfg := &AuditConfig{
@@ -2731,6 +1902,5 @@ func TestAuditLogger_SyslogAndSIEM(t *testing.T) {
 	err = al.Log(ctx, event)
 	assert.NoError(t, err)
 
-	// Give goroutines time to execute
-	time.Sleep(50 * time.Millisecond)
+	pollSIEMPending(t, al.siemExporter, 1)
 }

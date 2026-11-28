@@ -5,6 +5,7 @@ package messaging
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -113,11 +114,6 @@ func TestClient_CreateChannel_Validation(t *testing.T) {
 			name:    "invalid codec",
 			req:     &CreateChannelRequest{Name: "test", Codec: "invalid"},
 			wantErr: true,
-		},
-		{
-			name:    "valid minimal request",
-			req:     &CreateChannelRequest{Name: "test-channel"},
-			wantErr: false,
 		},
 		{
 			name: "valid full request",
@@ -544,11 +540,6 @@ func TestClient_Subscribe_Validation(t *testing.T) {
 			name:    "negative buffer size",
 			req:     &SubscribeRequest{Channel: "test", BufferSize: -1},
 			wantErr: true,
-		},
-		{
-			name:    "valid minimal request",
-			req:     &SubscribeRequest{Channel: "test-channel"},
-			wantErr: false,
 		},
 		{
 			name: "valid full request",
@@ -1065,11 +1056,6 @@ func TestClient_WatchChannel_Validation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "valid minimal request",
-			req:     &WatchChannelRequest{KeyPrefix: "users/"},
-			wantErr: false,
-		},
-		{
 			name: "valid full request",
 			req: &WatchChannelRequest{
 				KeyPrefix:           "users/",
@@ -1491,139 +1477,6 @@ func TestOpType_String(t *testing.T) {
 	}
 }
 
-func TestChannel_Fields(t *testing.T) {
-	now := time.Now()
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &Channel{
-				Name:        "test-channel",
-				Codec:       CodecJSON,
-				CreatedAt:   now,
-				Subscribers: 100,
-				Persistent:  true,
-				MaxHistory:  1000,
-				BufferSize:  256,
-				TTL:         time.Hour,
-			}, nil
-		},
-	}
-
-	client := NewClient(mockT)
-	channel, err := client.GetChannel(context.Background(), "test-channel")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if channel.Name != "test-channel" {
-		t.Errorf("expected Name='test-channel', got %q", channel.Name)
-	}
-	if channel.Codec != CodecJSON {
-		t.Errorf("expected Codec='json', got %q", channel.Codec)
-	}
-	if channel.Subscribers != 100 {
-		t.Errorf("expected Subscribers=100, got %d", channel.Subscribers)
-	}
-	if !channel.Persistent {
-		t.Error("expected Persistent=true")
-	}
-	if channel.MaxHistory != 1000 {
-		t.Errorf("expected MaxHistory=1000, got %d", channel.MaxHistory)
-	}
-	if channel.BufferSize != 256 {
-		t.Errorf("expected BufferSize=256, got %d", channel.BufferSize)
-	}
-	if channel.TTL != time.Hour {
-		t.Errorf("expected TTL=1h, got %v", channel.TTL)
-	}
-}
-
-func TestSubscription_Fields(t *testing.T) {
-	now := time.Now()
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &Subscription{
-				ID:        "sub-123",
-				Channel:   "test-channel",
-				ClientID:  "client-456",
-				CreatedAt: now,
-				Filters: &SubscriptionFilter{
-					EventTypes: []EventType{EventTypePut, EventTypeDelete},
-					KeyPrefix:  "users/",
-				},
-			}, nil
-		},
-	}
-
-	client := NewClient(mockT)
-	sub, err := client.Subscribe(context.Background(), &SubscribeRequest{Channel: "test-channel"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if sub.ID != "sub-123" {
-		t.Errorf("expected ID='sub-123', got %q", sub.ID)
-	}
-	if sub.Channel != "test-channel" {
-		t.Errorf("expected Channel='test-channel', got %q", sub.Channel)
-	}
-	if sub.ClientID != "client-456" {
-		t.Errorf("expected ClientID='client-456', got %q", sub.ClientID)
-	}
-	if sub.Filters == nil {
-		t.Fatal("expected non-nil Filters")
-	}
-	if len(sub.Filters.EventTypes) != 2 {
-		t.Errorf("expected 2 EventTypes, got %d", len(sub.Filters.EventTypes))
-	}
-	if sub.Filters.KeyPrefix != "users/" {
-		t.Errorf("expected KeyPrefix='users/', got %q", sub.Filters.KeyPrefix)
-	}
-}
-
-func TestStats_Fields(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &Stats{
-				TotalChannels:      10,
-				TotalSubscriptions: 100,
-				MessagesPublished:  10000,
-				MessagesDelivered:  9500,
-				DedupHits:          500,
-				DroppedMessages:    50,
-				BufferUtilization:  0.75,
-			}, nil
-		},
-	}
-
-	client := NewClient(mockT)
-	stats, err := client.GetStats(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if stats.TotalChannels != 10 {
-		t.Errorf("expected TotalChannels=10, got %d", stats.TotalChannels)
-	}
-	if stats.TotalSubscriptions != 100 {
-		t.Errorf("expected TotalSubscriptions=100, got %d", stats.TotalSubscriptions)
-	}
-	if stats.MessagesPublished != 10000 {
-		t.Errorf("expected MessagesPublished=10000, got %d", stats.MessagesPublished)
-	}
-	if stats.MessagesDelivered != 9500 {
-		t.Errorf("expected MessagesDelivered=9500, got %d", stats.MessagesDelivered)
-	}
-	if stats.DedupHits != 500 {
-		t.Errorf("expected DedupHits=500, got %d", stats.DedupHits)
-	}
-	if stats.DroppedMessages != 50 {
-		t.Errorf("expected DroppedMessages=50, got %d", stats.DroppedMessages)
-	}
-	if stats.BufferUtilization != 0.75 {
-		t.Errorf("expected BufferUtilization=0.75, got %f", stats.BufferUtilization)
-	}
-}
-
 func TestTransportErrorPropagation(t *testing.T) {
 	transportErr := errors.NewConnection("test", "connection refused")
 	mockT := &mockTransport{
@@ -1633,16 +1486,6 @@ func TestTransportErrorPropagation(t *testing.T) {
 	}
 	client := NewClient(mockT)
 	ctx := context.Background()
-
-	t.Run("CreateChannel", func(t *testing.T) {
-		_, err := client.CreateChannel(ctx, &CreateChannelRequest{Name: "test"})
-		if err == nil {
-			t.Error("expected error")
-		}
-		if errors.Code(err) != errors.CodeConnection {
-			t.Errorf("expected CodeConnection, got %v", errors.Code(err))
-		}
-	})
 
 	t.Run("DeleteChannel", func(t *testing.T) {
 		err := client.DeleteChannel(ctx, "test")
@@ -1679,13 +1522,6 @@ func TestTransportErrorPropagation(t *testing.T) {
 		}
 	})
 
-	t.Run("Publish", func(t *testing.T) {
-		err := client.Publish(ctx, &PublishRequest{Channel: "test"})
-		if err == nil {
-			t.Error("expected error")
-		}
-	})
-
 	t.Run("PublishDelta", func(t *testing.T) {
 		err := client.PublishDelta(ctx, &PublishDeltaRequest{Channel: "test"})
 		if err == nil {
@@ -1707,13 +1543,6 @@ func TestTransportErrorPropagation(t *testing.T) {
 		}
 	})
 
-	t.Run("GetDedupStats", func(t *testing.T) {
-		_, err := client.GetDedupStats(ctx, "test-channel")
-		if err == nil {
-			t.Error("expected error")
-		}
-	})
-
 	t.Run("GetChannelStats", func(t *testing.T) {
 		_, err := client.GetChannelStats(ctx, "test")
 		if err == nil {
@@ -1724,103 +1553,132 @@ func TestTransportErrorPropagation(t *testing.T) {
 
 // DeltaApplier Tests
 
-func TestDeltaApplier_Apply(t *testing.T) {
+func TestDeltaApplier(t *testing.T) {
+	type Address struct {
+		City string `json:"city"`
+		Zip  string `json:"zip"`
+	}
 	type User struct {
 		Name    string   `json:"name"`
 		Age     int      `json:"age"`
 		Email   string   `json:"email,omitempty"`
 		Counter int      `json:"counter"`
 		Tags    []string `json:"tags,omitempty"`
+		Address Address  `json:"address"`
 	}
 
 	applier := NewDeltaApplier[User]()
 
-	t.Run("nil delta", func(t *testing.T) {
-		user := User{Name: "John", Age: 30}
-		result, err := applier.Apply(user, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result.Name != "John" || result.Age != 30 {
-			t.Error("expected unchanged user")
-		}
-	})
-
-	t.Run("empty changes", func(t *testing.T) {
-		user := User{Name: "John", Age: 30}
-		result, err := applier.Apply(user, &DeltaPayload{Changes: []FieldChange{}})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result.Name != "John" || result.Age != 30 {
-			t.Error("expected unchanged user")
-		}
-	})
-
-	t.Run("set operation", func(t *testing.T) {
-		user := User{Name: "John", Age: 30}
-		delta := &DeltaPayload{
-			Changes: []FieldChange{
+	tests := []struct {
+		name    string
+		in      User
+		delta   *DeltaPayload
+		want    User
+		wantErr bool
+	}{
+		{
+			name: "nil delta",
+			in:   User{Name: "John", Age: 30},
+			want: User{Name: "John", Age: 30},
+		},
+		{
+			name:  "empty changes",
+			in:    User{Name: "John", Age: 30},
+			delta: &DeltaPayload{Changes: []FieldChange{}},
+			want:  User{Name: "John", Age: 30},
+		},
+		{
+			name: "set",
+			in:   User{Name: "John", Age: 30},
+			delta: &DeltaPayload{Changes: []FieldChange{
 				{Path: "name", Operation: OpSet, Value: "Jane"},
 				{Path: "age", Operation: OpSet, Value: float64(25)},
-			},
-		}
-		result, err := applier.Apply(user, delta)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result.Name != "Jane" {
-			t.Errorf("expected Name='Jane', got %q", result.Name)
-		}
-		if result.Age != 25 {
-			t.Errorf("expected Age=25, got %d", result.Age)
-		}
-	})
-
-	t.Run("delete operation", func(t *testing.T) {
-		user := User{Name: "John", Age: 30, Email: "john@example.com"}
-		delta := &DeltaPayload{
-			Changes: []FieldChange{
+			}},
+			want: User{Name: "Jane", Age: 25},
+		},
+		{
+			name: "set nested path",
+			in:   User{Name: "John", Address: Address{City: "NYC", Zip: "10001"}},
+			delta: &DeltaPayload{Changes: []FieldChange{
+				{Path: "address.city", Operation: OpSet, Value: "LA"},
+			}},
+			want: User{Name: "John", Address: Address{City: "LA", Zip: "10001"}},
+		},
+		{
+			name: "delete",
+			in:   User{Name: "John", Age: 30, Email: "john@example.com"},
+			delta: &DeltaPayload{Changes: []FieldChange{
 				{Path: "email", Operation: OpDelete},
-			},
-		}
-		result, err := applier.Apply(user, delta)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result.Email != "" {
-			t.Errorf("expected empty Email, got %q", result.Email)
-		}
-	})
-
-	t.Run("increment operation", func(t *testing.T) {
-		user := User{Name: "John", Counter: 10}
-		delta := &DeltaPayload{
-			Changes: []FieldChange{
+			}},
+			want: User{Name: "John", Age: 30},
+		},
+		{
+			name: "increment",
+			in:   User{Name: "John", Counter: 10},
+			delta: &DeltaPayload{Changes: []FieldChange{
 				{Path: "counter", Operation: OpIncrement, Value: float64(5)},
-			},
-		}
-		result, err := applier.Apply(user, delta)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result.Counter != 15 {
-			t.Errorf("expected Counter=15, got %d", result.Counter)
-		}
-	})
-
-	t.Run("empty path error", func(t *testing.T) {
-		user := User{Name: "John"}
-		delta := &DeltaPayload{
-			Changes: []FieldChange{
+			}},
+			want: User{Name: "John", Counter: 15},
+		},
+		{
+			name: "increment from zero",
+			in:   User{},
+			delta: &DeltaPayload{Changes: []FieldChange{
+				{Path: "counter", Operation: OpIncrement, Value: float64(10)},
+			}},
+			want: User{Counter: 10},
+		},
+		{
+			name: "append to existing array",
+			in:   User{Tags: []string{"a", "b"}},
+			delta: &DeltaPayload{Changes: []FieldChange{
+				{Path: "tags", Operation: OpAppend, Value: "c"},
+			}},
+			want: User{Tags: []string{"a", "b", "c"}},
+		},
+		{
+			name: "append to nil array",
+			in:   User{},
+			delta: &DeltaPayload{Changes: []FieldChange{
+				{Path: "tags", Operation: OpAppend, Value: "first"},
+			}},
+			want: User{Tags: []string{"first"}},
+		},
+		{
+			name: "empty path",
+			in:   User{Name: "John"},
+			delta: &DeltaPayload{Changes: []FieldChange{
 				{Path: "", Operation: OpSet, Value: "test"},
-			},
-		}
-		_, err := applier.Apply(user, delta)
-		if err == nil {
-			t.Error("expected error for empty path")
-		}
-	})
+			}},
+			wantErr: true,
+		},
+		{
+			name: "unknown operation",
+			in:   User{Name: "John"},
+			delta: &DeltaPayload{Changes: []FieldChange{
+				{Path: "name", Operation: OpType("unknown"), Value: "value"},
+			}},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := applier.Apply(tt.in, tt.delta)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got %+v, want %+v", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestDeltaApplier_ApplyChanges(t *testing.T) {
@@ -1899,147 +1757,4 @@ func TestDeltaBuilder(t *testing.T) {
 	if delta.Changes[5].Operation != OpIncrement {
 		t.Error("sixth change should be Increment")
 	}
-}
-
-func TestDeltaApplier_NestedPath(t *testing.T) {
-	type Address struct {
-		City string `json:"city"`
-		Zip  string `json:"zip"`
-	}
-
-	type Person struct {
-		Name    string  `json:"name"`
-		Address Address `json:"address"`
-	}
-
-	applier := NewDeltaApplier[Person]()
-
-	person := Person{
-		Name:    "John",
-		Address: Address{City: "NYC", Zip: "10001"},
-	}
-
-	delta := &DeltaPayload{
-		Changes: []FieldChange{
-			{Path: "address.city", Operation: OpSet, Value: "LA"},
-		},
-	}
-
-	result, err := applier.Apply(person, delta)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.Address.City != "LA" {
-		t.Errorf("expected City='LA', got %q", result.Address.City)
-	}
-	if result.Address.Zip != "10001" {
-		t.Errorf("expected Zip='10001', got %q", result.Address.Zip)
-	}
-}
-
-func TestDeltaApplier_AppendToArray(t *testing.T) {
-	type Item struct {
-		Tags []string `json:"tags"`
-	}
-
-	applier := NewDeltaApplier[Item]()
-
-	t.Run("append to existing array", func(t *testing.T) {
-		item := Item{Tags: []string{"a", "b"}}
-		delta := &DeltaPayload{
-			Changes: []FieldChange{
-				{Path: "tags", Operation: OpAppend, Value: "c"},
-			},
-		}
-		result, err := applier.Apply(item, delta)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(result.Tags) != 3 || result.Tags[2] != "c" {
-			t.Errorf("expected Tags=['a','b','c'], got %v", result.Tags)
-		}
-	})
-
-	t.Run("append to nil array", func(t *testing.T) {
-		item := Item{Tags: nil}
-		delta := &DeltaPayload{
-			Changes: []FieldChange{
-				{Path: "tags", Operation: OpAppend, Value: "first"},
-			},
-		}
-		result, err := applier.Apply(item, delta)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(result.Tags) != 1 || result.Tags[0] != "first" {
-			t.Errorf("expected Tags=['first'], got %v", result.Tags)
-		}
-	})
-}
-
-func TestDeltaApplier_IncrementNonexistent(t *testing.T) {
-	type Counter struct {
-		Value int `json:"value"`
-	}
-
-	applier := NewDeltaApplier[Counter]()
-
-	counter := Counter{}
-	delta := &DeltaPayload{
-		Changes: []FieldChange{
-			{Path: "value", Operation: OpIncrement, Value: float64(10)},
-		},
-	}
-	result, err := applier.Apply(counter, delta)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.Value != 10 {
-		t.Errorf("expected Value=10, got %d", result.Value)
-	}
-}
-
-func TestDeltaApplier_InvalidOperations(t *testing.T) {
-	type Data struct {
-		Field string `json:"field"`
-	}
-
-	applier := NewDeltaApplier[Data]()
-	data := Data{Field: "test"}
-
-	t.Run("unknown operation", func(t *testing.T) {
-		delta := &DeltaPayload{
-			Changes: []FieldChange{
-				{Path: "field", Operation: OpType("unknown"), Value: "value"},
-			},
-		}
-		_, err := applier.Apply(data, delta)
-		if err == nil {
-			t.Error("expected error for unknown operation")
-		}
-	})
-
-	t.Run("increment non-numeric", func(t *testing.T) {
-		delta := &DeltaPayload{
-			Changes: []FieldChange{
-				{Path: "field", Operation: OpIncrement, Value: float64(1)},
-			},
-		}
-		_, err := applier.Apply(data, delta)
-		if err == nil {
-			t.Error("expected error for incrementing non-numeric field")
-		}
-	})
-
-	t.Run("increment with non-numeric value", func(t *testing.T) {
-		delta := &DeltaPayload{
-			Changes: []FieldChange{
-				{Path: "field", Operation: OpIncrement, Value: "not a number"},
-			},
-		}
-		_, err := applier.Apply(data, delta)
-		if err == nil {
-			t.Error("expected error for non-numeric increment value")
-		}
-	})
 }

@@ -25,18 +25,13 @@ import (
 	"testing"
 )
 
-func TestNewEmbeddingService(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	service := NewEmbeddingService(client, "nomic-embed-text")
-
-	if service.Model() != "nomic-embed-text" {
-		t.Errorf("expected model 'nomic-embed-text', got %s", service.Model())
-	}
-}
-
-func TestEmbeddingService_SetModel(t *testing.T) {
+func TestEmbeddingService_Model(t *testing.T) {
 	client := NewClient(DefaultClientConfig())
 	service := NewEmbeddingService(client, "model1")
+
+	if service.Model() != "model1" {
+		t.Errorf("expected model 'model1', got %s", service.Model())
+	}
 
 	service.SetModel("model2")
 	if service.Model() != "model2" {
@@ -90,31 +85,44 @@ func TestEmbeddingService_Embed_Success(t *testing.T) {
 	}
 }
 
-func TestEmbeddingService_Embed_EmptyText(t *testing.T) {
+func TestEmbeddingService_InvalidInput(t *testing.T) {
 	client := NewClient(DefaultClientConfig())
 	service := NewEmbeddingService(client, "nomic-embed-text")
+	ctx := context.Background()
 
-	_, err := service.Embed(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty text")
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{"Embed empty text", func() error {
+			_, err := service.Embed(ctx, "")
+			return err
+		}},
+		{"EmbedWithModel empty model", func() error {
+			_, err := service.EmbedWithModel(ctx, "", "text")
+			return err
+		}},
+		{"EmbedBatch empty texts", func() error {
+			_, err := service.EmbedBatch(ctx, []string{})
+			return err
+		}},
+		{"EmbedBatch empty text in slice", func() error {
+			_, err := service.EmbedBatch(ctx, []string{"valid", "", "also valid"})
+			return err
+		}},
+		{"EmbedBatchWithModel empty model", func() error {
+			_, err := service.EmbedBatchWithModel(ctx, "", []string{"text"})
+			return err
+		}},
 	}
 
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-func TestEmbeddingService_EmbedWithModel_EmptyModel(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	service := NewEmbeddingService(client, "nomic-embed-text")
-
-	_, err := service.EmbedWithModel(context.Background(), "", "text")
-	if err == nil {
-		t.Fatal("expected error for empty model")
-	}
-
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Errorf("expected ErrInvalidInput, got %v", err)
+			}
+		})
 	}
 }
 
@@ -166,49 +174,6 @@ func TestEmbeddingService_EmbedBatch_Success(t *testing.T) {
 	// For 3 texts, should use sequential processing
 	if callCount.Load() != 3 {
 		t.Errorf("expected 3 calls for sequential processing, got %d", callCount.Load())
-	}
-}
-
-func TestEmbeddingService_EmbedBatch_EmptyTexts(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	service := NewEmbeddingService(client, "nomic-embed-text")
-
-	_, err := service.EmbedBatch(context.Background(), []string{})
-	if err == nil {
-		t.Fatal("expected error for empty texts")
-	}
-
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-func TestEmbeddingService_EmbedBatch_EmptyTextInSlice(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	service := NewEmbeddingService(client, "nomic-embed-text")
-
-	texts := []string{"valid", "", "also valid"}
-	_, err := service.EmbedBatch(context.Background(), texts)
-	if err == nil {
-		t.Fatal("expected error for empty text in slice")
-	}
-
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-func TestEmbeddingService_EmbedBatchWithModel_EmptyModel(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	service := NewEmbeddingService(client, "nomic-embed-text")
-
-	_, err := service.EmbedBatchWithModel(context.Background(), "", []string{"text"})
-	if err == nil {
-		t.Fatal("expected error for empty model")
-	}
-
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
 	}
 }
 

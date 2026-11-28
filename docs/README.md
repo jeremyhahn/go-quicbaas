@@ -42,11 +42,11 @@ existing shape:
 | Directory | Why it is not a feature folder |
 |---|---|
 | `deployment/` | Operational guides — Kubernetes manifests, production checklist. Not a capability. |
-| `design/` | Working design documents and roadmaps for work that is planned, not built. A feature folder describes what exists. |
 | `identity-refactor/` | A cross-repo migration plan, still awaiting sign-off. |
-| `testing/` | Contributor guides for running the suites. |
+| `testing/` | Contributor guides for running the suites; `testing/tests-that-assert-the-bug.md` lists signs of a test that asserts a defect. |
 | `release/` | What must be true of the tree before it is published, and the gates that enforce it. |
 | `reference/` | A copy of each industry standard the code implements, with its index ([reference/README.md](reference/README.md)); handbook `software/conventions/documentation.md` §9. |
+| `plans/` | One working plan per SPEC row issue (`<issue>.md`): its slices and their state. Kept while the row is open. |
 
 There is one roadmap, [`ROADMAP.md`](../ROADMAP.md) at the repository root, and
 one specification, [SPEC.md](SPEC.md), which lists every feature.
@@ -101,6 +101,7 @@ one specification, [SPEC.md](SPEC.md), which lists every feature.
 | [ssh/](ssh/) | Server-held SSH keys, known hosts, authorized keys |
 | [bootstrap/](bootstrap/) | First-boot ceremony and trust bootstrap |
 | [attestation/](attestation/) | The attestation Verifier: endorsements, signed reference values, TPM quote appraisal; statement and chain verification |
+| [service-plane/](service-plane/) | The trusted service plane design: container runtime, services, OCI registry, measured launch and service policy (planned) |
 | [backup-restore/](backup-restore/) | Backup to S3/Azure/GCS/MinIO, restore, scheduling |
 | [codec/](codec/) | Serialization |
 | [security-hardening/](security-hardening/) | FIPS mode, TLS posture, ingress binding, the hardening baseline |

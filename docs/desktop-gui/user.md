@@ -3041,7 +3041,7 @@ This operation takes 1-5 minutes depending on data size.
 ### See also
 
 - [CLI: quicbaas barrier](../barrier/cli.md) — seal operations via CLI
-- [handlers_seal.go](../../pkg/api/rest/handlers_seal.go) — seal implementation
+- [handlers_barrier.go](../../pkg/api/rest/handlers_barrier.go) — seal and unseal handlers
 - [security/seal.md](../barrier/engineering.md) — seal architecture and best practices
 - Security → KMS — key management service
 - [security/kms.md](../kms/architecture.md) — encryption key management

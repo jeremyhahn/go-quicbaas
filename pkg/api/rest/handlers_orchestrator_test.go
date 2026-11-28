@@ -499,214 +499,116 @@ func TestOrchestratorSpawn_Success(t *testing.T) {
 	assert.Equal(t, "claude", resp.Backend)
 }
 
-// TestOrchestratorSpawn_DefaultsPersistentTrue proves the /orchestrator/sessions
-// endpoint defaults Persistent=true when the caller omits the field. The Sessions
-// UI creates multi-turn conversational sessions, which require persistent mode so
-// CLI-mode backends register a durable session that the immediate prompt can
-// resolve. Without this default the spawn is one-shot and the prompt fails with
-// "session not found".
-func TestOrchestratorSpawn_DefaultsPersistentTrue(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	var captured *orchestration.SpawnSessionRequest
-	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-		captured = req
-		return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
+// TestOrchestratorSpawn_Persistent proves the sessions endpoint defaults
+// Persistent=true when the body omits it, and honours an explicit value
+// either way, so callers that want one-shot behaviour can still get it.
+func TestOrchestratorSpawn_Persistent(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "omitted defaults to true", body: `{"backend":"claude"}`, want: true},
+		{name: "explicit false is honoured", body: `{"backend":"claude","persistent":false}`, want: false},
+		{name: "explicit true is honoured", body: `{"backend":"claude","persistent":true}`, want: true},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+			defer cleanup()
 
-	// Raw body deliberately omits "persistent" entirely.
-	body := []byte(`{"backend":"claude"}`)
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
+			var captured *orchestration.SpawnSessionRequest
+			agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+				captured = req
+				return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
+			}
 
-	assert.Equal(t, http.StatusCreated, rec.Code)
-	require.NotNil(t, captured)
-	assert.True(t, captured.Persistent, "sessions endpoint must default Persistent=true when omitted")
-}
+			req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader([]byte(tc.body)))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorSpawn(rec, req)
 
-// TestOrchestratorSpawn_HonorsExplicitPersistentFalse proves an explicit
-// "persistent": false opt-out is honored and not overridden by the server
-// default — callers that want one-shot behavior on this endpoint can still get it.
-func TestOrchestratorSpawn_HonorsExplicitPersistentFalse(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	var captured *orchestration.SpawnSessionRequest
-	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-		captured = req
-		return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
+			assert.Equal(t, http.StatusCreated, rec.Code)
+			require.NotNil(t, captured)
+			assert.Equal(t, tc.want, captured.Persistent)
+		})
 	}
-
-	body := []byte(`{"backend":"claude","persistent":false}`)
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusCreated, rec.Code)
-	require.NotNil(t, captured)
-	assert.False(t, captured.Persistent, "explicit persistent:false must be honored")
 }
 
-// TestOrchestratorSpawn_HonorsExplicitPersistentTrue proves an explicit
-// "persistent": true round-trips unchanged.
-func TestOrchestratorSpawn_HonorsExplicitPersistentTrue(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	var captured *orchestration.SpawnSessionRequest
-	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-		captured = req
-		return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
+// TestOrchestratorSpawn_Errors maps each spawn failure to its HTTP status.
+// The UnsupportedOperation and BackendNotFound rows are Bug #3 regressions:
+// both once fell through to an opaque 500 "internal server error", and the
+// body must now carry the actionable message instead.
+func TestOrchestratorSpawn_Errors(t *testing.T) {
+	tests := []struct {
+		name        string
+		noAgent     bool
+		spawnErr    error
+		body        string
+		wantStatus  int
+		wantContain []string
+	}{
+		{name: "invalid payload", body: "invalid-json", wantStatus: http.StatusBadRequest},
+		{name: "missing backend", body: `{}`, wantStatus: http.StatusBadRequest},
+		{name: "service unavailable", noAgent: true, body: `{"backend":"claude"}`, wantStatus: http.StatusServiceUnavailable},
+		{
+			name: "service error",
+			spawnErr: &orchestration.AgentServiceError{
+				Sentinel: orchestration.ErrBackendRequired,
+				Message:  "backend not found",
+			},
+			body:       `{"backend":"invalid"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:        "unsupported operation",
+			spawnErr:    &orchestration.UnsupportedOperationError{Backend: "ollama", Operation: "spawn"},
+			body:        `{"backend":"ollama"}`,
+			wantStatus:  http.StatusBadRequest,
+			wantContain: []string{"does not support spawn"},
+		},
+		{
+			name:        "backend not found",
+			spawnErr:    &orchestration.BackendNotFoundError{Backend: "ollama"},
+			body:        `{"backend":"ollama"}`,
+			wantStatus:  http.StatusNotFound,
+			wantContain: []string{"backend not found", "ollama"},
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var server *Server
+			if tc.noAgent {
+				// The default mock returns nil for Agent().
+				s, _, cleanup := setupMockServer(t)
+				defer cleanup()
+				server = s
+			} else {
+				s, agentSvc, cleanup := setupOrchestratorMockServer(t)
+				defer cleanup()
+				if tc.spawnErr != nil {
+					agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+						return nil, tc.spawnErr
+					}
+				}
+				server = s
+			}
 
-	body := []byte(`{"backend":"claude","persistent":true}`)
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
+			req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader([]byte(tc.body)))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorSpawn(rec, req)
 
-	assert.Equal(t, http.StatusCreated, rec.Code)
-	require.NotNil(t, captured)
-	assert.True(t, captured.Persistent)
-}
-
-func TestOrchestratorSpawn_InvalidPayload(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader([]byte("invalid-json")))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestOrchestratorSpawn_MissingBackend(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	body, err := json.Marshal(orchestration.SpawnSessionRequest{})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestOrchestratorSpawn_ServiceUnavailable(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	// Default mock returns nil for Agent()
-	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "claude"})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-}
-
-func TestOrchestratorSpawn_ServiceError(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-		return nil, &orchestration.AgentServiceError{
-			Sentinel: orchestration.ErrBackendRequired,
-			Message:  "backend not found",
-		}
+			assert.Equal(t, tc.wantStatus, rec.Code)
+			respBody := rec.Body.String()
+			for _, want := range tc.wantContain {
+				assert.Contains(t, respBody, want)
+			}
+			if tc.spawnErr != nil {
+				assert.NotContains(t, respBody, "internal server error")
+			}
+		})
 	}
-
-	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "invalid"})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestOrchestratorSpawn_UnsupportedOperation — Bug #3 regression (part B).
-// A backend that is registered but doesn't support spawn (e.g. ollama in
-// stateless-only mode) must return 400 with the actionable message, not a
-// 500 "internal server error".
-func TestOrchestratorSpawn_UnsupportedOperation(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-		return nil, &orchestration.UnsupportedOperationError{Backend: "ollama", Operation: "spawn"}
-	}
-
-	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "ollama"})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions?tenant_id=default", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code,
-		"UnsupportedOperationError must map to 400, not 500")
-	respBody := rec.Body.String()
-	assert.Contains(t, respBody, "does not support spawn",
-		"response must identify which operation is unsupported")
-	assert.NotContains(t, respBody, "internal server error")
-}
-
-// TestOrchestratorSpawn_BackendNotFound — Bug #3 regression.
-//
-// Before the fix, a spawn against an unregistered backend mapped through
-// the default branch of handleOrchestratorError and returned HTTP 500 with
-// the opaque body "internal server error". Users saw that in the UI dialog
-// with zero clue that the fix was to register a backend.
-//
-// After the fix, BackendNotFoundError classifies as not-found (404) and the
-// response body carries the actionable original message.
-func TestOrchestratorSpawn_BackendNotFound(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-		return nil, &orchestration.BackendNotFoundError{Backend: "ollama"}
-	}
-
-	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "ollama"})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusNotFound, rec.Code, "BackendNotFoundError must map to 404, not 500")
-
-	respBody := rec.Body.String()
-	assert.Contains(t, respBody, "backend not found",
-		"response body must surface the actionable error, not an opaque 'internal server error'")
-	assert.Contains(t, respBody, "ollama",
-		"response body must identify which backend was missing")
-	assert.NotContains(t, respBody, "internal server error",
-		"Bug #3 regression: the opaque 500 message must not leak back")
 }
 
 // =============================================================================
@@ -748,71 +650,53 @@ func TestOrchestratorCreateTask_Success(t *testing.T) {
 	assert.Equal(t, "implement feature X", resp.Subject)
 }
 
-func TestOrchestratorCreateTask_InvalidPayload(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader([]byte("not-json")))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateTask(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestOrchestratorCreateTask_MissingSubject(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	body, err := json.Marshal(orchestration.CreateTaskRequest{Description: "no subject"})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateTask(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestOrchestratorCreateTask_ServiceUnavailable(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, err := json.Marshal(orchestration.CreateTaskRequest{Subject: "test"})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateTask(rec, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-}
-
-func TestOrchestratorCreateTask_ServiceError(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	agentSvc.createTaskFunc = func(ctx context.Context, req *orchestration.CreateTaskRequest) (*orchestration.Task, error) {
-		return nil, &orchestration.TaskAlreadyExistsError{TaskID: "task-dup"}
+// TestOrchestratorCreateTask_Errors maps each create-task failure to its
+// HTTP status.
+func TestOrchestratorCreateTask_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		noAgent    bool
+		createErr  error
+		body       string
+		wantStatus int
+	}{
+		{name: "invalid payload", body: "not-json", wantStatus: http.StatusBadRequest},
+		{name: "missing subject", body: `{"description":"no subject"}`, wantStatus: http.StatusBadRequest},
+		{name: "service unavailable", noAgent: true, body: `{"subject":"test"}`, wantStatus: http.StatusServiceUnavailable},
+		{
+			name:       "task already exists",
+			createErr:  &orchestration.TaskAlreadyExistsError{TaskID: "task-dup"},
+			body:       `{"subject":"duplicate"}`,
+			wantStatus: http.StatusConflict,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var server *Server
+			if tc.noAgent {
+				// The default mock returns nil for Agent().
+				s, _, cleanup := setupMockServer(t)
+				defer cleanup()
+				server = s
+			} else {
+				s, agentSvc, cleanup := setupOrchestratorMockServer(t)
+				defer cleanup()
+				if tc.createErr != nil {
+					agentSvc.createTaskFunc = func(ctx context.Context, req *orchestration.CreateTaskRequest) (*orchestration.Task, error) {
+						return nil, tc.createErr
+					}
+				}
+				server = s
+			}
 
-	body, err := json.Marshal(orchestration.CreateTaskRequest{
-		Subject: "duplicate",
-	})
-	require.NoError(t, err)
+			req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader([]byte(tc.body)))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorCreateTask(rec, req)
 
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateTask(rec, req)
-
-	assert.Equal(t, http.StatusConflict, rec.Code)
+			assert.Equal(t, tc.wantStatus, rec.Code)
+		})
+	}
 }
 
 // =============================================================================
@@ -894,52 +778,52 @@ func TestOrchestratorClaimTask_Success(t *testing.T) {
 	assert.Equal(t, "agent-1", resp["agent_id"])
 }
 
-func TestOrchestratorClaimTask_MissingAgentID(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	body, err := json.Marshal(OrchestratorClaimTaskRequest{})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/claim", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("taskID", "task-1")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorClaimTask(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestOrchestratorClaimTask_AlreadyClaimed(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	agentSvc.claimTaskFunc = func(ctx context.Context, tenantID, taskID, agentID string) error {
-		return &orchestration.TaskAlreadyClaimedError{
-			TaskID:       taskID,
-			ClaimedBy:    "agent-other",
-			RequestingBy: agentID,
-		}
+// TestOrchestratorClaimTask_Errors maps each claim failure to its HTTP status.
+func TestOrchestratorClaimTask_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		claimErr   error
+		agentID    string
+		wantStatus int
+	}{
+		{name: "missing agent id", wantStatus: http.StatusBadRequest},
+		{
+			name: "already claimed",
+			claimErr: &orchestration.TaskAlreadyClaimedError{
+				TaskID:       "task-1",
+				ClaimedBy:    "agent-other",
+				RequestingBy: "agent-1",
+			},
+			agentID:    "agent-1",
+			wantStatus: http.StatusConflict,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+			defer cleanup()
+			if tc.claimErr != nil {
+				agentSvc.claimTaskFunc = func(ctx context.Context, tenantID, taskID, agentID string) error {
+					return tc.claimErr
+				}
+			}
 
-	body, err := json.Marshal(OrchestratorClaimTaskRequest{AgentID: "agent-1"})
-	require.NoError(t, err)
+			body, err := json.Marshal(OrchestratorClaimTaskRequest{AgentID: tc.agentID})
+			require.NoError(t, err)
 
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/claim?tenant_id=t1", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+			req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/claim?tenant_id=t1", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("taskID", "task-1")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("taskID", "task-1")
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorClaimTask(rec, req)
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorClaimTask(rec, req)
 
-	assert.Equal(t, http.StatusConflict, rec.Code)
+			assert.Equal(t, tc.wantStatus, rec.Code)
+		})
+	}
 }
 
 // =============================================================================
@@ -1355,34 +1239,35 @@ func TestHandleOrchestratorListWorkflows_NoAgent(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
-func TestHandleOrchestratorGetWorkflow_NotFound(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
+// TestHandleOrchestratorGetWorkflow_Errors maps each get-workflow failure to
+// its HTTP status. An unset name URL param simulates a missing name.
+func TestHandleOrchestratorGetWorkflow_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		wfName     string
+		wantStatus int
+	}{
+		{name: "not found", wfName: "does-not-exist", wantStatus: http.StatusNotFound},
+		{name: "missing name", wantStatus: http.StatusBadRequest},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, _, cleanup := setupOrchestratorMockServer(t)
+			defer cleanup()
 
-	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/workflows/does-not-exist", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "does-not-exist")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			req := systemRequest(http.MethodGet, "/api/v1/orchestrator/workflows/"+tc.wfName, nil)
+			rctx := chi.NewRouteContext()
+			if tc.wfName != "" {
+				rctx.URLParams.Add("name", tc.wfName)
+			}
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorGetWorkflow(rec, req)
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorGetWorkflow(rec, req)
 
-	assert.Equal(t, http.StatusNotFound, rec.Code)
-}
-
-func TestHandleOrchestratorGetWorkflow_MissingName(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/workflows/", nil)
-	rctx := chi.NewRouteContext()
-	// Do not set "name" URL param — simulates a missing name.
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorGetWorkflow(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Equal(t, tc.wantStatus, rec.Code)
+		})
+	}
 }
 
 func TestHandleOrchestratorCreateWorkflow_Success(t *testing.T) {
@@ -1412,54 +1297,38 @@ func TestHandleOrchestratorCreateWorkflow_Success(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, rec.Code)
 }
 
-func TestHandleOrchestratorCreateWorkflow_MissingName(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	body := map[string]interface{}{
-		"definition": map[string]interface{}{
-			"mode": "autonomous",
+// TestHandleOrchestratorCreateWorkflow_Errors proves each malformed create
+// request answers 400, including a definition that still sets the retired
+// system_prompt, whose error names the offending field.
+func TestHandleOrchestratorCreateWorkflow_Errors(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantContain string
+	}{
+		{name: "missing name", body: `{"definition":{"mode":"autonomous"}}`},
+		{name: "missing definition", body: `{"name":"test-workflow"}`},
+		{name: "invalid json", body: `{invalid`},
+		{
+			name:        "retired system prompt",
+			body:        `{"name":"my-workflow","definition":` + retiredSystemPromptDefinition + `}`,
+			wantContain: "agents[0].system_prompt",
 		},
 	}
-	bodyBytes, err := json.Marshal(body)
-	require.NoError(t, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, _, cleanup := setupOrchestratorMockServer(t)
+			defer cleanup()
 
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateWorkflow(rec, req)
+			req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader([]byte(tc.body)))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorCreateWorkflow(rec, req)
 
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleOrchestratorCreateWorkflow_MissingDefinition(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	body := map[string]interface{}{
-		"name": "test-workflow",
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Contains(t, rec.Body.String(), tc.wantContain)
+		})
 	}
-	bodyBytes, err := json.Marshal(body)
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateWorkflow(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleOrchestratorCreateWorkflow_InvalidJSON(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader([]byte(`{invalid`)))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateWorkflow(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 // =============================================================================
@@ -1506,66 +1375,57 @@ func TestHandleUpdateWorkflow_Success(t *testing.T) {
 const retiredSystemPromptDefinition = `{"name":"my-workflow","mode":"autonomous",` +
 	`"agents":[{"role":"worker","backend":"claude","system_prompt":"be careful"}]}`
 
-func TestHandleUpdateWorkflow_RefusesRetiredSystemPrompt(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-	agentSvc.updateWorkflowFunc = func(*orchestration.WorkflowDefinition) error {
-		t.Fatal("a definition carrying a retired field must not reach the service")
-		return nil
+// TestHandleUpdateWorkflow_Errors maps each update failure to its HTTP
+// status. A definition carrying the retired system_prompt must be refused
+// before it reaches the service.
+func TestHandleUpdateWorkflow_Errors(t *testing.T) {
+	tests := []struct {
+		name        string
+		wfName      string
+		body        string
+		updateErr   error
+		wantStatus  int
+		wantContain string
+	}{
+		{
+			name:        "retired system prompt",
+			wfName:      "my-workflow",
+			body:        retiredSystemPromptDefinition,
+			wantStatus:  http.StatusBadRequest,
+			wantContain: "agents[0].system_prompt",
+		},
+		{
+			name:       "not found",
+			wfName:     "ghost",
+			body:       `{"name":"ghost","mode":"autonomous"}`,
+			updateErr:  &orchestration.WorkflowNotFoundError{Name: "ghost"},
+			wantStatus: http.StatusNotFound,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+			defer cleanup()
+			agentSvc.updateWorkflowFunc = func(*orchestration.WorkflowDefinition) error {
+				if tc.updateErr == nil {
+					t.Fatal("a definition carrying a retired field must not reach the service")
+				}
+				return tc.updateErr
+			}
 
-	req := systemRequest(http.MethodPut, "/api/v1/orchestrator/workflows/my-workflow",
-		bytes.NewReader([]byte(retiredSystemPromptDefinition)))
-	req.Header.Set("Content-Type", "application/json")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "my-workflow")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorUpdateWorkflow(rec, req)
+			req := systemRequest(http.MethodPut, "/api/v1/orchestrator/workflows/"+tc.wfName, bytes.NewReader([]byte(tc.body)))
+			req.Header.Set("Content-Type", "application/json")
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("name", tc.wfName)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Contains(t, rec.Body.String(), "agents[0].system_prompt")
-}
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorUpdateWorkflow(rec, req)
 
-func TestHandleOrchestratorCreateWorkflow_RefusesRetiredSystemPrompt(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	body := `{"name":"my-workflow","definition":` + retiredSystemPromptDefinition + `}`
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateWorkflow(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Contains(t, rec.Body.String(), "agents[0].system_prompt")
-}
-
-// TestHandleUpdateWorkflow_NotFound verifies that a missing workflow returns 404.
-func TestHandleUpdateWorkflow_NotFound(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	agentSvc.updateWorkflowFunc = func(def *orchestration.WorkflowDefinition) error {
-		return &orchestration.WorkflowNotFoundError{Name: def.Name}
+			assert.Equal(t, tc.wantStatus, rec.Code)
+			assert.Contains(t, rec.Body.String(), tc.wantContain)
+		})
 	}
-
-	body, err := json.Marshal(orchestration.WorkflowDefinition{
-		Name: "ghost",
-		Mode: "autonomous",
-	})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPut, "/api/v1/orchestrator/workflows/ghost", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "ghost")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorUpdateWorkflow(rec, req)
-
-	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 // =============================================================================

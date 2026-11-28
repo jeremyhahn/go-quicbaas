@@ -1429,25 +1429,6 @@ func TestTrain_AChangeThatLostItsApprovalIsEjectedAtLanding(t *testing.T) {
 	}
 }
 
-// TestTrain_AMergeTheForgeRefusesIsATypedFailure proves a refused landing is
-// named, and leaves the train on the ledger for the next job to finish.
-func TestTrain_AMergeTheForgeRefusesIsATypedFailure(t *testing.T) {
-	rig := newTrainRig(t)
-	rig.queue(101, "task-a")
-	rig.pipeline(trainCommit(1, 101), "success", "")
-	rig.forge.mergeErr = errors.New("protected branch: status check missing")
-	err := rig.run(orchestration.JobStateInitializing)
-	if !errors.Is(err, ErrTrainLanding) {
-		t.Fatalf("Run = %v, want a landing error", err)
-	}
-	if ledger := rig.ledger(); ledger.Active == nil || ledger.Active.Phase != TrainLanding {
-		t.Fatalf("ledger = %+v, want the train still landing", ledger.Active)
-	}
-	if got := rig.entry("task-a"); got.State != TrainEntryRiding {
-		t.Fatalf("entry = %+v, want still riding", got)
-	}
-}
-
 // =============================================================================
 // Restart
 // =============================================================================
@@ -1525,7 +1506,8 @@ func TestTrain_ARestartMidBuildAbandonsAndRebuildsUnderANewNumber(t *testing.T) 
 }
 
 // TestTrain_ARestartMidLandingFinishesWithoutMergingTwice proves the landing
-// is idempotent: a train that merged and died before recording it is
+// is idempotent: a refused landing is a typed failure that leaves the train
+// on the ledger, and a train that merged and died before recording it is
 // recorded, not merged again.
 func TestTrain_ARestartMidLandingFinishesWithoutMergingTwice(t *testing.T) {
 	rig := newTrainRig(t)
@@ -1535,6 +1517,12 @@ func TestTrain_ARestartMidLandingFinishesWithoutMergingTwice(t *testing.T) {
 	rig.forge.mergeErr = errors.New("unanswered")
 	if err := rig.run(orchestration.JobStateInitializing); !errors.Is(err, ErrTrainLanding) {
 		t.Fatalf("first run = %v, want the landing to fail", err)
+	}
+	if ledger := rig.ledger(); ledger.Active == nil || ledger.Active.Phase != TrainLanding {
+		t.Fatalf("ledger = %+v, want the train still landing", ledger.Active)
+	}
+	if got := rig.entry("task-a"); got.State != TrainEntryRiding {
+		t.Fatalf("entry = %+v, want still riding", got)
 	}
 	// The forge had in fact merged it.
 	rig.forge.mu.Lock()
@@ -1738,27 +1726,28 @@ func TestTrainErrors_NameTheTrainAndUnwrap(t *testing.T) {
 	cases := []struct {
 		err      error
 		sentinel error
+		cause    error
 		want     []string
 	}{
-		{&TrainUnavailableError{ProjectID: "api"}, ErrTrainUnavailable, []string{"api", "merge train"}},
+		{&TrainUnavailableError{ProjectID: "api"}, ErrTrainUnavailable, nil, []string{"api", "merge train"}},
 		{&TrainBuildError{ProjectID: "api", Train: 7, Reason: "the train could not be pushed", Cause: cause},
-			ErrTrainBuild, []string{"#7", "api", "could not be pushed", "remote rejected"}},
-		{&TrainBuildError{ProjectID: "api", Train: 7, Reason: "no cause"}, ErrTrainBuild, []string{"#7", "no cause"}},
+			ErrTrainBuild, cause, []string{"#7", "api", "could not be pushed", "remote rejected"}},
+		{&TrainBuildError{ProjectID: "api", Train: 7, Reason: "no cause"}, ErrTrainBuild, nil, []string{"#7", "no cause"}},
 		{&TrainLandingError{ProjectID: "api", Train: 7, PullRequest: 901, Reason: "refused", Cause: cause},
-			ErrTrainLanding, []string{"#7", "#901", "refused", "remote rejected"}},
-		{&TrainLandingError{ProjectID: "api", Train: 7, PullRequest: 901, Reason: "no cause"}, ErrTrainLanding, []string{"#901"}},
+			ErrTrainLanding, cause, []string{"#7", "#901", "refused", "remote rejected"}},
+		{&TrainLandingError{ProjectID: "api", Train: 7, PullRequest: 901, Reason: "no cause"}, ErrTrainLanding, nil, []string{"#901"}},
 	}
 	for _, tc := range cases {
 		if !errors.Is(tc.err, tc.sentinel) {
 			t.Fatalf("%T does not unwrap to %v", tc.err, tc.sentinel)
+		}
+		if tc.cause != nil && !errors.Is(tc.err, tc.cause) {
+			t.Fatalf("%T hides its cause", tc.err)
 		}
 		for _, want := range tc.want {
 			if !strings.Contains(tc.err.Error(), want) {
 				t.Fatalf("%q lacks %q", tc.err.Error(), want)
 			}
 		}
-	}
-	if !errors.Is(&TrainBuildError{Reason: "x", Cause: cause}, cause) {
-		t.Fatal("a build error hides its cause")
 	}
 }

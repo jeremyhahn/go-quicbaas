@@ -35,14 +35,6 @@ func TestNewEventDisplay(t *testing.T) {
 	assert.False(t, d.streaming)
 }
 
-func TestNewEventDisplay_NilWriter(t *testing.T) {
-	// newEventDisplay should work with any io.Writer, even if it's a no-op.
-	// Passing nil would panic on use but construction should succeed.
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-	assert.NotNil(t, d)
-}
-
 func TestEventDisplay_AssignColor(t *testing.T) {
 	var buf strings.Builder
 	d := newEventDisplay(&buf)
@@ -93,18 +85,12 @@ func TestEventDisplay_RoleFor(t *testing.T) {
 	var buf strings.Builder
 	d := newEventDisplay(&buf)
 
-	// Unknown session returns "worker".
+	// Unknown and empty session IDs return "worker".
 	assert.Equal(t, "worker", d.roleFor("unknown-session"))
+	assert.Equal(t, "worker", d.roleFor(""))
 
 	d.registerSession("sess-1", "coder")
 	assert.Equal(t, "coder", d.roleFor("sess-1"))
-}
-
-func TestEventDisplay_RoleFor_EmptySessionID(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	assert.Equal(t, "worker", d.roleFor(""))
 }
 
 func TestEventDisplay_Prefix(t *testing.T) {
@@ -211,24 +197,6 @@ func TestParseKeyValues(t *testing.T) {
 			wantKV:   map[string]string{"role": "lead", "task": "Decompose"},
 			wantRest: "",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			kv, rest := parseKeyValues(tt.input)
-			assert.Equal(t, tt.wantKV, kv)
-			assert.Equal(t, tt.wantRest, rest)
-		})
-	}
-}
-
-func TestParseKeyValues_InvalidInput(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		wantKV   map[string]string
-		wantRest string
-	}{
 		{
 			name:     "no equals sign",
 			input:    "just some text",
@@ -262,6 +230,14 @@ func TestParseSessionUpdate(t *testing.T) {
 		assert.Equal(t, "Write", update["title"])
 	})
 
+	t.Run("update without jsonrpc envelope", func(t *testing.T) {
+		msg := `session=sess-1 {"update":{"sessionUpdate":"agent_message_chunk","text":"hello"}}`
+		sid, update, ok := parseSessionUpdate(msg)
+		assert.True(t, ok)
+		assert.Equal(t, "sess-1", sid)
+		assert.Equal(t, "agent_message_chunk", update["sessionUpdate"])
+	})
+
 	t.Run("missing session", func(t *testing.T) {
 		msg := `{"jsonrpc":"2.0"}`
 		sid, _, ok := parseSessionUpdate(msg)
@@ -277,538 +253,112 @@ func TestParseSessionUpdate(t *testing.T) {
 	})
 }
 
-func TestParseSessionUpdate_FlatUpdate(t *testing.T) {
-	msg := `session=sess-1 {"update":{"sessionUpdate":"agent_message_chunk","text":"hello"}}`
-	sid, update, ok := parseSessionUpdate(msg)
-	assert.True(t, ok)
-	assert.Equal(t, "sess-1", sid)
-	assert.Equal(t, "agent_message_chunk", update["sessionUpdate"])
+// TestEventDisplay_Render covers the one-line rendering of each event type.
+// A row with no want expects the event to be skipped (no output at all).
+func TestEventDisplay_Render(t *testing.T) {
+	tests := []struct {
+		name    string
+		evtType string
+		message string
+		want    []string
+		roles   map[string]string // session ID to the role render records
+	}{
+		{"job started", "orchestration:job_started", "job_id=job-1 correlation_id=corr-1", []string{"Job started", "system"}, nil},
+		{"job started empty message", "orchestration:job_started", "", []string{"Job started"}, nil},
+		{"decomposed", "orchestration:decomposed", "work_items=5 iteration=1", []string{"Decomposed into 5 tasks (iteration 1)"}, nil},
+		{"decomposed missing fields", "orchestration:decomposed", "", []string{"Decomposed into"}, nil},
+		{"scheduled", "orchestration:scheduled", "waves=2 items=5", []string{"Scheduled 5 items in 2 waves"}, nil},
+		{"task assigned skipped", "orchestration:task_assigned", "wave=1 tasks=3", nil, nil},
+		{"task completed skipped", "orchestration:task_completed", "wave=1 tasks=3", nil, nil},
+		{"validation result skipped", "orchestration:validation_result", "criteria=3", nil, nil},
+		{"review approved", "orchestration:review_decision", "approved=true feedback=Looks good", []string{"Review: APPROVED"}, nil},
+		{"review rejected", "orchestration:review_decision", "approved=false feedback=Needs more tests", []string{"Review: REJECTED -- Needs more tests"}, nil},
+		{"redelegate", "orchestration:redelegate", "iteration=2", []string{"Re-delegating (iteration 2)"}, nil},
+		{"redelegate empty message", "orchestration:redelegate", "", []string{"Re-delegating"}, nil},
+		{"prompt start", "worker:prompt_start", "role=coder task=Setup project backend=claude session=sess-1", []string{"Starting: Setup", "coder"}, map[string]string{"sess-1": "coder"}},
+		{"prompt start no role", "worker:prompt_start", "task=Build session=sess-2 backend=claude", []string{"Starting: Build", "worker"}, nil},
+		{"prompt complete", "worker:prompt_complete", "role=coder task=Setup project response=Done", []string{"Finished: Setup", "coder"}, nil},
+		{"prompt complete no role", "worker:prompt_complete", "task=Build response=OK", []string{"Finished: Build"}, nil},
+		{"session spawn", "worker:session_spawn", "role=coder backend=claude persistent=true", []string{"Spawning session", "coder"}, nil},
+		{"session spawned", "worker:session_spawned", "role=reviewer session=sess-3", []string{"Session ready", "reviewer"}, map[string]string{"sess-3": "reviewer"}},
+		{"session spawned no role", "worker:session_spawned", "session=sess-4", []string{"Session ready", "worker"}, nil},
+		{"lead decompose start", "lead:decompose_start", "backend=claude model=opus-4", []string{"Decomposing task...", "lead"}, map[string]string{"lead": "lead"}},
+		{"lead work item", "lead:work_item", "title=Create project structure", []string{"-> Create project structure", "lead"}, nil},
+		{"lead work item empty title", "lead:work_item", "", []string{"->"}, nil},
+		{"lead session spawned", "lead:session_spawned", "session=lead-sess-1", []string{"Session ready"}, map[string]string{"lead-sess-1": "lead"}},
+		{"lead session spawned no session", "lead:session_spawned", "", []string{"Session ready"}, nil},
+		{"unknown type", "custom:event_type", "some details", []string{"[custom:event_type]", "some details"}, nil},
+		{"unknown type empty message", "custom:event_type", "", []string{"[custom:event_type]"}, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			d := newEventDisplay(&buf)
+
+			d.render(&orchestratorSDK.JobEvent{Type: tt.evtType, Message: tt.message})
+
+			output := buf.String()
+			if tt.want == nil {
+				assert.Empty(t, output, "%s should be skipped", tt.evtType)
+				return
+			}
+			for _, w := range tt.want {
+				assert.Contains(t, output, w)
+			}
+			for session, role := range tt.roles {
+				assert.Equal(t, role, d.sessionRole[session])
+			}
+		})
+	}
 }
 
-func TestEventDisplay_Render_JobStarted(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:job_started",
-		Message: "job_id=job-1 correlation_id=corr-1",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Job started")
-	assert.Contains(t, output, "system")
-}
-
-func TestEventDisplay_Render_JobStarted_EmptyMessage(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:job_started",
-		Message: "",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Job started")
-}
-
-func TestEventDisplay_Render_Decomposed(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:decomposed",
-		Message: "work_items=5 iteration=1",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Decomposed into 5 tasks (iteration 1)")
-}
-
-func TestEventDisplay_Render_Decomposed_MissingFields(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:decomposed",
-		Message: "",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Decomposed into")
-}
-
-func TestEventDisplay_Render_Scheduled(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:scheduled",
-		Message: "waves=2 items=5",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Scheduled 5 items in 2 waves")
-}
-
-func TestEventDisplay_Render_TaskAssigned_Skipped(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:task_assigned",
-		Message: "wave=1 tasks=3",
-	})
-
-	assert.Equal(t, "", buf.String(), "task_assigned should be skipped")
-}
-
-func TestEventDisplay_Render_TaskCompleted_Skipped(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:task_completed",
-		Message: "wave=1 tasks=3",
-	})
-
-	assert.Equal(t, "", buf.String(), "task_completed should be skipped")
-}
-
-func TestEventDisplay_Render_ValidationResult_Skipped(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:validation_result",
-		Message: "criteria=3",
-	})
-
-	assert.Equal(t, "", buf.String(), "validation_result should be skipped")
-}
-
-func TestEventDisplay_Render_ReviewApproved(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:review_decision",
-		Message: "approved=true feedback=Looks good",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Review: APPROVED")
-}
-
-func TestEventDisplay_Render_ReviewRejected(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:review_decision",
-		Message: "approved=false feedback=Needs more tests",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Review: REJECTED -- Needs more tests")
-}
-
-func TestEventDisplay_Render_Redelegate(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:redelegate",
-		Message: "iteration=2",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Re-delegating (iteration 2)")
-}
-
-func TestEventDisplay_Render_Redelegate_EmptyMessage(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:redelegate",
-		Message: "",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Re-delegating")
-}
-
-func TestEventDisplay_Render_PromptStart(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_start",
-		Message: "role=coder task=Setup project backend=claude session=sess-1",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Starting: Setup")
-	assert.Contains(t, output, "coder")
-	assert.Equal(t, "coder", d.sessionRole["sess-1"])
-}
-
-func TestEventDisplay_Render_PromptStart_NoRole(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_start",
-		Message: "task=Build session=sess-2 backend=claude",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Starting: Build")
-	assert.Contains(t, output, "worker")
-}
-
-func TestEventDisplay_Render_PromptComplete(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_complete",
-		Message: "role=coder task=Setup project response=Done",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Finished: Setup")
-	assert.Contains(t, output, "coder")
-}
-
-func TestEventDisplay_Render_PromptComplete_NoRole(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_complete",
-		Message: "task=Build response=OK",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Finished: Build")
-}
-
-func TestEventDisplay_Render_SessionSpawn(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:session_spawn",
-		Message: "role=coder backend=claude persistent=true",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Spawning session")
-	assert.Contains(t, output, "coder")
-}
-
-func TestEventDisplay_Render_SessionSpawned(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:session_spawned",
-		Message: "role=reviewer session=sess-3",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Session ready")
-	assert.Contains(t, output, "reviewer")
-	assert.Equal(t, "reviewer", d.sessionRole["sess-3"])
-}
-
-func TestEventDisplay_Render_SessionSpawned_NoRole(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:session_spawned",
-		Message: "session=sess-4",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Session ready")
-	assert.Contains(t, output, "worker")
-}
-
-func TestEventDisplay_Render_LeadDecomposeStart(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "lead:decompose_start",
-		Message: "backend=claude model=opus-4",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Decomposing task...")
-	assert.Contains(t, output, "lead")
-	assert.Equal(t, "lead", d.sessionRole["lead"])
-}
-
-func TestEventDisplay_Render_LeadWorkItem(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "lead:work_item",
-		Message: "title=Create project structure",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "-> Create project structure")
-	assert.Contains(t, output, "lead")
-}
-
-func TestEventDisplay_Render_LeadWorkItem_EmptyTitle(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "lead:work_item",
-		Message: "",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "->")
-}
-
-func TestEventDisplay_Render_LeadSessionSpawned(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "lead:session_spawned",
-		Message: "session=lead-sess-1",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Session ready")
-	assert.Equal(t, "lead", d.sessionRole["lead-sess-1"])
-}
-
-func TestEventDisplay_Render_LeadSessionSpawned_NoSession(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "lead:session_spawned",
-		Message: "",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Session ready")
-}
-
-func TestEventDisplay_Render_Default(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "custom:event_type",
-		Message: "some details",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "[custom:event_type]")
-	assert.Contains(t, output, "some details")
-}
-
-func TestEventDisplay_Render_Default_EmptyMessage(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "custom:event_type",
-		Message: "",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "[custom:event_type]")
-}
-
-func TestEventDisplay_Render_ToolCallInProgress(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Write","status":"in_progress","locations":[{"path":"/workspace/main.go"}]}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "[WRITE]")
-	assert.Contains(t, output, "/workspace/main.go")
-	assert.Contains(t, output, "in_progress")
-}
-
-func TestEventDisplay_Render_ToolCallPending_Skipped(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Write","status":"pending"}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	assert.Equal(t, "", buf.String(), "pending tool calls should be skipped")
-}
-
-func TestEventDisplay_Render_ToolCallFailed(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Write","status":"failed","locations":[{"path":"/workspace/file.js"}],"rawOutput":{"error":"You must read file first"}}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "[FAIL]")
-	assert.Contains(t, output, "/workspace/file.js")
-	assert.Contains(t, output, "You must read file first")
-}
-
-func TestEventDisplay_Render_ToolCallFailed_NoError(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Bash","status":"failed"}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "[FAIL]")
-}
-
-func TestEventDisplay_Render_MessageChunk(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"agent_message_chunk","text":"Hello world"}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, ">>>")
-	assert.Contains(t, output, "Hello world")
-	assert.True(t, d.streaming)
-}
-
-func TestEventDisplay_Render_MessageChunk_EmptyText(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"agent_message_chunk","text":""}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	assert.Equal(t, "", buf.String())
-	assert.False(t, d.streaming)
-}
-
-func TestEventDisplay_Render_ThoughtChunk(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"agent_thought_chunk","text":"Thinking..."}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "...")
-	assert.Contains(t, output, "Thinking...")
-	assert.Contains(t, output, colorDim)
-	assert.True(t, d.streaming)
-}
-
-func TestEventDisplay_Render_AvailableCommandsUpdate_Skipped(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"available_commands_update"}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	assert.Equal(t, "", buf.String())
-}
-
-func TestEventDisplay_Render_JSONRPCResult_WithTokens(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"usage":{"totalTokens":17942}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:jsonrpc_result",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Done (17942 tokens)")
-	assert.Contains(t, output, "coder")
-}
-
-func TestEventDisplay_Render_JSONRPCResult_NoTokens(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:jsonrpc_result",
-		Message: `session=sess-1 {"result":"ok"}`,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Done")
-}
-
-func TestEventDisplay_Render_JSONRPCResult_InvalidJSON(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:jsonrpc_result",
-		Message: "not json at all",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Done")
+// TestEventDisplay_Render_AgentEvents covers the session/update and
+// jsonrpc_result events of an agent session registered as sess-1 (coder).
+// A row with no want expects the event to be skipped (no output at all).
+func TestEventDisplay_Render_AgentEvents(t *testing.T) {
+	const update = "agent:notification:session/update"
+	tests := []struct {
+		name      string
+		evtType   string
+		message   string
+		want      []string
+		streaming bool
+	}{
+		{"tool call in progress", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Write","status":"in_progress","locations":[{"path":"/workspace/main.go"}]}}}`, []string{"[WRITE]", "/workspace/main.go", "in_progress"}, false},
+		{"tool call pending skipped", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Write","status":"pending"}}}`, nil, false},
+		{"tool call failed", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Write","status":"failed","locations":[{"path":"/workspace/file.js"}],"rawOutput":{"error":"You must read file first"}}}}`, []string{"[FAIL]", "/workspace/file.js", "You must read file first"}, false},
+		{"tool call failed no error", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Bash","status":"failed"}}}`, []string{"[FAIL]"}, false},
+		{"flat tool call", update, `session=sess-1 {"type":"tool_call","title":"Read","status":"in_progress","locations":[{"path":"/workspace/go.mod"}]}`, []string{"[READ]", "/workspace/go.mod"}, false},
+		{"invalid json", update, "not-json-at-all", []string{"not-json-at-all"}, false},
+		{"message chunk", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"agent_message_chunk","text":"Hello world"}}}`, []string{">>>", "Hello world"}, true},
+		{"message chunk empty text skipped", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"agent_message_chunk","text":""}}}`, nil, false},
+		{"thought chunk", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"agent_thought_chunk","text":"Thinking..."}}}`, []string{"...", "Thinking...", colorDim}, true},
+		{"available commands update skipped", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"available_commands_update"}}}`, nil, false},
+		{"jsonrpc result with tokens", "agent:jsonrpc_result", `session=sess-1 {"usage":{"totalTokens":17942}}`, []string{"Done (17942 tokens)", "coder"}, false},
+		{"jsonrpc result no tokens", "agent:jsonrpc_result", `session=sess-1 {"result":"ok"}`, []string{"Done"}, false},
+		{"jsonrpc result invalid json", "agent:jsonrpc_result", "not json at all", []string{"Done"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			d := newEventDisplay(&buf)
+			d.registerSession("sess-1", "coder")
+
+			d.render(&orchestratorSDK.JobEvent{Type: tt.evtType, Message: tt.message})
+
+			output := buf.String()
+			assert.Equal(t, tt.streaming, d.streaming)
+			if tt.want == nil {
+				assert.Empty(t, output, "%s should be skipped", tt.name)
+				return
+			}
+			for _, w := range tt.want {
+				assert.Contains(t, output, w)
+			}
+		})
+	}
 }
 
 func TestEventDisplay_Render_StreamingInterrupted(t *testing.T) {
@@ -1040,62 +590,4 @@ func TestExtractMapString(t *testing.T) {
 		assert.False(t, ok)
 		assert.Equal(t, "", v)
 	})
-}
-
-func TestEventDisplay_Render_SessionUpdate_InvalidJSON(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: "not-json-at-all",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "not-json-at-all")
-}
-
-func TestEventDisplay_Render_SessionUpdate_FlatJSON(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"type":"tool_call","title":"Read","status":"in_progress","locations":[{"path":"/workspace/go.mod"}]}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "[READ]")
-	assert.Contains(t, output, "/workspace/go.mod")
-}
-
-func TestEventDisplay_Render_MultipleEvents_RoleAlignment(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	// Register sessions with different role lengths.
-	d.registerSession("s1", "lead")
-	d.registerSession("s2", "coder")
-	d.registerSession("s3", "reviewer")
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_start",
-		Message: "role=lead task=Plan session=s1",
-	})
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_start",
-		Message: "role=coder task=Code session=s2",
-	})
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_start",
-		Message: "role=reviewer task=Review session=s3",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "lead")
-	assert.Contains(t, output, "coder")
-	assert.Contains(t, output, "reviewer")
 }

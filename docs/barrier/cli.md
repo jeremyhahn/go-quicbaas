@@ -69,9 +69,7 @@ quicbaas barrier recovery recover
 
 Every verb on this page works over **REST, gRPC, QUIC, MCP, Unix and the
 in-process embedded transport** — the locked architecture requires it
-([`CLAUDE.md` §Multi-Protocol Parity](../../CLAUDE.md),
-[`cmd/quicbaas/CLAUDE.md`](../../cmd/quicbaas/CLAUDE.md),
-[multiprotocol-api/architecture.md](../multiprotocol-api/architecture.md)).
+([multiprotocol-api/architecture.md](../multiprotocol-api/architecture.md)).
 Pick a transport with `--transport` and the barrier surface is identical.
 
 This is a guarantee, not a caveat to check before scripting. A transport that

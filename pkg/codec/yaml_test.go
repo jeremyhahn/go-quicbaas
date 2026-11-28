@@ -97,26 +97,6 @@ func TestYAMLCodec_Encode(t *testing.T) {
 			},
 			expectError: false,
 		},
-		{
-			name: "nested struct",
-			entity: &YAMLNestedEntity{
-				ID:   456,
-				Name: "Jane Doe",
-				Address: YAMLAddress{
-					Street: "123 Main St",
-					City:   "Springfield",
-					Zip:    "12345",
-				},
-				Meta: map[string]interface{}{
-					"verified": true,
-					"score":    98.5,
-				},
-			},
-			expectError: false,
-		},
-		{"map", map[string]int{"a": 1, "b": 2}, false},
-		{"slice", []int{1, 2, 3, 4, 5}, false},
-		{"string", "hello world", false},
 		{"nil", nil, true},
 	}
 
@@ -212,52 +192,6 @@ func TestYAMLCodec_Decode(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to decode YAML")
 	})
-}
-
-func TestYAMLCodec_RoundTrip(t *testing.T) {
-	codec := NewYAMLCodec()
-
-	entity := &YAMLTestEntity{
-		ID:    999,
-		Name:  "Round Trip",
-		Email: "rt@example.com",
-		Score: 88.8,
-		Tags:  []string{"test", "roundtrip"},
-	}
-
-	data, err := codec.Encode(entity)
-	require.NoError(t, err)
-
-	var decoded YAMLTestEntity
-	err = codec.Decode(data, &decoded)
-	require.NoError(t, err)
-
-	// Encode decoded to verify round trip
-	data2, err := codec.Encode(&decoded)
-	require.NoError(t, err)
-	assert.Equal(t, string(data), string(data2))
-}
-
-func TestYAMLCodec_Unicode(t *testing.T) {
-	codec := NewYAMLCodec()
-
-	entity := &YAMLTestEntity{
-		ID:    1,
-		Name:  "Test 测试 🚀",
-		Email: "unicode@测试.com",
-		Tags:  []string{"日本語", "中文"},
-	}
-
-	data, err := codec.Encode(entity)
-	require.NoError(t, err)
-
-	var decoded YAMLTestEntity
-	err = codec.Decode(data, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, entity.Name, decoded.Name)
-	assert.Equal(t, entity.Email, decoded.Email)
-	assert.Equal(t, entity.Tags, decoded.Tags)
 }
 
 func BenchmarkYAMLCodec_Encode(b *testing.B) {

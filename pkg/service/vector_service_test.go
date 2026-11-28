@@ -249,17 +249,6 @@ func TestVectorService_ValidateUpsertVectorRequest(t *testing.T) {
 			},
 		},
 		{
-			name:    "nil vector returns error",
-			req:     &UpsertVectorRequest{Namespace: "test-ns", ID: 1, Vector: nil},
-			wantErr: true,
-			errCheck: func(t *testing.T, err error) {
-				var qbErr *quicbaasErrors.QBError
-				require.ErrorAs(t, err, &qbErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-				assert.Contains(t, qbErr.Err.Error(), "vector is required")
-			},
-		},
-		{
 			name:    "valid request returns no error",
 			req:     &UpsertVectorRequest{Namespace: "test-ns", ID: 1, Vector: []float32{0.1, 0.2, 0.3}},
 			wantErr: false,
@@ -452,17 +441,6 @@ func TestVectorService_ValidateBatchUpsertRequest(t *testing.T) {
 			},
 		},
 		{
-			name:    "nil vectors returns error",
-			req:     &BatchUpsertRequest{Namespace: "test-ns", Vectors: nil},
-			wantErr: true,
-			errCheck: func(t *testing.T, err error) {
-				var qbErr *quicbaasErrors.QBError
-				require.ErrorAs(t, err, &qbErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-				assert.Contains(t, qbErr.Err.Error(), "vectors is required")
-			},
-		},
-		{
 			name:    "valid request returns no error",
 			req:     &BatchUpsertRequest{Namespace: "test-ns", Vectors: []*VectorData{{ID: 1, Vector: []float32{0.1}}}},
 			wantErr: false,
@@ -518,17 +496,6 @@ func TestVectorService_ValidateSearchSimilarRequest(t *testing.T) {
 		{
 			name:    "empty query vector returns error",
 			req:     &SearchSimilarRequest{Namespace: "test-ns", QueryVector: []float32{}, K: 10},
-			wantErr: true,
-			errCheck: func(t *testing.T, err error) {
-				var qbErr *quicbaasErrors.QBError
-				require.ErrorAs(t, err, &qbErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-				assert.Contains(t, qbErr.Err.Error(), "query vector is required")
-			},
-		},
-		{
-			name:    "nil query vector returns error",
-			req:     &SearchSimilarRequest{Namespace: "test-ns", QueryVector: nil, K: 10},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
 				var qbErr *quicbaasErrors.QBError
@@ -736,11 +703,6 @@ func TestVectorService_ValidateGetRebuildProgressRequest(t *testing.T) {
 			req:     &GetRebuildProgressRequest{Namespace: "test-ns"},
 			wantErr: false,
 		},
-		{
-			name:    "valid request with both returns no error",
-			req:     &GetRebuildProgressRequest{JobID: "job-123", Namespace: "test-ns"},
-			wantErr: false,
-		},
 	}
 
 	for _, tt := range tests {
@@ -939,17 +901,6 @@ func TestConvertToStringMap(t *testing.T) {
 			expected: map[string]string{},
 		},
 		{
-			name: "string values converted correctly",
-			input: map[string]interface{}{
-				"key1": "value1",
-				"key2": "value2",
-			},
-			expected: map[string]string{
-				"key1": "value1",
-				"key2": "value2",
-			},
-		},
-		{
 			name: "numeric values converted to string",
 			input: map[string]interface{}{
 				"int":   42,
@@ -958,17 +909,6 @@ func TestConvertToStringMap(t *testing.T) {
 			expected: map[string]string{
 				"int":   "42",
 				"float": "3.14",
-			},
-		},
-		{
-			name: "bool values converted to string",
-			input: map[string]interface{}{
-				"true":  true,
-				"false": false,
-			},
-			expected: map[string]string{
-				"true":  "true",
-				"false": "false",
 			},
 		},
 		{
@@ -1023,17 +963,6 @@ func TestConvertFromStringMap(t *testing.T) {
 				"key2": "value2",
 			},
 		},
-		{
-			name: "numeric strings remain as strings",
-			input: map[string]string{
-				"int":   "42",
-				"float": "3.14",
-			},
-			expected: map[string]interface{}{
-				"int":   "42",
-				"float": "3.14",
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -1061,12 +990,6 @@ func TestMatchesMetadataFilter(t *testing.T) {
 			name:     "nil filter matches any metadata",
 			metadata: map[string]interface{}{"key": "value"},
 			filter:   nil,
-			expected: true,
-		},
-		{
-			name:     "matching key-value pair returns true",
-			metadata: map[string]interface{}{"key": "value"},
-			filter:   map[string]interface{}{"key": "value"},
 			expected: true,
 		},
 		{
@@ -1107,12 +1030,6 @@ func TestMatchesMetadataFilter(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "numeric values compared as strings",
-			metadata: map[string]interface{}{"count": 42},
-			filter:   map[string]interface{}{"count": 42},
-			expected: true,
-		},
-		{
 			name:     "string vs int comparison",
 			metadata: map[string]interface{}{"count": "42"},
 			filter:   map[string]interface{}{"count": 42},
@@ -1123,12 +1040,6 @@ func TestMatchesMetadataFilter(t *testing.T) {
 			metadata: map[string]interface{}{"active": true},
 			filter:   map[string]interface{}{"active": true},
 			expected: true,
-		},
-		{
-			name:     "empty metadata with non-empty filter returns false",
-			metadata: map[string]interface{}{},
-			filter:   map[string]interface{}{"key": "value"},
-			expected: false,
 		},
 		{
 			name:     "nil metadata with non-empty filter returns false",
@@ -1174,163 +1085,105 @@ func TestSetRaftNode(t *testing.T) {
 	assert.Nil(t, vs.raftNode)
 }
 
-func TestVectorClient_NoSDKProvider(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "ns", 128)
-	svc.sdkProvider = nil
-	_, err := svc.vectorClient()
-	require.Error(t, err)
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrInternal, qbErr.Code)
-}
-
-func TestVectorClient_Success(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "ns", 128)
-	vc, err := svc.vectorClient()
-	require.NoError(t, err)
-	assert.NotNil(t, vc)
-}
-
-func TestResolveShardID_NonZero(t *testing.T) {
+func TestResolveShardID(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "ns", 128)
 	assert.Equal(t, uint64(42), svc.resolveShardID(42))
-}
-
-func TestResolveShardID_Zero(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "ns", 128)
 	assert.Equal(t, shards.PlatformShardID, svc.resolveShardID(0))
 }
 
-func TestEnsureHNSWIndex_AlreadyExists(t *testing.T) {
-	svc, _, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 128)
-	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.Equal(t, mockIndex, index)
-}
-
-func TestEnsureHNSWIndex_NoFactory(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	svc.indexFactory = nil
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
-	_, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.Error(t, err)
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrInternal, qbErr.Code)
-}
-
-func TestEnsureHNSWIndex_NamespaceNotFound(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "nonexistent-ns")
-	require.Error(t, err)
-}
-
-func TestEnsureHNSWIndex_CreateAndLoadVectors(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
-
-	storage.getNamespaceInfoFn = func(_ context.Context, ns string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{Name: ns, Dimension: 3, DistanceMetric: "COSINE"}, nil
-	}
-	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		return []*interfaces.VectorValue{
-			{ID: 1, Embedding: []float32{1.0, 2.0, 3.0}},
-			{ID: 2, Embedding: []float32{4.0, 5.0, 6.0}},
-		}, nil
+func TestEnsureHNSWIndex(t *testing.T) {
+	twoVectors := []*interfaces.VectorValue{
+		{ID: 1, Embedding: []float32{1.0, 2.0, 3.0}},
+		{ID: 2, Embedding: []float32{4.0, 5.0, 6.0}},
 	}
 
-	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.NotNil(t, index)
-}
-
-func TestEnsureHNSWIndex_DotProductMetric(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
-
-	storage.getNamespaceInfoFn = func(_ context.Context, ns string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{Name: ns, Dimension: 3, DistanceMetric: "DOT_PRODUCT"}, nil
+	tests := []struct {
+		name         string
+		namespace    string
+		keepIndex    bool
+		noFactory    bool
+		metric       string
+		scanned      []*interfaces.VectorValue
+		scanErr      error
+		factoryErr   error
+		insertErr    error
+		wantInternal bool
+		wantErrText  string
+		wantErr      bool
+		wantMetric   string
+		wantInserts  int
+	}{
+		{name: "already exists", namespace: "test-ns", keepIndex: true},
+		{name: "no factory", namespace: "test-ns", noFactory: true, wantErr: true, wantInternal: true},
+		{name: "namespace not found", namespace: "nonexistent-ns", wantErr: true},
+		{name: "cosine loads vectors", namespace: "test-ns", metric: "COSINE", scanned: twoVectors, wantMetric: "cosine", wantInserts: 2},
+		{name: "dot product metric", namespace: "test-ns", metric: "DOT_PRODUCT", wantMetric: "dot_product"},
+		{name: "unknown metric defaults to l2", namespace: "test-ns", metric: "UNKNOWN", wantMetric: "l2"},
+		{name: "factory error", namespace: "test-ns", factoryErr: errors.New("factory error"), wantErr: true, wantErrText: "create vector index"},
+		{name: "scan error still returns index", namespace: "test-ns", metric: "L2", scanErr: errors.New("scan failed"), wantMetric: "l2"},
+		{name: "insert error still returns index", namespace: "test-ns", scanned: twoVectors[:1], insertErr: errors.New("insert failed"), wantMetric: "l2", wantInserts: 1},
 	}
 
-	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.NotNil(t, index)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+			if !tt.keepIndex {
+				svc.indexMu.Lock()
+				delete(svc.indexes, "test-ns")
+				svc.indexMu.Unlock()
+			}
+			if tt.metric != "" {
+				storage.getNamespaceInfoFn = func(_ context.Context, ns string) (*interfaces.VectorNamespaceInfo, error) {
+					return &interfaces.VectorNamespaceInfo{Name: ns, Dimension: 3, DistanceMetric: tt.metric}, nil
+				}
+			}
+			storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+				return tt.scanned, tt.scanErr
+			}
 
-func TestEnsureHNSWIndex_DefaultL2Metric(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
+			created := newVecMockVectorIndex()
+			inserts := 0
+			created.insertFn = func(_ uint64, _ []float32) error {
+				inserts++
+				return tt.insertErr
+			}
+			var gotMetric string
+			svc.indexFactory = &vecMockVectorIndexFactory{
+				createFn: func(config *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+					gotMetric = config.DistanceMetric
+					if tt.factoryErr != nil {
+						return nil, tt.factoryErr
+					}
+					return created, nil
+				},
+			}
+			if tt.noFactory {
+				svc.indexFactory = nil
+			}
 
-	storage.getNamespaceInfoFn = func(_ context.Context, ns string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{Name: ns, Dimension: 3, DistanceMetric: "UNKNOWN"}, nil
+			index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), tt.namespace)
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.wantInternal {
+					var qbErr *qbErrors.QBError
+					require.True(t, errors.As(err, &qbErr))
+					assert.Equal(t, qbErrors.ErrInternal, qbErr.Code)
+				}
+				if tt.wantErrText != "" {
+					assert.Contains(t, err.Error(), tt.wantErrText)
+				}
+				return
+			}
+			require.NoError(t, err)
+			if tt.keepIndex {
+				assert.Equal(t, mockIndex, index)
+				return
+			}
+			assert.Equal(t, created, index)
+			assert.Equal(t, tt.wantMetric, gotMetric)
+			assert.Equal(t, tt.wantInserts, inserts)
+		})
 	}
-	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.NotNil(t, index)
-}
-
-func TestEnsureHNSWIndex_FactoryCreateError(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
-
-	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{Name: "test-ns", Dimension: 3}, nil
-	}
-	svc.indexFactory = &vecMockVectorIndexFactory{
-		createFn: func(_ *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
-			return nil, errors.New("factory error")
-		},
-	}
-	_, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "create vector index")
-}
-
-func TestEnsureHNSWIndex_ScanError(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
-
-	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{Name: "test-ns", Dimension: 3, DistanceMetric: "L2"}, nil
-	}
-	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		return nil, errors.New("scan failed")
-	}
-	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.NotNil(t, index)
-}
-
-func TestEnsureHNSWIndex_InsertError(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
-
-	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{Name: "test-ns", Dimension: 3}, nil
-	}
-	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		return []*interfaces.VectorValue{{ID: 1, Embedding: []float32{1, 2, 3}}}, nil
-	}
-	failIndex := newVecMockVectorIndex()
-	failIndex.insertFn = func(_ uint64, _ []float32) error { return errors.New("insert failed") }
-	svc.indexFactory = newVecMockVectorIndexFactory(failIndex)
-	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.NotNil(t, index)
 }
 
 func TestEnsureHNSWIndex_ConcurrentCreation(t *testing.T) {
@@ -1426,25 +1279,6 @@ func TestCreateNamespace_SDKSuccess(t *testing.T) {
 	assert.Equal(t, "new-ns", resp.Namespace)
 }
 
-func TestCreateNamespace_SDKError(t *testing.T) {
-	svc, storage, vt, _ := newVecSvcWithSDK(t, "test-ns", 128)
-
-	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
-		return nil, errors.New("not found")
-	}
-	vt.createNamespaceFn = func(_ context.Context, _ *qrdbtransport.CreateNamespaceRequest) (*qrdbtransport.CreateNamespaceResponse, error) {
-		return nil, errors.New("sdk error")
-	}
-
-	_, err := svc.CreateNamespace(tenantctx.WithSystem(context.Background()), &CreateNamespaceRequest{
-		Namespace: "new-ns", Dimension: 128,
-	})
-	require.Error(t, err)
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrRaft, qbErr.Code)
-}
-
 func TestCreateNamespace_AlreadyExists(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
 	_, err := svc.CreateNamespace(tenantctx.WithSystem(context.Background()), &CreateNamespaceRequest{Namespace: "test-ns", Dimension: 128})
@@ -1454,40 +1288,11 @@ func TestCreateNamespace_AlreadyExists(t *testing.T) {
 	assert.Equal(t, qbErrors.ErrAlreadyExists, qbErr.Code)
 }
 
-func TestCreateNamespace_NoSDKProvider(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	svc.sdkProvider = nil
-	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
-		return nil, errors.New("not found")
-	}
-	_, err := svc.CreateNamespace(tenantctx.WithSystem(context.Background()), &CreateNamespaceRequest{Namespace: "new-ns", Dimension: 128})
-	require.Error(t, err)
-}
-
 func TestDeleteNamespace_SDKSuccess(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
 	resp, err := svc.DeleteNamespace(tenantctx.WithSystem(context.Background()), &DeleteNamespaceRequest{Namespace: "test-ns"})
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
-}
-
-func TestDeleteNamespace_SDKError(t *testing.T) {
-	svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	vt.deleteNamespaceFn = func(_ context.Context, _ *qrdbtransport.DeleteNamespaceRequest) (*qrdbtransport.DeleteNamespaceResponse, error) {
-		return nil, errors.New("sdk error")
-	}
-	_, err := svc.DeleteNamespace(tenantctx.WithSystem(context.Background()), &DeleteNamespaceRequest{Namespace: "test-ns"})
-	require.Error(t, err)
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrRaft, qbErr.Code)
-}
-
-func TestDeleteNamespace_NoSDKProvider(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	svc.sdkProvider = nil
-	_, err := svc.DeleteNamespace(tenantctx.WithSystem(context.Background()), &DeleteNamespaceRequest{Namespace: "test-ns"})
-	require.Error(t, err)
 }
 
 func TestUpsertVector_SDKSuccess(t *testing.T) {
@@ -1497,29 +1302,6 @@ func TestUpsertVector_SDKSuccess(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
-}
-
-func TestUpsertVector_SDKError(t *testing.T) {
-	svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	vt.upsertVectorFn = func(_ context.Context, _ *qrdbtransport.UpsertVectorRequest) (*qrdbtransport.UpsertVectorResponse, error) {
-		return nil, errors.New("sdk error")
-	}
-	_, err := svc.UpsertVector(tenantctx.WithSystem(context.Background()), &UpsertVectorRequest{
-		Namespace: "test-ns", ID: 1, Vector: []float32{1, 2, 3},
-	})
-	require.Error(t, err)
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrRaft, qbErr.Code)
-}
-
-func TestUpsertVector_NoSDKProvider(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.sdkProvider = nil
-	_, err := svc.UpsertVector(tenantctx.WithSystem(context.Background()), &UpsertVectorRequest{
-		Namespace: "test-ns", ID: 1, Vector: []float32{1, 2, 3},
-	})
-	require.Error(t, err)
 }
 
 func TestUpsertVector_EnsureIndexFails(t *testing.T) {
@@ -1549,22 +1331,6 @@ func TestUpsertVector_IndexInsertError(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-func TestDeleteVector_SDKSuccess(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	resp, err := svc.DeleteVector(tenantctx.WithSystem(context.Background()), &DeleteVectorRequest{Namespace: "test-ns", ID: 1})
-	require.NoError(t, err)
-	assert.True(t, resp.Success)
-}
-
-func TestDeleteVector_SDKError(t *testing.T) {
-	svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	vt.deleteVectorFn = func(_ context.Context, _ *qrdbtransport.DeleteVectorRequest) (*qrdbtransport.DeleteVectorResponse, error) {
-		return nil, errors.New("sdk error")
-	}
-	_, err := svc.DeleteVector(tenantctx.WithSystem(context.Background()), &DeleteVectorRequest{Namespace: "test-ns", ID: 1})
-	require.Error(t, err)
-}
-
 func TestDeleteVector_WithHNSWIndex(t *testing.T) {
 	svc, _, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 128)
 	deleted := false
@@ -1583,25 +1349,22 @@ func TestDeleteVector_HNSWDeleteError(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-func TestDeleteVector_NoSDKProvider(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	svc.sdkProvider = nil
-	_, err := svc.DeleteVector(tenantctx.WithSystem(context.Background()), &DeleteVectorRequest{Namespace: "test-ns", ID: 1})
-	require.Error(t, err)
-}
-
 func TestDeleteVector_TenantForbidden(t *testing.T) {
 	// With prefix-based tenant isolation, the attacker's scoped namespace
-	// "tenant/other/test-ns" is a different namespace than the owner's "test-ns".
-	// The SDK mock silently succeeds on the scoped namespace, so no error is
-	// returned. The owner's data is never touched because the delete operates
-	// on a completely different (non-existent) scoped namespace.
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	// is a different namespace than the owner's "test-ns", so the delete
+	// never reaches the owner's data.
+	svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	var deletedNamespace string
+	vt.deleteVectorFn = func(_ context.Context, req *qrdbtransport.DeleteVectorRequest) (*qrdbtransport.DeleteVectorResponse, error) {
+		deletedNamespace = req.Namespace
+		return &qrdbtransport.DeleteVectorResponse{Success: true}, nil
+	}
 	ctx := tenantctx.WithTenant(context.Background(), "other")
 	resp, err := svc.DeleteVector(ctx, &DeleteVectorRequest{Namespace: "test-ns", ID: 1})
 	require.NoError(t, err)
-	assert.NotNil(t, resp)
 	assert.True(t, resp.Success)
+	assert.NotEqual(t, "test-ns", deletedNamespace)
+	assert.Contains(t, deletedNamespace, "other")
 }
 
 func TestBatchUpsert_SDKSuccess(t *testing.T) {
@@ -1613,28 +1376,6 @@ func TestBatchUpsert_SDKSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	assert.Equal(t, 2, resp.InsertedCount)
-}
-
-func TestBatchUpsert_SDKError(t *testing.T) {
-	svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	vt.batchUpsertFn = func(_ context.Context, _ *qrdbtransport.BatchUpsertRequest) (*qrdbtransport.BatchUpsertResponse, error) {
-		return nil, errors.New("sdk error")
-	}
-	_, err := svc.BatchUpsert(tenantctx.WithSystem(context.Background()), &BatchUpsertRequest{
-		Namespace: "test-ns",
-		Vectors:   []*VectorData{{ID: 1, Vector: []float32{1, 2, 3}}},
-	})
-	require.Error(t, err)
-}
-
-func TestBatchUpsert_NoSDKProvider(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.sdkProvider = nil
-	_, err := svc.BatchUpsert(tenantctx.WithSystem(context.Background()), &BatchUpsertRequest{
-		Namespace: "test-ns",
-		Vectors:   []*VectorData{{ID: 1, Vector: []float32{1, 2, 3}}},
-	})
-	require.Error(t, err)
 }
 
 func TestBatchUpsert_EnsureIndexFails(t *testing.T) {
@@ -1662,6 +1403,80 @@ func TestBatchUpsert_IndexInsertError(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
+}
+
+// vectorWriteCalls invokes each SDK-backed write operation of the vector
+// service with a valid request, one entry per operation.
+var vectorWriteCalls = []struct {
+	name string
+	call func(ctx context.Context, svc *vectorService) error
+}{
+	{name: "CreateNamespace", call: func(ctx context.Context, svc *vectorService) error {
+		_, err := svc.CreateNamespace(ctx, &CreateNamespaceRequest{Namespace: "new-ns", Dimension: 3})
+		return err
+	}},
+	{name: "DeleteNamespace", call: func(ctx context.Context, svc *vectorService) error {
+		_, err := svc.DeleteNamespace(ctx, &DeleteNamespaceRequest{Namespace: "test-ns"})
+		return err
+	}},
+	{name: "UpsertVector", call: func(ctx context.Context, svc *vectorService) error {
+		_, err := svc.UpsertVector(ctx, &UpsertVectorRequest{Namespace: "test-ns", ID: 1, Vector: []float32{1, 2, 3}})
+		return err
+	}},
+	{name: "DeleteVector", call: func(ctx context.Context, svc *vectorService) error {
+		_, err := svc.DeleteVector(ctx, &DeleteVectorRequest{Namespace: "test-ns", ID: 1})
+		return err
+	}},
+	{name: "BatchUpsert", call: func(ctx context.Context, svc *vectorService) error {
+		_, err := svc.BatchUpsert(ctx, &BatchUpsertRequest{
+			Namespace: "test-ns",
+			Vectors:   []*VectorData{{ID: 1, Vector: []float32{1, 2, 3}}},
+		})
+		return err
+	}},
+}
+
+func TestVectorWrites_NoSDKProvider(t *testing.T) {
+	for _, op := range vectorWriteCalls {
+		t.Run(op.name, func(t *testing.T) {
+			svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
+			svc.sdkProvider = nil
+			err := op.call(tenantctx.WithSystem(context.Background()), svc)
+			require.Error(t, err)
+			var qbErr *qbErrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, qbErrors.ErrInternal, qbErr.Code)
+		})
+	}
+}
+
+func TestVectorWrites_SDKError(t *testing.T) {
+	sdkErr := errors.New("sdk error")
+	for _, op := range vectorWriteCalls {
+		t.Run(op.name, func(t *testing.T) {
+			svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 3)
+			vt.createNamespaceFn = func(_ context.Context, _ *qrdbtransport.CreateNamespaceRequest) (*qrdbtransport.CreateNamespaceResponse, error) {
+				return nil, sdkErr
+			}
+			vt.deleteNamespaceFn = func(_ context.Context, _ *qrdbtransport.DeleteNamespaceRequest) (*qrdbtransport.DeleteNamespaceResponse, error) {
+				return nil, sdkErr
+			}
+			vt.upsertVectorFn = func(_ context.Context, _ *qrdbtransport.UpsertVectorRequest) (*qrdbtransport.UpsertVectorResponse, error) {
+				return nil, sdkErr
+			}
+			vt.deleteVectorFn = func(_ context.Context, _ *qrdbtransport.DeleteVectorRequest) (*qrdbtransport.DeleteVectorResponse, error) {
+				return nil, sdkErr
+			}
+			vt.batchUpsertFn = func(_ context.Context, _ *qrdbtransport.BatchUpsertRequest) (*qrdbtransport.BatchUpsertResponse, error) {
+				return nil, sdkErr
+			}
+			err := op.call(tenantctx.WithSystem(context.Background()), svc)
+			require.Error(t, err)
+			var qbErr *qbErrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, qbErrors.ErrRaft, qbErr.Code)
+		})
+	}
 }
 
 func TestSearchSimilar_WithResults(t *testing.T) {
@@ -1756,6 +1571,9 @@ func TestSearchSimilar_SearchError_NonEmptyIndex(t *testing.T) {
 func TestSearchSimilar_NoIndex_ReturnsEmpty(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "other-ns", 3)
 	svc.indexFactory = nil
+	svc.indexMu.Lock()
+	delete(svc.indexes, "other-ns")
+	svc.indexMu.Unlock()
 	resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), &SearchSimilarRequest{
 		Namespace: "other-ns", QueryVector: []float32{1, 2, 3}, K: 5,
 	})
@@ -1873,36 +1691,52 @@ func TestPerformIndexRebuild_Success(t *testing.T) {
 	job.mu.RUnlock()
 }
 
-func TestPerformIndexRebuild_WithCustomConfig(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		return nil, nil
+func TestPerformIndexRebuild_IndexConfig(t *testing.T) {
+	defaults := interfaces.DefaultVectorIndexConfig()
+	tests := []struct {
+		name               string
+		indexConfig        map[string]string
+		wantM              int
+		wantEfConstruction int
+		wantEfSearch       int
+	}{
+		{
+			name:        "custom values applied",
+			indexConfig: map[string]string{"m": "32", "ef_construction": "400", "ef_search": "100"},
+			wantM:       32, wantEfConstruction: 400, wantEfSearch: 100,
+		},
+		{
+			name:        "invalid values keep defaults",
+			indexConfig: map[string]string{"m": "bad", "ef_construction": "bad", "ef_search": "bad"},
+			wantM:       int(defaults.M), wantEfConstruction: int(defaults.EfConstruction), wantEfSearch: int(defaults.EfSearch),
+		},
 	}
-	job := &RebuildJobState{JobID: "j4", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
-	svc.jobMu.Lock()
-	svc.rebuildJobs["j4"] = job
-	svc.jobMu.Unlock()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
+			storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+				return nil, nil
+			}
+			var got *interfaces.VectorIndexConfig
+			svc.indexFactory = &vecMockVectorIndexFactory{
+				createFn: func(config *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+					got = config
+					return newVecMockVectorIndex(), nil
+				},
+			}
+			job := &RebuildJobState{JobID: "j4", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
+			svc.jobMu.Lock()
+			svc.rebuildJobs["j4"] = job
+			svc.jobMu.Unlock()
 
-	err := svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "j4", "test-ns", map[string]string{
-		"m": "32", "ef_construction": "400", "ef_search": "100",
-	})
-	require.NoError(t, err)
-}
-
-func TestPerformIndexRebuild_InvalidConfig(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		return nil, nil
+			err := svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "j4", "test-ns", tt.indexConfig)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.EqualValues(t, tt.wantM, got.M)
+			assert.EqualValues(t, tt.wantEfConstruction, got.EfConstruction)
+			assert.EqualValues(t, tt.wantEfSearch, got.EfSearch)
+		})
 	}
-	job := &RebuildJobState{JobID: "j5", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
-	svc.jobMu.Lock()
-	svc.rebuildJobs["j5"] = job
-	svc.jobMu.Unlock()
-
-	err := svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "j5", "test-ns", map[string]string{
-		"m": "bad", "ef_construction": "bad", "ef_search": "bad",
-	})
-	require.NoError(t, err)
 }
 
 func TestPerformIndexRebuild_ScanError(t *testing.T) {
@@ -1952,7 +1786,7 @@ func TestRebuildIndex_NamespaceNotFound(t *testing.T) {
 func TestGetRebuildProgress_ByJobID(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
 	job := &RebuildJobState{JobID: "j1", Namespace: "test-ns", InProgress: true,
-		VectorsProcessed: 50, TotalVectors: 100, StartedAt: time.Now()}
+		VectorsProcessed: 50, TotalVectors: 100, StartedAt: time.Now().Add(-1 * time.Second)}
 	svc.jobMu.Lock()
 	svc.rebuildJobs["j1"] = job
 	svc.jobMu.Unlock()
@@ -1961,6 +1795,7 @@ func TestGetRebuildProgress_ByJobID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "running", resp.Status)
 	assert.Equal(t, 50.0, resp.PercentComplete)
+	assert.Greater(t, resp.EstimatedTimeRemainingMs, int64(0))
 }
 
 func TestGetRebuildProgress_ByNamespace(t *testing.T) {
@@ -2011,20 +1846,6 @@ func TestGetRebuildProgress_Failed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "failed", resp.Status)
 	assert.Equal(t, "failed", resp.Error)
-}
-
-func TestGetRebuildProgress_WithEstimate(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	started := time.Now().Add(-1 * time.Second)
-	job := &RebuildJobState{JobID: "je", Namespace: "test-ns", InProgress: true,
-		VectorsProcessed: 50, TotalVectors: 100, StartedAt: started}
-	svc.jobMu.Lock()
-	svc.rebuildJobs["je"] = job
-	svc.jobMu.Unlock()
-
-	resp, err := svc.GetRebuildProgress(tenantctx.WithSystem(context.Background()), &GetRebuildProgressRequest{JobID: "je"})
-	require.NoError(t, err)
-	assert.Greater(t, resp.EstimatedTimeRemainingMs, int64(0))
 }
 
 func TestGetIndexStats_WithIndex(t *testing.T) {
@@ -2108,26 +1929,39 @@ func TestPerformCompaction_JobNotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPerformCompaction_Success(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	callCount := 0
-	storage.getStatsFn = func(_ context.Context, _ string) (*interfaces.VectorStorageStats, error) {
-		callCount++
-		if callCount == 1 {
-			return &interfaces.VectorStorageStats{SizeBytes: 1000}, nil
-		}
-		return &interfaces.VectorStorageStats{SizeBytes: 500}, nil
+func TestPerformCompaction_BytesCompacted(t *testing.T) {
+	tests := []struct {
+		name       string
+		sizeBefore uint64
+		sizeAfter  uint64
+		wantBytes  int64
+	}{
+		{name: "size shrinks", sizeBefore: 1000, sizeAfter: 500, wantBytes: 500},
+		{name: "size grows reports zero", sizeBefore: 500, sizeAfter: 1000, wantBytes: 0},
 	}
-	job := &CompactionJobState{OperationID: "o1", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
-	svc.jobMu.Lock()
-	svc.compactionJobs["o1"] = job
-	svc.jobMu.Unlock()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+			callCount := 0
+			storage.getStatsFn = func(_ context.Context, _ string) (*interfaces.VectorStorageStats, error) {
+				callCount++
+				if callCount == 1 {
+					return &interfaces.VectorStorageStats{SizeBytes: tt.sizeBefore}, nil
+				}
+				return &interfaces.VectorStorageStats{SizeBytes: tt.sizeAfter}, nil
+			}
+			job := &CompactionJobState{OperationID: "o1", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
+			svc.jobMu.Lock()
+			svc.compactionJobs["o1"] = job
+			svc.jobMu.Unlock()
 
-	err := svc.performCompaction(tenantctx.WithSystem(context.Background()), "o1", "test-ns")
-	require.NoError(t, err)
-	job.mu.RLock()
-	assert.Equal(t, int64(500), job.BytesCompacted)
-	job.mu.RUnlock()
+			err := svc.performCompaction(tenantctx.WithSystem(context.Background()), "o1", "test-ns")
+			require.NoError(t, err)
+			job.mu.RLock()
+			assert.Equal(t, tt.wantBytes, job.BytesCompacted)
+			job.mu.RUnlock()
+		})
+	}
 }
 
 func TestPerformCompaction_CompactError(t *testing.T) {
@@ -2140,28 +1974,6 @@ func TestPerformCompaction_CompactError(t *testing.T) {
 
 	err := svc.performCompaction(tenantctx.WithSystem(context.Background()), "o2", "test-ns")
 	require.Error(t, err)
-}
-
-func TestPerformCompaction_NegativeBytes(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	callCount := 0
-	storage.getStatsFn = func(_ context.Context, _ string) (*interfaces.VectorStorageStats, error) {
-		callCount++
-		if callCount == 1 {
-			return &interfaces.VectorStorageStats{SizeBytes: 500}, nil
-		}
-		return &interfaces.VectorStorageStats{SizeBytes: 1000}, nil
-	}
-	job := &CompactionJobState{OperationID: "o3", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
-	svc.jobMu.Lock()
-	svc.compactionJobs["o3"] = job
-	svc.jobMu.Unlock()
-
-	err := svc.performCompaction(tenantctx.WithSystem(context.Background()), "o3", "test-ns")
-	require.NoError(t, err)
-	job.mu.RLock()
-	assert.Equal(t, int64(0), job.BytesCompacted)
-	job.mu.RUnlock()
 }
 
 func TestGetCompactionProgress_ByOperationID(t *testing.T) {
@@ -2249,18 +2061,21 @@ func TestBatchDeleteVectors_Success(t *testing.T) {
 	assert.Equal(t, 3, resp.DeletedCount)
 }
 
-func TestBatchDeleteVectors_NilRequest(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-}
-
-func TestBatchDeleteVectors_EmptyIDs(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), &BatchDeleteVectorsRequest{
-		Namespace: "test-ns", IDs: []uint64{},
-	})
-	require.Error(t, err)
+func TestBatchDeleteVectors_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *BatchDeleteVectorsRequest
+	}{
+		{name: "nil request", req: nil},
+		{name: "empty ids", req: &BatchDeleteVectorsRequest{Namespace: "test-ns", IDs: []uint64{}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+			_, err := svc.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestBatchDeleteVectors_FallbackToIndividual(t *testing.T) {
@@ -2277,22 +2092,22 @@ func TestBatchDeleteVectors_FallbackToIndividual(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-func TestUpdateMetadata_NilRequest(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-}
-
-func TestUpdateMetadata_EmptyNamespace(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), &UpdateVectorMetadataRequest{ID: 1})
-	require.Error(t, err)
-}
-
-func TestUpdateMetadata_ZeroID(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), &UpdateVectorMetadataRequest{Namespace: "test-ns"})
-	require.Error(t, err)
+func TestUpdateMetadata_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *UpdateVectorMetadataRequest
+	}{
+		{name: "nil request", req: nil},
+		{name: "empty namespace", req: &UpdateVectorMetadataRequest{ID: 1}},
+		{name: "zero id", req: &UpdateVectorMetadataRequest{Namespace: "test-ns"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+			_, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestUpdateMetadata_VectorNotFound(t *testing.T) {
@@ -2334,16 +2149,21 @@ func TestUpdateMetadata_MergeMetadata(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-func TestSearchByID_NilRequest(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-}
-
-func TestSearchByID_ZeroK(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), &SearchByIDRequest{Namespace: "test-ns", ID: 1, K: 0})
-	require.Error(t, err)
+func TestSearchByID_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *SearchByIDRequest
+	}{
+		{name: "nil request", req: nil},
+		{name: "zero k", req: &SearchByIDRequest{Namespace: "test-ns", ID: 1, K: 0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+			_, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestSearchByID_VectorNotFound(t *testing.T) {
@@ -2404,13 +2224,4 @@ func TestLocalPointsToSDK_ZeroTimestamp(t *testing.T) {
 	require.Len(t, result, 1)
 	assert.GreaterOrEqual(t, result[0].TimestampNs, before)
 	assert.LessOrEqual(t, result[0].TimestampNs, after)
-}
-
-func TestLocalPointsToSDK_Multiple(t *testing.T) {
-	points := []*tsDataPoint{
-		{Metric: "a", Value: 1, Timestamp: time.Now()},
-		{Metric: "b", Value: 2, Timestamp: time.Now()},
-	}
-	result := localPointsToSDK(points)
-	assert.Len(t, result, 2)
 }

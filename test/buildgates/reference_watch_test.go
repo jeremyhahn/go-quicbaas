@@ -25,7 +25,7 @@ import (
 var draftCopyName = regexp.MustCompile(`^(draft-.+)-([0-9]{2})\.txt$`)
 
 // TestReferenceDraftsHaveAStandardsWatchLine enforces the rule of
-// docs/reference/README.md:3 (and docs/SPEC.md): every adopted draft copied
+// docs/reference/README.md:6 (and docs/SPEC.md): every adopted draft copied
 // into docs/reference/ has a standards-watch line in ROADMAP.md Dependencies
 // that names the draft and the revision pinned, so later revisions are tracked.
 func TestReferenceDraftsHaveAStandardsWatchLine(t *testing.T) {

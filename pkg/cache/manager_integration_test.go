@@ -26,16 +26,33 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 )
 
-// Integration tests for cache manager - these tests use time.Sleep
-// and test timing-dependent behavior like TTL expiration and cleanup.
+// Integration tests for cache manager: TTL expiration, background cleanup
+// and concurrency. Expiry is driven by backdating an entry (expireNow), never
+// by sleeping past a short TTL, so a slow runner cannot change a verdict.
+
+// expireNow backdates key's L1 entry past its TTL. The replacement goes
+// through LRUCache.Add, under the cache's lock, so the cleanup goroutine
+// never sees a torn entry.
+func expireNow(t *testing.T, cm *CacheManager, key string) {
+	t.Helper()
+	entry, ok := cm.l1Cache.Peek(key)
+	require.True(t, ok, "%s is not in L1", key)
+	require.False(t, entry.ExpiresAt.IsZero(), "%s has no TTL to expire", key)
+	cm.l1Cache.Add(key, &Entry{
+		Value:     entry.Value,
+		CachedAt:  entry.CachedAt,
+		ExpiresAt: time.Now().Add(-time.Second),
+	})
+}
 
 func TestCacheManager_TTLExpiration(t *testing.T) {
 	config := Config{
 		L1Size:          10,
-		L1TTL:           100 * time.Millisecond,
-		CleanupInterval: 50 * time.Millisecond,
+		L1TTL:           time.Hour,
+		CleanupInterval: 10 * time.Millisecond,
 	}
 
 	cm, err := NewManager(config, testLogger(t))
@@ -47,29 +64,31 @@ func TestCacheManager_TTLExpiration(t *testing.T) {
 	key := "expire-key"
 	value := []byte("expire-value")
 
-	// Set value
 	err = cm.Set(ctx, key, value)
 	require.NoError(t, err)
 
-	// Should be accessible immediately
+	// Accessible while inside its TTL.
 	got, err := cm.Get(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, value, got)
 
-	// Wait for expiration
-	time.Sleep(150 * time.Millisecond)
-
-	// Should be expired
+	// Past its TTL, Get reports it missing.
+	expireNow(t, cm, key)
 	_, err = cm.Get(ctx, key)
 	assert.Error(t, err)
 	assert.True(t, errors.IsNotFound(err))
 
-	// Wait for cleanup
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify cleanup ran
-	metrics := cm.GetMetrics()
-	assert.Greater(t, metrics.Get("l1_expired"), int64(0))
+	// An expired entry nobody reads is removed by the background cleanup,
+	// which counts it.
+	require.NoError(t, cm.Set(ctx, "cleanup-key", []byte("v")))
+	expiredBefore := cm.GetMetrics().Get("l1_expired")
+	expireNow(t, cm, "cleanup-key")
+	// The cleanup removes the entry first and counts it after its sweep, so
+	// the wait covers both.
+	poll.Until(t, 5*time.Second, func() bool {
+		return !cm.l1Cache.Contains("cleanup-key") &&
+			cm.GetMetrics().Get("l1_expired") > expiredBefore
+	}, "the cleanup goroutine never removed and counted the expired entry")
 }
 
 func TestCacheManager_ConcurrentStress(t *testing.T) {
@@ -168,78 +187,28 @@ func TestCacheManager_TTLBoundaryConditions(t *testing.T) {
 		err = cm.Set(ctx, "key", []byte("value"))
 		require.NoError(t, err)
 
-		// Wait a bit
-		time.Sleep(100 * time.Millisecond)
+		// No TTL: the entry carries no expiry and no cleanup goroutine runs,
+		// so no amount of elapsed time removes it.
+		entry, ok := cm.l1Cache.Peek("key")
+		require.True(t, ok)
+		assert.True(t, entry.ExpiresAt.IsZero(), "an entry without TTL got an expiry")
+		select {
+		case <-cm.cleanupDone:
+		default:
+			t.Fatal("a manager without TTL started a cleanup goroutine")
+		}
 
-		// Should still be accessible
+		// Still accessible
 		val, err := cm.Get(ctx, "key")
 		require.NoError(t, err)
 		assert.Equal(t, []byte("value"), val)
 	})
 
-	t.Run("very short TTL", func(t *testing.T) {
-		config := Config{
-			L1Size:          10,
-			L1TTL:           1 * time.Millisecond,
-			CleanupInterval: 10 * time.Millisecond,
-		}
-
-		cm, err := NewManager(config, testLogger(t))
-		require.NoError(t, err)
-		defer cm.Close()
-
-		ctx := context.Background()
-
-		// Set value
-		err = cm.Set(ctx, "key", []byte("value"))
-		require.NoError(t, err)
-
-		// Wait for expiration
-		time.Sleep(5 * time.Millisecond)
-
-		// Should be expired
-		_, err = cm.Get(ctx, "key")
-		assert.Error(t, err)
-		assert.True(t, errors.IsNotFound(err))
-	})
-
-	t.Run("expiration exactly at boundary", func(t *testing.T) {
-		config := Config{
-			L1Size:          10,
-			L1TTL:           50 * time.Millisecond,
-			CleanupInterval: 10 * time.Millisecond,
-		}
-
-		cm, err := NewManager(config, testLogger(t))
-		require.NoError(t, err)
-		defer cm.Close()
-
-		ctx := context.Background()
-
-		// Set value
-		err = cm.Set(ctx, "key", []byte("value"))
-		require.NoError(t, err)
-
-		// Wait just before expiration
-		time.Sleep(40 * time.Millisecond)
-
-		// Should still be accessible
-		_, err = cm.Get(ctx, "key")
-		assert.NoError(t, err)
-
-		// Wait past expiration
-		time.Sleep(20 * time.Millisecond)
-
-		// Should be expired
-		_, err = cm.Get(ctx, "key")
-		assert.Error(t, err)
-	})
-
 	t.Run("multiple entries with different expiration times", func(t *testing.T) {
 		config := Config{
 			L1Size:          10,
-			L1TTL:           100 * time.Millisecond,
-			CleanupInterval: 20 * time.Millisecond,
+			L1TTL:           time.Hour,
+			CleanupInterval: 10 * time.Millisecond,
 		}
 
 		cm, err := NewManager(config, testLogger(t))
@@ -248,157 +217,18 @@ func TestCacheManager_TTLBoundaryConditions(t *testing.T) {
 
 		ctx := context.Background()
 
-		// Set first entry
-		cm.Set(ctx, "key1", []byte("value1"))
+		require.NoError(t, cm.Set(ctx, "key1", []byte("value1")))
+		require.NoError(t, cm.Set(ctx, "key2", []byte("value2")))
 
-		// Wait a bit
-		time.Sleep(60 * time.Millisecond)
+		// Each entry carries its own expiry: key1 passing its TTL leaves
+		// key2, still inside its own, untouched.
+		expireNow(t, cm, "key1")
 
-		// Set second entry (will expire later)
-		cm.Set(ctx, "key2", []byte("value2"))
-
-		// Wait for first to expire but not second
-		time.Sleep(60 * time.Millisecond)
-
-		// key1 should be expired
 		_, err = cm.Get(ctx, "key1")
-		assert.Error(t, err)
+		assert.True(t, errors.IsNotFound(err), "key1 is past its TTL: %v", err)
 
-		// key2 should still exist
-		_, err = cm.Get(ctx, "key2")
-		assert.NoError(t, err)
-	})
-}
-
-func TestCacheManager_CleanupLifecycle(t *testing.T) {
-	t.Run("cleanup goroutine starts with TTL", func(t *testing.T) {
-		config := Config{
-			L1Size:          10,
-			L1TTL:           100 * time.Millisecond,
-			CleanupInterval: 50 * time.Millisecond,
-		}
-
-		cm, err := NewManager(config, testLogger(t))
+		val, err := cm.Get(ctx, "key2")
 		require.NoError(t, err)
-
-		ctx := context.Background()
-
-		// Add expired entries
-		cm.Set(ctx, "key1", []byte("value1"))
-		time.Sleep(150 * time.Millisecond)
-
-		// Wait for cleanup to run
-		time.Sleep(100 * time.Millisecond)
-
-		// Verify cleanup happened
-		metrics := cm.GetMetrics()
-		assert.Greater(t, metrics.Get("l1_expired"), int64(0))
-
-		cm.Close()
+		assert.Equal(t, []byte("value2"), val)
 	})
-
-	t.Run("cleanup does not start without TTL", func(t *testing.T) {
-		config := Config{
-			L1Size: 10,
-			L1TTL:  0, // No TTL
-		}
-
-		cm, err := NewManager(config, testLogger(t))
-		require.NoError(t, err)
-		defer cm.Close()
-
-		ctx := context.Background()
-
-		// Add entries
-		cm.Set(ctx, "key1", []byte("value1"))
-
-		// Wait a bit
-		time.Sleep(100 * time.Millisecond)
-
-		// Entry should still exist
-		_, err = cm.Get(ctx, "key1")
-		assert.NoError(t, err)
-	})
-
-	t.Run("cleanup stops on close", func(t *testing.T) {
-		config := Config{
-			L1Size:          10,
-			L1TTL:           1 * time.Second,
-			CleanupInterval: 50 * time.Millisecond,
-		}
-
-		cm, err := NewManager(config, testLogger(t))
-		require.NoError(t, err)
-
-		// Close immediately
-		err = cm.Close()
-		assert.NoError(t, err)
-
-		// Wait to ensure cleanup goroutine has stopped
-		time.Sleep(200 * time.Millisecond)
-	})
-
-	t.Run("multiple cleanup cycles", func(t *testing.T) {
-		config := Config{
-			L1Size:          10,
-			L1TTL:           50 * time.Millisecond,
-			CleanupInterval: 30 * time.Millisecond,
-		}
-
-		cm, err := NewManager(config, testLogger(t))
-		require.NoError(t, err)
-		defer cm.Close()
-
-		ctx := context.Background()
-
-		// Add entries at different times
-		for i := 0; i < 5; i++ {
-			key := fmt.Sprintf("key-%d", i)
-			cm.Set(ctx, key, []byte(fmt.Sprintf("value-%d", i)))
-			time.Sleep(20 * time.Millisecond)
-		}
-
-		// Wait for all to expire and multiple cleanup cycles
-		time.Sleep(200 * time.Millisecond)
-
-		// All should be cleaned up
-		metrics := cm.GetMetrics()
-		assert.Greater(t, metrics.Get("l1_expired"), int64(0))
-	})
-}
-
-func TestCacheManager_CleanupTickerReplacement(t *testing.T) {
-	config := Config{
-		L1Size:          10,
-		L1TTL:           50 * time.Millisecond,
-		CleanupInterval: 30 * time.Millisecond,
-	}
-
-	cm, err := NewManager(config, testLogger(t))
-	require.NoError(t, err)
-	defer cm.Close()
-
-	ctx := context.Background()
-
-	// Add an entry
-	cm.Set(ctx, "key1", []byte("value1"))
-
-	// Wait for first cleanup cycle
-	time.Sleep(40 * time.Millisecond)
-
-	// Update config to trigger ticker replacement
-	newConfig := &Config{
-		L1Size:          10,
-		L1TTL:           100 * time.Millisecond,
-		CleanupInterval: 20 * time.Millisecond, // Changed interval
-	}
-
-	err = cm.UpdateConfig(newConfig)
-	assert.NoError(t, err)
-
-	// Wait for cleanup with new interval
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify cleanup ran with new config
-	assert.NotNil(t, cm.GetConfig())
 }

@@ -63,38 +63,49 @@ func (n *nativeQRDBProvider) Close() error { return n.closeErr }
 // providerBridgeIn — qrdb provider adapted to go-quicbaas Provider
 // =============================================================================
 
-func TestProviderBridgeIn_Embed_Success(t *testing.T) {
-	b := &providerBridgeIn{inner: &nativeQRDBProvider{dims: 3}, model: "m"}
-	vec, err := b.Embed(context.Background(), "hi")
-	require.NoError(t, err)
-	assert.Len(t, vec, 3)
-}
+// TestProviderBridgeIn_Embed covers both embedding methods of the inbound
+// bridge: the inner vectors come through, an inner error is returned as is,
+// and an empty inner result is rejected by Embed.
+func TestProviderBridgeIn_Embed(t *testing.T) {
+	innerErr := errors.New("inner failure")
+	tests := []struct {
+		name    string
+		batch   bool
+		inner   *nativeQRDBProvider
+		texts   []string
+		wantLen int
+		wantErr error
+	}{
+		{name: "Embed success", inner: &nativeQRDBProvider{dims: 3}, texts: []string{"hi"}, wantLen: 3},
+		{name: "Embed inner error", inner: &nativeQRDBProvider{embedErr: innerErr}, texts: []string{"hi"}, wantErr: innerErr},
+		{name: "Embed empty result", inner: &nativeQRDBProvider{empty: true}, texts: []string{"hi"}, wantErr: ErrInvalidInput},
+		{name: "EmbedBatch success", batch: true, inner: &nativeQRDBProvider{dims: 2}, texts: []string{"a", "b"}, wantLen: 2},
+		{name: "EmbedBatch inner error", batch: true, inner: &nativeQRDBProvider{embedErr: innerErr}, texts: []string{"a"}, wantErr: innerErr},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &providerBridgeIn{inner: tt.inner, model: "m"}
 
-func TestProviderBridgeIn_Embed_Error(t *testing.T) {
-	wantErr := errors.New("inner failure")
-	b := &providerBridgeIn{inner: &nativeQRDBProvider{embedErr: wantErr}}
-	_, err := b.Embed(context.Background(), "hi")
-	assert.ErrorIs(t, err, wantErr)
-}
+			var gotLen int
+			var err error
+			if tt.batch {
+				var vecs [][]float32
+				vecs, err = b.EmbedBatch(context.Background(), tt.texts)
+				gotLen = len(vecs)
+			} else {
+				var vec []float32
+				vec, err = b.Embed(context.Background(), tt.texts[0])
+				gotLen = len(vec)
+			}
 
-func TestProviderBridgeIn_Embed_EmptyResult(t *testing.T) {
-	b := &providerBridgeIn{inner: &nativeQRDBProvider{empty: true}}
-	_, err := b.Embed(context.Background(), "hi")
-	assert.ErrorIs(t, err, ErrInvalidInput)
-}
-
-func TestProviderBridgeIn_EmbedBatch_Success(t *testing.T) {
-	b := &providerBridgeIn{inner: &nativeQRDBProvider{dims: 2}}
-	out, err := b.EmbedBatch(context.Background(), []string{"a", "b"})
-	require.NoError(t, err)
-	assert.Len(t, out, 2)
-}
-
-func TestProviderBridgeIn_EmbedBatch_Error(t *testing.T) {
-	wantErr := errors.New("batch failure")
-	b := &providerBridgeIn{inner: &nativeQRDBProvider{embedErr: wantErr}}
-	_, err := b.EmbedBatch(context.Background(), []string{"a"})
-	assert.ErrorIs(t, err, wantErr)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantLen, gotLen)
+		})
+	}
 }
 
 func TestProviderBridgeIn_Accessors(t *testing.T) {
@@ -110,47 +121,41 @@ func TestProviderBridgeIn_Accessors(t *testing.T) {
 // providerBridgeOut — go-quicbaas Provider adapted to qrdb provider
 // =============================================================================
 
-func TestProviderBridgeOut_Embed_SingleText(t *testing.T) {
-	fp := &fakeProvider{name: "fake"}
-	b := &providerBridgeOut{inner: fp}
+// TestProviderBridgeOut_Embed covers the routing of the outbound bridge: one
+// text goes to the inner Embed, several texts go to the inner EmbedBatch, and
+// an error from either is returned unwrapped.
+func TestProviderBridgeOut_Embed(t *testing.T) {
+	tests := []struct {
+		name           string
+		inner          *fakeProvider
+		texts          []string
+		wantLen        int
+		wantEmbedCalls int
+		wantBatchCalls int
+		wantErr        bool
+	}{
+		{name: "single text", inner: &fakeProvider{name: "fake"}, texts: []string{"only"}, wantLen: 1, wantEmbedCalls: 1},
+		{name: "single text error", inner: &fakeProvider{embedErr: &fakeProviderError{msg: "single fail"}}, texts: []string{"only"}, wantErr: true},
+		{name: "multiple texts", inner: &fakeProvider{name: "fake"}, texts: []string{"a", "b"}, wantLen: 2, wantBatchCalls: 1},
+		{name: "multiple texts error", inner: &fakeProvider{batchErr: &fakeProviderError{msg: "batch fail"}}, texts: []string{"a", "b"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &providerBridgeOut{inner: tt.inner}
 
-	res, err := b.Embed(context.Background(), []string{"only"}, "ignored")
-	require.NoError(t, err)
-	require.Len(t, res.Embeddings, 1)
-	assert.Equal(t, "fake", res.Model)
-	assert.Equal(t, 1, fp.embedCalls, "single text must route to Embed hook")
-	assert.Equal(t, 0, fp.batchCalls)
-}
-
-func TestProviderBridgeOut_Embed_SingleText_Error(t *testing.T) {
-	fp := &fakeProvider{embedErr: &fakeProviderError{msg: "single fail"}}
-	b := &providerBridgeOut{inner: fp}
-
-	_, err := b.Embed(context.Background(), []string{"only"}, "")
-	require.Error(t, err)
-	var fe *fakeProviderError
-	assert.True(t, errors.As(err, &fe))
-}
-
-func TestProviderBridgeOut_Embed_MultiText(t *testing.T) {
-	fp := &fakeProvider{name: "fake"}
-	b := &providerBridgeOut{inner: fp}
-
-	res, err := b.Embed(context.Background(), []string{"a", "b"}, "")
-	require.NoError(t, err)
-	require.Len(t, res.Embeddings, 2)
-	assert.Equal(t, 1, fp.batchCalls, "multiple texts must route to EmbedBatch hook")
-	assert.Equal(t, 0, fp.embedCalls)
-}
-
-func TestProviderBridgeOut_Embed_MultiText_Error(t *testing.T) {
-	fp := &fakeProvider{batchErr: &fakeProviderError{msg: "batch fail"}}
-	b := &providerBridgeOut{inner: fp}
-
-	_, err := b.Embed(context.Background(), []string{"a", "b"}, "")
-	require.Error(t, err)
-	var fe *fakeProviderError
-	assert.True(t, errors.As(err, &fe))
+			res, err := b.Embed(context.Background(), tt.texts, "ignored")
+			if tt.wantErr {
+				var fe *fakeProviderError
+				assert.True(t, errors.As(err, &fe), "inner error must be returned unwrapped, got %v", err)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, res.Embeddings, tt.wantLen)
+			assert.Equal(t, "fake", res.Model)
+			assert.Equal(t, tt.wantEmbedCalls, tt.inner.embedCalls, "Embed hook calls")
+			assert.Equal(t, tt.wantBatchCalls, tt.inner.batchCalls, "EmbedBatch hook calls")
+		})
+	}
 }
 
 func TestProviderBridgeOut_Accessors(t *testing.T) {

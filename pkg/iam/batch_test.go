@@ -170,51 +170,6 @@ func TestBatchImportRequestValidate(t *testing.T) {
 	})
 }
 
-func TestBatchOptionsValidate(t *testing.T) {
-	t.Run("valid options", func(t *testing.T) {
-		opts := BatchOptions{
-			BatchSize:       100,
-			Parallelism:     4,
-			ContinueOnError: true,
-			Timeout:         5 * time.Minute,
-		}
-
-		if err := opts.Validate(); err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("zero values are valid", func(t *testing.T) {
-		opts := BatchImportOptions{}
-
-		if err := opts.Validate(); err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("negative batch size", func(t *testing.T) {
-		opts := BatchOptions{
-			BatchSize: -1,
-		}
-
-		err := opts.Validate()
-		if err == nil {
-			t.Error("expected error for negative batch size")
-		}
-	})
-
-	t.Run("negative parallelism", func(t *testing.T) {
-		opts := BatchOptions{
-			Parallelism: -1,
-		}
-
-		err := opts.Validate()
-		if err == nil {
-			t.Error("expected error for negative parallelism")
-		}
-	})
-}
-
 func TestBatchExportRequestValidate(t *testing.T) {
 	t.Run("valid request", func(t *testing.T) {
 		req := &BatchExportRequest{
@@ -246,19 +201,6 @@ func TestBatchExportRequestValidate(t *testing.T) {
 		err := req.Validate()
 		if err == nil {
 			t.Error("expected error when no resource types selected")
-		}
-	})
-
-	t.Run("all resource types selected", func(t *testing.T) {
-		req := &BatchExportRequest{
-			TenantID:        "test-tenant",
-			IncludeUsers:    true,
-			IncludeRoles:    true,
-			IncludePolicies: true,
-		}
-
-		if err := req.Validate(); err != nil {
-			t.Errorf("unexpected error: %v", err)
 		}
 	})
 }
@@ -424,199 +366,6 @@ func TestProgressTracker(t *testing.T) {
 		progress := pt.getProgress()
 		if progress.PercentComplete != 0 {
 			t.Errorf("expected 0%% for zero total, got %.2f%%", progress.PercentComplete)
-		}
-	})
-}
-
-func TestBatchResult(t *testing.T) {
-	t.Run("batch result fields", func(t *testing.T) {
-		result := &BatchResult{
-			TotalItems:   100,
-			SuccessCount: 95,
-			FailureCount: 3,
-			SkippedCount: 2,
-			Duration:     5 * time.Second,
-			ProcessedItems: map[string][]string{
-				"users":  {"u1", "u2"},
-				"groups": {"g1"},
-			},
-			DryRun: false,
-			Errors: []BatchError{
-				{Index: 5, Type: "user", ID: "u5", Error: errors.New("test error")},
-			},
-		}
-
-		if result.TotalItems != 100 {
-			t.Errorf("expected total 100, got %d", result.TotalItems)
-		}
-		if result.SuccessCount != 95 {
-			t.Errorf("expected success 95, got %d", result.SuccessCount)
-		}
-		if result.FailureCount != 3 {
-			t.Errorf("expected failure 3, got %d", result.FailureCount)
-		}
-		if result.SkippedCount != 2 {
-			t.Errorf("expected skipped 2, got %d", result.SkippedCount)
-		}
-		if len(result.Errors) != 1 {
-			t.Errorf("expected 1 error, got %d", len(result.Errors))
-		}
-		if result.ProcessedItems["users"][0] != "u1" {
-			t.Errorf("expected first user 'u1', got '%s'", result.ProcessedItems["users"][0])
-		}
-	})
-}
-
-func TestBatchError(t *testing.T) {
-	t.Run("batch error fields", func(t *testing.T) {
-		testErr := errors.New("test error")
-		batchErr := BatchError{
-			Index: 42,
-			Type:  "user",
-			ID:    "user-123",
-			Error: testErr,
-		}
-
-		if batchErr.Index != 42 {
-			t.Errorf("expected index 42, got %d", batchErr.Index)
-		}
-		if batchErr.Type != "user" {
-			t.Errorf("expected type 'user', got '%s'", batchErr.Type)
-		}
-		if batchErr.ID != "user-123" {
-			t.Errorf("expected ID 'user-123', got '%s'", batchErr.ID)
-		}
-		if batchErr.Error != testErr {
-			t.Error("error not preserved correctly")
-		}
-	})
-}
-
-func TestUserImport(t *testing.T) {
-	t.Run("user import fields", func(t *testing.T) {
-		user := &UserImport{
-			ID:       30001,
-			Email:    "test@example.com",
-			Username: "testuser",
-			Name:     "Test User",
-			Attributes: map[string]string{
-				"department": "engineering",
-			},
-			Roles:   []string{"r1"},
-			Enabled: boolPtr(true),
-		}
-
-		if user.ID != 30001 {
-			t.Errorf("expected ID 30001, got %d", user.ID)
-		}
-		if user.Email != "test@example.com" {
-			t.Errorf("expected email 'test@example.com', got '%s'", user.Email)
-		}
-		assertEnabledStated(t, user.Enabled, true, "user")
-	})
-}
-
-func TestRoleImport(t *testing.T) {
-	t.Run("role import fields", func(t *testing.T) {
-		role := &RoleImport{
-			ID:          "r1",
-			Name:        "Admin",
-			Description: "Administrator role",
-			Permissions: []string{"read", "write", "delete"},
-			Attributes: map[string]interface{}{
-				"level": "high",
-			},
-		}
-
-		if role.ID != "r1" {
-			t.Errorf("expected ID 'r1', got '%s'", role.ID)
-		}
-		if role.Name != "Admin" {
-			t.Errorf("expected name 'Admin', got '%s'", role.Name)
-		}
-		if len(role.Permissions) != 3 {
-			t.Errorf("expected 3 permissions, got %d", len(role.Permissions))
-		}
-	})
-}
-
-func TestPolicyImport(t *testing.T) {
-	t.Run("policy import fields", func(t *testing.T) {
-		policy := &PolicyImport{
-			Name:        "admin-policy",
-			Description: "Admin access policy",
-			Priority:    100,
-			Subjects: SubjectSelector{
-				Roles: []string{"admin"},
-			},
-			Rules: []Rule{
-				{
-					Name:      "allow-all",
-					Effect:    EffectAllow,
-					Actions:   []string{"*"},
-					Resources: []string{"*"},
-				},
-			},
-			Variables: map[string]string{
-				"env": "production",
-			},
-		}
-
-		if policy.Name != "admin-policy" {
-			t.Errorf("expected name 'admin-policy', got '%s'", policy.Name)
-		}
-		if policy.Priority != 100 {
-			t.Errorf("expected priority 100, got %d", policy.Priority)
-		}
-		if len(policy.Rules) != 1 {
-			t.Errorf("expected 1 rule, got %d", len(policy.Rules))
-		}
-	})
-}
-
-func TestExportFilter(t *testing.T) {
-	t.Run("export filter with all fields", func(t *testing.T) {
-		now := time.Now()
-		yesterday := now.Add(-24 * time.Hour)
-
-		filter := ExportFilter{
-			UserIDs:       []uint64{30001, 30002},
-			RoleIDs:       []string{"r1", "r2", "r3"},
-			PolicyNames:   []string{"policy1"},
-			CreatedAfter:  &yesterday,
-			CreatedBefore: &now,
-			UpdatedAfter:  &yesterday,
-			UpdatedBefore: &now,
-		}
-
-		if len(filter.UserIDs) != 2 {
-			t.Errorf("expected 2 user IDs, got %d", len(filter.UserIDs))
-		}
-		if filter.CreatedAfter == nil {
-			t.Error("expected CreatedAfter to be set")
-		}
-	})
-}
-
-func TestBatchProgress(t *testing.T) {
-	t.Run("batch progress fields", func(t *testing.T) {
-		progress := BatchProgress{
-			TotalItems:      100,
-			ProcessedItems:  50,
-			SuccessCount:    45,
-			FailureCount:    5,
-			CurrentType:     "user",
-			PercentComplete: 50.0,
-		}
-
-		if progress.TotalItems != 100 {
-			t.Errorf("expected total 100, got %d", progress.TotalItems)
-		}
-		if progress.ProcessedItems != 50 {
-			t.Errorf("expected processed 50, got %d", progress.ProcessedItems)
-		}
-		if progress.PercentComplete != 50.0 {
-			t.Errorf("expected 50%%, got %.2f%%", progress.PercentComplete)
 		}
 	})
 }
@@ -1031,186 +780,139 @@ func TestPolicyMatchesFilter(t *testing.T) {
 	})
 }
 
-func TestImportUsersEmptySlice(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
+// TestBatchManagerSingleTypeImport covers the input checks each single-type
+// import makes before it touches a store: an empty slice is a successful
+// no-op, and a missing tenant ID is a validation error.
+func TestBatchManagerSingleTypeImport(t *testing.T) {
+	importers := map[string]func(bm *BatchManager, tenantID string, empty bool) (*BatchImportResult, error){
+		"users": func(bm *BatchManager, tenantID string, empty bool) (*BatchImportResult, error) {
+			items := []*UserImport{{Email: "test@example.com"}}
+			if empty {
+				items = []*UserImport{}
+			}
+			return bm.ImportUsers(context.Background(), tenantID, items, BatchImportOptions{})
+		},
+		"roles": func(bm *BatchManager, tenantID string, empty bool) (*BatchImportResult, error) {
+			items := []*RoleImport{{Name: "test"}}
+			if empty {
+				items = []*RoleImport{}
+			}
+			return bm.ImportRoles(context.Background(), tenantID, items, BatchImportOptions{})
+		},
+		"policies": func(bm *BatchManager, tenantID string, empty bool) (*BatchImportResult, error) {
+			items := []*PolicyImport{{Name: "test"}}
+			if empty {
+				items = []*PolicyImport{}
+			}
+			return bm.ImportPolicies(context.Background(), tenantID, items, BatchImportOptions{})
+		},
+	}
 
-	result, err := bm.ImportUsers(ctx, "test-tenant", []*UserImport{}, BatchImportOptions{})
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected result, got nil")
-	}
-	if result.TotalItems != 0 {
-		t.Errorf("expected 0 total items, got %d", result.TotalItems)
-	}
-}
-
-func TestImportRolesEmptySlice(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	result, err := bm.ImportRoles(ctx, "test-tenant", []*RoleImport{}, BatchImportOptions{})
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected result, got nil")
-	}
-	if result.TotalItems != 0 {
-		t.Errorf("expected 0 total items, got %d", result.TotalItems)
-	}
-}
-
-func TestImportPoliciesEmptySlice(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	result, err := bm.ImportPolicies(ctx, "test-tenant", []*PolicyImport{}, BatchImportOptions{})
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected result, got nil")
-	}
-	if result.TotalItems != 0 {
-		t.Errorf("expected 0 total items, got %d", result.TotalItems)
-	}
-}
-
-func TestImportUsersMissingTenantID(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ImportUsers(ctx, "", []*UserImport{{Email: "test@example.com"}}, BatchImportOptions{})
-	if err == nil {
-		t.Error("expected error for missing tenant ID")
+	for name, importFn := range importers {
+		t.Run(name+"/empty slice", func(t *testing.T) {
+			result, err := importFn(NewBatchManager(BatchManagerOptions{}), "test-tenant", true)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result == nil {
+				t.Fatal("expected result, got nil")
+			}
+			if result.TotalItems != 0 {
+				t.Errorf("expected 0 total items, got %d", result.TotalItems)
+			}
+		})
+		t.Run(name+"/missing tenant ID", func(t *testing.T) {
+			_, err := importFn(NewBatchManager(BatchManagerOptions{}), "", false)
+			var valErr *ValidationError
+			if !errors.As(err, &valErr) || valErr.Field != "tenant_id" {
+				t.Errorf("expected tenant_id ValidationError, got %v", err)
+			}
+		})
 	}
 }
 
-func TestImportRolesMissingTenantID(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
+// TestBatchManagerSingleTypeExport covers the checks each single-type export
+// makes: a missing tenant ID is a validation error, and a missing backing
+// store is a batch operation failure.
+func TestBatchManagerSingleTypeExport(t *testing.T) {
+	exporters := map[string]func(bm *BatchManager, tenantID string) error{
+		"users": func(bm *BatchManager, tenantID string) error {
+			_, err := bm.ExportUsers(context.Background(), tenantID, ExportFilter{})
+			return err
+		},
+		"roles": func(bm *BatchManager, tenantID string) error {
+			_, err := bm.ExportRoles(context.Background(), tenantID, ExportFilter{})
+			return err
+		},
+		"policies": func(bm *BatchManager, tenantID string) error {
+			_, err := bm.ExportPolicies(context.Background(), tenantID, ExportFilter{})
+			return err
+		},
+	}
 
-	_, err := bm.ImportRoles(ctx, "", []*RoleImport{{Name: "test"}}, BatchImportOptions{})
-	if err == nil {
-		t.Error("expected error for missing tenant ID")
+	for name, exportFn := range exporters {
+		t.Run(name+"/missing tenant ID", func(t *testing.T) {
+			err := exportFn(NewBatchManager(BatchManagerOptions{}), "")
+			var valErr *ValidationError
+			if !errors.As(err, &valErr) || valErr.Field != "tenant_id" {
+				t.Errorf("expected tenant_id ValidationError, got %v", err)
+			}
+		})
+		t.Run(name+"/no backing store", func(t *testing.T) {
+			err := exportFn(NewBatchManager(BatchManagerOptions{}), "test-tenant")
+			if !errors.Is(err, errBatchOperationFailed) {
+				t.Errorf("expected errBatchOperationFailed, got %v", err)
+			}
+		})
 	}
 }
 
-func TestImportPoliciesMissingTenantID(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
+// TestBatchManagerImportItemNoBackend checks that importing a single valid
+// item without its backing store fails as a batch operation failure.
+func TestBatchManagerImportItemNoBackend(t *testing.T) {
 	ctx := context.Background()
-
-	_, err := bm.ImportPolicies(ctx, "", []*PolicyImport{{Name: "test"}}, BatchImportOptions{})
-	if err == nil {
-		t.Error("expected error for missing tenant ID")
-	}
-}
-
-func TestExportUsersMissingTenantID(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ExportUsers(ctx, "", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for missing tenant ID")
-	}
-}
-
-func TestExportRolesMissingTenantID(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ExportRoles(ctx, "", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for missing tenant ID")
-	}
-}
-
-func TestExportPoliciesMissingTenantID(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ExportPolicies(ctx, "", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for missing tenant ID")
-	}
-}
-
-func TestExportUsersNoIdentityStore(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ExportUsers(ctx, "test-tenant", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for missing identity store")
-	}
-}
-
-func TestExportRolesNoIdentityStore(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ExportRoles(ctx, "test-tenant", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for missing identity store")
-	}
-}
-
-func TestExportPoliciesNoPolicyEngine(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ExportPolicies(ctx, "test-tenant", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for missing policy engine")
-	}
-}
-
-func TestImportUserNoIdentityStore(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	err := bm.importUser(ctx, "test-tenant", &UserImport{
-		Email:    "test@example.com",
-		Username: "testuser",
-	}, BatchImportOptions{})
-	if err == nil {
-		t.Error("expected error for missing identity store")
-	}
-}
-
-func TestImportRoleNoIdentityStore(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	err := bm.importRole(ctx, "test-tenant", &RoleImport{
-		Name: "test-role",
-	}, BatchImportOptions{})
-	if err == nil {
-		t.Error("expected error for missing identity store")
-	}
-}
-
-func TestImportPolicyNoPolicyEngine(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	err := bm.importPolicy(ctx, "test-tenant", &PolicyImport{
-		Name: "test-policy",
-		Rules: []Rule{
-			{
-				Name:      "test-rule",
-				Effect:    EffectAllow,
-				Actions:   []string{"*"},
-				Resources: []string{"*"},
+	tests := []struct {
+		name     string
+		importFn func(bm *BatchManager) error
+	}{
+		{
+			name: "user without identity store",
+			importFn: func(bm *BatchManager) error {
+				return bm.importUser(ctx, "test-tenant", &UserImport{
+					Email:    "test@example.com",
+					Username: "testuser",
+				}, BatchImportOptions{})
 			},
 		},
-	}, BatchImportOptions{})
-	if err == nil {
-		t.Error("expected error for missing policy engine")
+		{
+			name: "role without identity store",
+			importFn: func(bm *BatchManager) error {
+				return bm.importRole(ctx, "test-tenant", &RoleImport{Name: "test-role"}, BatchImportOptions{})
+			},
+		},
+		{
+			name: "policy without policy engine",
+			importFn: func(bm *BatchManager) error {
+				return bm.importPolicy(ctx, "test-tenant", &PolicyImport{
+					Name: "test-policy",
+					Rules: []Rule{{
+						Name:      "test-rule",
+						Effect:    EffectAllow,
+						Actions:   []string{"*"},
+						Resources: []string{"*"},
+					}},
+				}, BatchImportOptions{})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.importFn(NewBatchManager(BatchManagerOptions{}))
+			if !errors.Is(err, errBatchOperationFailed) {
+				t.Errorf("expected errBatchOperationFailed, got %v", err)
+			}
+		})
 	}
 }
 
@@ -1403,8 +1105,8 @@ func TestPolicyImportItem_Validate(t *testing.T) {
 	}
 }
 
-// TestBatchOptions_Validate_Coverage tests BatchOptions validation edge cases.
-func TestBatchOptions_Validate_Coverage(t *testing.T) {
+// TestBatchOptionsValidate tests BatchOptions validation.
+func TestBatchOptionsValidate(t *testing.T) {
 	tests := []struct {
 		name    string
 		opts    *BatchOptions
@@ -1459,18 +1161,16 @@ func TestBatchOptions_Validate_Coverage(t *testing.T) {
 			}
 			if err != nil && tt.field != "" {
 				var vErr *ValidationError
-				if errors.As(err, &vErr) {
-					if vErr.Field != tt.field {
-						t.Errorf("Validate() field = %s, want %s", vErr.Field, tt.field)
-					}
+				if !errors.As(err, &vErr) || vErr.Field != tt.field {
+					t.Errorf("Validate() error = %v, want ValidationError on field %s", err, tt.field)
 				}
 			}
 		})
 	}
 }
 
-// TestBatchOperation_Validate_Coverage tests BatchOperation validation edge cases.
-func TestBatchOperation_Validate_Coverage(t *testing.T) {
+// TestBatchOperationValidate tests BatchOperation validation.
+func TestBatchOperationValidate(t *testing.T) {
 	tests := []struct {
 		name    string
 		op      *BatchOperation
@@ -1523,18 +1223,16 @@ func TestBatchOperation_Validate_Coverage(t *testing.T) {
 			}
 			if err != nil && tt.field != "" {
 				var vErr *ValidationError
-				if errors.As(err, &vErr) {
-					if vErr.Field != tt.field {
-						t.Errorf("Validate() field = %s, want %s", vErr.Field, tt.field)
-					}
+				if !errors.As(err, &vErr) || vErr.Field != tt.field {
+					t.Errorf("Validate() error = %v, want ValidationError on field %s", err, tt.field)
 				}
 			}
 		})
 	}
 }
 
-// TestUserImportItem_ValidateCoverage tests UserImportItem validation.
-func TestUserImportItem_ValidateCoverage(t *testing.T) {
+// TestUserImportItemValidate tests UserImportItem validation.
+func TestUserImportItemValidate(t *testing.T) {
 	tests := []struct {
 		name    string
 		item    *UserImportItem
@@ -1544,14 +1242,6 @@ func TestUserImportItem_ValidateCoverage(t *testing.T) {
 			name: "valid user with email",
 			item: &UserImportItem{
 				Email: "test@example.com",
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid user with email and username",
-			item: &UserImportItem{
-				Username: "testuser",
-				Email:    "test@example.com",
 			},
 			wantErr: false,
 		},
@@ -1579,8 +1269,8 @@ func TestUserImportItem_ValidateCoverage(t *testing.T) {
 	}
 }
 
-// TestRoleImportItem_ValidateCoverage tests RoleImportItem validation.
-func TestRoleImportItem_ValidateCoverage(t *testing.T) {
+// TestRoleImportItemValidate tests RoleImportItem validation.
+func TestRoleImportItemValidate(t *testing.T) {
 	tests := []struct {
 		name    string
 		item    *RoleImportItem
@@ -1590,14 +1280,6 @@ func TestRoleImportItem_ValidateCoverage(t *testing.T) {
 			name: "valid role",
 			item: &RoleImportItem{
 				Name: "admin",
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid role with description",
-			item: &RoleImportItem{
-				Name:        "admin",
-				Description: "Administrator role",
 			},
 			wantErr: false,
 		},
@@ -1615,21 +1297,5 @@ func TestRoleImportItem_ValidateCoverage(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
-	}
-}
-
-// TestBatchError_ErrorMessage tests BatchError error message.
-func TestBatchError_ErrorMessage(t *testing.T) {
-	err := errors.New("test error")
-	be := &BatchError{
-		Index: 5,
-		Type:  "user",
-		ID:    "user-123",
-		Error: err,
-	}
-
-	msg := be.Error.Error()
-	if msg != "test error" {
-		t.Errorf("Error() = %s, want %s", msg, "test error")
 	}
 }

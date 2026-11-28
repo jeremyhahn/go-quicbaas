@@ -31,215 +31,131 @@ import (
 )
 
 // =============================================================================
-// Time Series WritePoint Tests - Storage not configured
+// Time Series request validation
 // =============================================================================
 
-func TestTimeSeriesService_WritePoint_NoStorage(t *testing.T) {
+// TestTimeSeriesService_StorageNotConfigured checks that every time-series
+// method of the service facade returns ErrNotImplemented when no time-series
+// storage is configured.
+func TestTimeSeriesService_StorageNotConfigured(t *testing.T) {
 	svc := createTestService(t)
 	defer svc.Close()
+	ctx := tenantctx.WithSystem(context.Background())
 
-	resp, err := svc.WritePoint(tenantctx.WithSystem(context.Background()), &WritePointRequest{
-		Metric: "cpu.usage",
-		Value:  42.0,
-		Tags:   map[string]string{"host": "server1"},
-	})
+	tests := []struct {
+		name string
+		call func() (any, error)
+	}{
+		{"WritePoint", func() (any, error) {
+			return svc.WritePoint(ctx, &WritePointRequest{Metric: "cpu.usage", Value: 42.0, Tags: map[string]string{"host": "server1"}})
+		}},
+		{"WriteBatch", func() (any, error) {
+			return svc.WriteBatch(ctx, &WriteBatchRequest{Points: []*WritePointRequest{{Metric: "cpu.usage", Value: 42.0}}})
+		}},
+		{"TSQuery", func() (any, error) {
+			return svc.TSQuery(ctx, &TSQueryRequest{Metric: "cpu.usage", StartTime: time.Now().Add(-1 * time.Hour), EndTime: time.Now()})
+		}},
+		{"DeleteSeries", func() (any, error) {
+			return svc.DeleteSeries(ctx, &TSDeleteRequest{Metric: "cpu.usage"})
+		}},
+		{"GetRetentionPolicy", func() (any, error) {
+			return svc.GetRetentionPolicy(ctx, &TSGetRetentionPolicyRequest{Metric: "cpu.usage"})
+		}},
+		{"SetRetentionPolicy", func() (any, error) {
+			return svc.SetRetentionPolicy(ctx, &TSSetRetentionPolicyRequest{Metric: "cpu.usage", Policy: &TSRetentionPolicy{Duration: 30 * 24 * time.Hour}})
+		}},
+		{"ListMetrics", func() (any, error) {
+			return svc.ListMetrics(ctx, &TSListMetricsRequest{})
+		}},
+	}
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := tt.call()
+			require.Error(t, err)
+			assert.Nil(t, resp)
 
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
+			var dErr *dberrors.QBError
+			require.True(t, dberrors.As(err, &dErr))
+			assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
+		})
+	}
 }
 
-func TestTimeSeriesService_WritePoint_NilRequest(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
+// TestTimeSeriesService_InvalidRequest checks that each time-series method
+// rejects a nil or incomplete request with ErrInvalidInput before it reaches
+// the storage.
+func TestTimeSeriesService_InvalidRequest(t *testing.T) {
+	ctx := tenantctx.WithSystem(context.Background())
 
-	// Storage not configured returns not-implemented before checking request
-	resp, err := svc.WritePoint(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
+	tests := []struct {
+		name    string
+		call    func(ts *timeSeriesService) (any, error)
+		wantMsg string
+	}{
+		{"WritePoint nil request", func(ts *timeSeriesService) (any, error) {
+			return ts.WritePoint(ctx, nil)
+		}, ""},
+		{"WritePoint empty metric", func(ts *timeSeriesService) (any, error) {
+			return ts.WritePoint(ctx, &WritePointRequest{Value: 42.0})
+		}, ""},
+		{"WriteBatch nil request", func(ts *timeSeriesService) (any, error) {
+			return ts.WriteBatch(ctx, nil)
+		}, ""},
+		{"TSQuery nil request", func(ts *timeSeriesService) (any, error) {
+			return ts.TSQuery(ctx, nil)
+		}, "request cannot be nil"},
+		{"TSQuery empty metric", func(ts *timeSeriesService) (any, error) {
+			return ts.TSQuery(ctx, &TSQueryRequest{})
+		}, "metric is required"},
+		{"TSQuery zero start time", func(ts *timeSeriesService) (any, error) {
+			return ts.TSQuery(ctx, &TSQueryRequest{Metric: "test.metric"})
+		}, "start_time is required"},
+		{"TSQuery zero end time", func(ts *timeSeriesService) (any, error) {
+			return ts.TSQuery(ctx, &TSQueryRequest{Metric: "test.metric", StartTime: time.Now().Add(-1 * time.Hour)})
+		}, "end_time is required"},
+		{"DeleteSeries nil request", func(ts *timeSeriesService) (any, error) {
+			return ts.DeleteSeries(ctx, nil)
+		}, ""},
+		{"DeleteSeries empty metric", func(ts *timeSeriesService) (any, error) {
+			return ts.DeleteSeries(ctx, &TSDeleteRequest{})
+		}, ""},
+		{"GetRetentionPolicy nil request", func(ts *timeSeriesService) (any, error) {
+			return ts.GetRetentionPolicy(ctx, nil)
+		}, ""},
+		{"GetRetentionPolicy empty metric", func(ts *timeSeriesService) (any, error) {
+			return ts.GetRetentionPolicy(ctx, &TSGetRetentionPolicyRequest{})
+		}, ""},
+		{"SetRetentionPolicy nil request", func(ts *timeSeriesService) (any, error) {
+			return ts.SetRetentionPolicy(ctx, nil)
+		}, ""},
+		{"SetRetentionPolicy empty metric", func(ts *timeSeriesService) (any, error) {
+			return ts.SetRetentionPolicy(ctx, &TSSetRetentionPolicyRequest{Policy: &TSRetentionPolicy{Duration: 7 * 24 * time.Hour}})
+		}, ""},
+		{"SetRetentionPolicy nil policy", func(ts *timeSeriesService) (any, error) {
+			return ts.SetRetentionPolicy(ctx, &TSSetRetentionPolicyRequest{Metric: "cpu.usage"})
+		}, ""},
+	}
 
-// =============================================================================
-// Time Series WriteBatch Tests - Storage not configured
-// =============================================================================
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := &timeSeriesService{
+				svc:       &quicBaaS{logger: createTestLogger(t)},
+				tsStorage: newTestMockTimeSeriesStorage(),
+			}
 
-func TestTimeSeriesService_WriteBatch_NoStorage(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
+			resp, err := tt.call(ts)
+			require.Error(t, err)
+			assert.Nil(t, resp)
 
-	resp, err := svc.WriteBatch(tenantctx.WithSystem(context.Background()), &WriteBatchRequest{
-		Points: []*WritePointRequest{
-			{Metric: "cpu.usage", Value: 42.0},
-		},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_WriteBatch_NilRequest(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	resp, err := svc.WriteBatch(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// Time Series TSQuery Tests - Storage not configured
-// =============================================================================
-
-func TestTimeSeriesService_TSQuery_NoStorage(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	resp, err := svc.TSQuery(tenantctx.WithSystem(context.Background()), &TSQueryRequest{
-		Metric:    "cpu.usage",
-		StartTime: time.Now().Add(-1 * time.Hour),
-		EndTime:   time.Now(),
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_TSQuery_NilRequest(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	resp, err := svc.TSQuery(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// Time Series DeleteSeries Tests - Storage not configured
-// =============================================================================
-
-func TestTimeSeriesService_DeleteSeries_NoStorage(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	resp, err := svc.DeleteSeries(tenantctx.WithSystem(context.Background()), &TSDeleteRequest{
-		Metric: "cpu.usage",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_DeleteSeries_NilRequest(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	resp, err := svc.DeleteSeries(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// Time Series GetRetentionPolicy Tests - Storage not configured
-// =============================================================================
-
-func TestTimeSeriesService_GetRetentionPolicy_NoStorage(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	resp, err := svc.GetRetentionPolicy(tenantctx.WithSystem(context.Background()), &TSGetRetentionPolicyRequest{
-		Metric: "cpu.usage",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_GetRetentionPolicy_NilRequest(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	resp, err := svc.GetRetentionPolicy(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// Time Series SetRetentionPolicy Tests - Storage not configured
-// =============================================================================
-
-func TestTimeSeriesService_SetRetentionPolicy_NoStorage(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	resp, err := svc.SetRetentionPolicy(tenantctx.WithSystem(context.Background()), &TSSetRetentionPolicyRequest{
-		Metric: "cpu.usage",
-		Policy: &TSRetentionPolicy{
-			Duration: 30 * 24 * time.Hour,
-		},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_SetRetentionPolicy_NilRequest(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	resp, err := svc.SetRetentionPolicy(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// Time Series ListMetrics Tests - Storage not configured
-// =============================================================================
-
-func TestTimeSeriesService_ListMetrics_NoStorage(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	resp, err := svc.ListMetrics(tenantctx.WithSystem(context.Background()), &TSListMetricsRequest{})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_ListMetrics_NilRequest(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	// ListMetrics handles nil request by creating a default
-	resp, err := svc.ListMetrics(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
+			var dErr *dberrors.QBError
+			require.True(t, dberrors.As(err, &dErr))
+			assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
+			if tt.wantMsg != "" {
+				assert.Contains(t, err.Error(), tt.wantMsg)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -295,17 +211,6 @@ func TestQuicBaaS_Close_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestTimeSeriesServiceImpl_Aggregate_ValidationError(t *testing.T) {
-	svc := &quicBaaS{}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), &AggregateRequest{})
-
-	require.Error(t, err)
-	// Just check it's an error about validation
-	assert.NotNil(t, err)
-}
-
 func TestTimeSeriesServiceImpl_TimeSeriesQuery_ValidationError(t *testing.T) {
 	svc := &quicBaaS{}
 	tsSvc := &timeSeriesService{svc: svc}
@@ -315,8 +220,10 @@ func TestTimeSeriesServiceImpl_TimeSeriesQuery_ValidationError(t *testing.T) {
 	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), &TimeSeriesQueryRequest{}, stream)
 
 	require.Error(t, err)
-	// Just check it's an error about validation
-	assert.NotNil(t, err)
+	var dErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &dErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
+	assert.Contains(t, err.Error(), "entity_type is required")
 }
 
 // Time-Series Service Tests - Aggregate validation (6.7% -> 15%).
@@ -359,112 +266,27 @@ func TestTimeSeriesServiceImpl_Aggregate_Success(t *testing.T) {
 	assert.NotNil(t, resp)
 }
 
-func TestTimeSeriesServiceImpl_Aggregate_InvalidInput(t *testing.T) {
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		logger: testLoggerCoverage(t),
-	}
-
-	tsSvc := &timeSeriesService{svc: svc}
+func TestTimeSeriesService_Aggregate_InvalidInput(t *testing.T) {
+	svc := createTestService(t, withMockRaftNode(&mockRaftNode{}))
+	defer svc.Close()
 
 	tests := []struct {
-		name string
-		req  *AggregateRequest
+		name    string
+		req     *AggregateRequest
+		wantMsg string
 	}{
-		{
-			name: "missing entity type",
-			req:  &AggregateRequest{},
-		},
-		{
-			name: "missing field name",
-			req: &AggregateRequest{
-				EntityType: "sensors",
-			},
-		},
+		{"missing entity type", &AggregateRequest{StartTime: 1, EndTime: 2}, "entity_type is required"},
+		{"zero start time", &AggregateRequest{EntityType: "metrics", EndTime: 100}, "start_time must be greater than 0"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), tt.req)
-			assert.Error(t, err)
+			resp, err := svc.Aggregate(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+			require.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantMsg)
 		})
 	}
-}
-
-func TestTimeSeriesService_Aggregate_EmptyEntityType(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &AggregateRequest{
-		EntityType: "",
-		StartTime:  1,
-		EndTime:    2,
-	}
-
-	resp, err := svc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "entity_type is required")
-}
-
-func TestTimeSeriesService_Aggregate_InvalidStartTime(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  0,
-		EndTime:    100,
-	}
-
-	resp, err := svc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "start_time must be greater than 0")
-}
-
-func TestTimeSeriesService_TSQuery_MissingStartTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	req := &TSQueryRequest{
-		Metric:  "cpu.usage",
-		EndTime: time.Now(),
-	}
-
-	resp, err := tsSvc.TSQuery(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
-	mockTS.AssertNotCalled(t, "QueryRich")
-}
-
-func TestTimeSeriesService_TSQuery_MissingEndTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	req := &TSQueryRequest{
-		Metric:    "cpu.usage",
-		StartTime: time.Now().Add(-time.Hour),
-	}
-
-	resp, err := tsSvc.TSQuery(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
-	mockTS.AssertNotCalled(t, "QueryRich")
 }
 
 func TestTimeSeriesService_TSQuery_WithAggregation(t *testing.T) {
@@ -602,158 +424,46 @@ func TestTimeSeriesService_TSQuery_WithAllQueryParams(t *testing.T) {
 	mockTS.AssertExpectations(t)
 }
 
-func TestTimeSeriesService_TSQuery_NilStorage(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: nil}
-
-	now := time.Now()
-	req := &TSQueryRequest{
-		Metric:    "cpu.usage",
-		StartTime: now.Add(-time.Hour),
-		EndTime:   now,
-	}
-
-	resp, err := tsSvc.TSQuery(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_DeleteSeries_WithTimeRange(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
+// TestTimeSeriesService_DeleteSeries_TimeRange checks that each bound of the
+// delete time range reaches the storage only when the request sets it.
+func TestTimeSeriesService_DeleteSeries_TimeRange(t *testing.T) {
 	startTime := time.Now().Add(-24 * time.Hour)
 	endTime := time.Now()
 
-	mockTS.On("DeleteSeries", mock.Anything, mock.MatchedBy(func(dr *interfaces.DeleteRequest) bool {
-		return dr.Metric == "old.metric" &&
-			!dr.StartTime.IsZero() &&
-			!dr.EndTime.IsZero()
-	})).Return(nil).Once()
-
-	req := &TSDeleteRequest{
-		Metric:    "old.metric",
-		Tags:      map[string]string{"region": "us-east"},
-		StartTime: &startTime,
-		EndTime:   &endTime,
+	tests := []struct {
+		name      string
+		req       *TSDeleteRequest
+		wantStart bool
+		wantEnd   bool
+	}{
+		{"start and end", &TSDeleteRequest{
+			Metric:    "old.metric",
+			Tags:      map[string]string{"region": "us-east"},
+			StartTime: &startTime,
+			EndTime:   &endTime,
+		}, true, true},
+		{"start only", &TSDeleteRequest{Metric: "stale.metric", StartTime: &startTime}, true, false},
+		{"end only", &TSDeleteRequest{Metric: "archived.metric", EndTime: &endTime}, false, true},
 	}
 
-	resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Success)
-	mockTS.AssertExpectations(t)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockTS := newTestMockTimeSeriesStorage()
+			tsSvc := &timeSeriesService{svc: &quicBaaS{logger: createTestLogger(t)}, tsStorage: mockTS}
 
-func TestTimeSeriesService_DeleteSeries_StorageNotConfigured(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: nil}
+			mockTS.On("DeleteSeries", mock.Anything, mock.MatchedBy(func(dr *interfaces.DeleteRequest) bool {
+				return dr.Metric == tt.req.Metric &&
+					dr.StartTime.IsZero() != tt.wantStart &&
+					dr.EndTime.IsZero() != tt.wantEnd
+			})).Return(nil).Once()
 
-	req := &TSDeleteRequest{
-		Metric: "cpu.usage",
+			resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), tt.req)
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			assert.True(t, resp.Success)
+			mockTS.AssertExpectations(t)
+		})
 	}
-
-	resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_DeleteSeries_NilReq(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
-}
-
-func TestTimeSeriesService_DeleteSeries_EmptyMetricName(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	req := &TSDeleteRequest{
-		Metric: "",
-	}
-
-	resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
-}
-
-func TestTimeSeriesService_DeleteSeries_OnlyStartTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	startTime := time.Now().Add(-48 * time.Hour)
-
-	mockTS.On("DeleteSeries", mock.Anything, mock.MatchedBy(func(dr *interfaces.DeleteRequest) bool {
-		return dr.Metric == "stale.metric" &&
-			!dr.StartTime.IsZero() &&
-			dr.EndTime.IsZero()
-	})).Return(nil).Once()
-
-	req := &TSDeleteRequest{
-		Metric:    "stale.metric",
-		StartTime: &startTime,
-	}
-
-	resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Success)
-	mockTS.AssertExpectations(t)
-}
-
-func TestTimeSeriesService_DeleteSeries_OnlyEndTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	endTime := time.Now()
-
-	mockTS.On("DeleteSeries", mock.Anything, mock.MatchedBy(func(dr *interfaces.DeleteRequest) bool {
-		return dr.Metric == "archived.metric" &&
-			dr.StartTime.IsZero() &&
-			!dr.EndTime.IsZero()
-	})).Return(nil).Once()
-
-	req := &TSDeleteRequest{
-		Metric:  "archived.metric",
-		EndTime: &endTime,
-	}
-
-	resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Success)
-	mockTS.AssertExpectations(t)
 }
 
 func TestTimeSeriesService_WriteBatch_ZeroTimestampDefaultsToNow(t *testing.T) {
@@ -786,167 +496,6 @@ func TestTimeSeriesService_WriteBatch_ZeroTimestampDefaultsToNow(t *testing.T) {
 	assert.True(t, resp.Success)
 	assert.Equal(t, 1, resp.PointsWritten)
 	mockTS.AssertExpectations(t)
-}
-
-func TestTimeSeriesService_WritePoint_StorageNotConfigured(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: nil}
-
-	req := &WritePointRequest{
-		Metric: "cpu.usage",
-		Value:  42.0,
-	}
-
-	resp, err := tsSvc.WritePoint(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_WriteBatch_StorageNotConfigured(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: nil}
-
-	req := &WriteBatchRequest{
-		Points: []*WritePointRequest{
-			{Metric: "cpu.usage", Value: 42.0},
-		},
-	}
-
-	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_SetRetentionPolicy_StorageNotConfigured(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: nil}
-
-	req := &TSSetRetentionPolicyRequest{
-		Metric: "cpu.usage",
-		Policy: &TSRetentionPolicy{Duration: 7 * 24 * time.Hour},
-	}
-
-	resp, err := tsSvc.SetRetentionPolicy(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_SetRetentionPolicy_NilReq(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	resp, err := tsSvc.SetRetentionPolicy(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
-}
-
-func TestTimeSeriesService_SetRetentionPolicy_EmptyMetricName(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	req := &TSSetRetentionPolicyRequest{
-		Metric: "",
-		Policy: &TSRetentionPolicy{Duration: 7 * 24 * time.Hour},
-	}
-
-	resp, err := tsSvc.SetRetentionPolicy(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
-}
-
-func TestTimeSeriesService_SetRetentionPolicy_NilPolicyField(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	req := &TSSetRetentionPolicyRequest{
-		Metric: "cpu.usage",
-		Policy: nil,
-	}
-
-	resp, err := tsSvc.SetRetentionPolicy(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
-}
-
-func TestTimeSeriesService_GetRetentionPolicy_StorageNotConfigured(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: nil}
-
-	req := &TSGetRetentionPolicyRequest{Metric: "cpu.usage"}
-
-	resp, err := tsSvc.GetRetentionPolicy(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_GetRetentionPolicy_NilReq(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	resp, err := tsSvc.GetRetentionPolicy(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
-}
-
-func TestTimeSeriesService_GetRetentionPolicy_EmptyMetricName(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	req := &TSGetRetentionPolicyRequest{Metric: ""}
-
-	resp, err := tsSvc.GetRetentionPolicy(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
 
 func TestTimeSeriesService_GetRetentionPolicy_NilPolicyReturned(t *testing.T) {
@@ -994,216 +543,4 @@ func TestTimeSeriesService_SetRetentionPolicy_WithAggregation(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.True(t, resp.Success)
 	mockTS.AssertExpectations(t)
-}
-
-func TestTimeSeriesServiceImpl_TSQuery_NilRequest(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	_, err := svc.TSQuery(tenantctx.WithSystem(context.Background()), nil)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-	assert.Contains(t, qbErr.Error(), "request cannot be nil")
-}
-
-func TestTimeSeriesServiceImpl_TSQuery_EmptyMetric(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	req := &TSQueryRequest{
-		Metric: "", // Empty metric should trigger validation error
-	}
-
-	_, err := svc.TSQuery(tenantctx.WithSystem(context.Background()), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-	assert.Contains(t, qbErr.Error(), "metric is required")
-}
-
-func TestTimeSeriesServiceImpl_TSQuery_ZeroStartTime(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	req := &TSQueryRequest{
-		Metric:    "test.metric",
-		StartTime: time.Time{}, // Zero start time should trigger validation error
-	}
-
-	_, err := svc.TSQuery(tenantctx.WithSystem(context.Background()), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-	assert.Contains(t, qbErr.Error(), "start_time is required")
-}
-
-func TestTimeSeriesServiceImpl_TSQuery_ZeroEndTime(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	req := &TSQueryRequest{
-		Metric:    "test.metric",
-		StartTime: time.Now().Add(-1 * time.Hour),
-		EndTime:   time.Time{}, // Zero end time should trigger validation error
-	}
-
-	_, err := svc.TSQuery(tenantctx.WithSystem(context.Background()), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-	assert.Contains(t, qbErr.Error(), "end_time is required")
-}
-
-func TestTimeSeriesServiceImpl_WritePoint_NilRequest(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	_, err := svc.WritePoint(tenantctx.WithSystem(context.Background()), nil)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesServiceImpl_WritePoint_EmptyMetric(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	req := &WritePointRequest{
-		Metric: "",
-		Value:  42.0,
-	}
-
-	_, err := svc.WritePoint(tenantctx.WithSystem(context.Background()), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesServiceImpl_WriteBatch_NilRequest(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	_, err := svc.WriteBatch(tenantctx.WithSystem(context.Background()), nil)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesServiceImpl_GetRetentionPolicy_NilRequest(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	_, err := svc.GetRetentionPolicy(tenantctx.WithSystem(context.Background()), nil)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesServiceImpl_GetRetentionPolicy_EmptyMetric(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	req := &TSGetRetentionPolicyRequest{
-		Metric: "",
-	}
-
-	_, err := svc.GetRetentionPolicy(tenantctx.WithSystem(context.Background()), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesServiceImpl_SetRetentionPolicy_NilRequest(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	_, err := svc.SetRetentionPolicy(tenantctx.WithSystem(context.Background()), nil)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesServiceImpl_SetRetentionPolicy_EmptyMetric(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	req := &TSSetRetentionPolicyRequest{
-		Metric: "",
-		Policy: &TSRetentionPolicy{
-			Duration: 24 * time.Hour,
-		},
-	}
-
-	_, err := svc.SetRetentionPolicy(tenantctx.WithSystem(context.Background()), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesServiceImpl_SetRetentionPolicy_NilPolicy(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	req := &TSSetRetentionPolicyRequest{
-		Metric: "test.metric",
-		Policy: nil,
-	}
-
-	_, err := svc.SetRetentionPolicy(tenantctx.WithSystem(context.Background()), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesServiceImpl_DeleteSeries_NilRequest(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	_, err := svc.DeleteSeries(tenantctx.WithSystem(context.Background()), nil)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesServiceImpl_DeleteSeries_EmptyMetric(t *testing.T) {
-	svc := &timeSeriesService{
-		tsStorage: newTestMockTimeSeriesStorage(),
-	}
-
-	req := &TSDeleteRequest{
-		Metric: "",
-	}
-
-	_, err := svc.DeleteSeries(tenantctx.WithSystem(context.Background()), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }

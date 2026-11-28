@@ -949,9 +949,11 @@ func contains(slice []uint64, val uint64) bool {
 
 // IsStandaloneMode probes the cluster to determine if it is running in
 // standalone/embedded mode (no real Raft consensus). It queries each node's
-// cluster status and checks whether any node reports a leader. If no leader is
-// found across all nodes or the cluster status API returns errors, the cluster
-// is considered to be in standalone mode.
+// cluster status and checks whether any node reports a leader. If at least one
+// node answers and no answering node reports a leader, the cluster is
+// considered to be in standalone mode. A node that cannot be reached or returns
+// a status error is skipped, but a run in which no node answers fails the test
+// (see standaloneVerdict).
 //
 // The probe acts as the tenant operator, whose Operator role holds
 // admin:status, the permission ClusterStatus requires. A node that refuses
@@ -964,11 +966,13 @@ func IsStandaloneMode(t *testing.T, endpoints []string) bool {
 
 	bearer := tenantOperatorAuth.mustBearer(t, GetRESTEndpoints()[0])
 
+	probes := make([]standaloneProbe, 0, len(endpoints))
 	for _, endpoint := range endpoints {
 		client, err := connectToNode(context.Background(), endpoint, 10*time.Second, 1, 500*time.Millisecond,
 			quicbaas.WithAuthToken(bearer))
 		if err != nil {
 			t.Logf("IsStandaloneMode: could not connect to %s: %v", endpoint, err)
+			probes = append(probes, standaloneProbe{endpoint: endpoint, err: fmt.Errorf("connect: %w", err)})
 			continue
 		}
 
@@ -982,23 +986,69 @@ func IsStandaloneMode(t *testing.T, endpoints []string) bool {
 		}
 		if err != nil {
 			t.Logf("IsStandaloneMode: cluster status error from %s: %v", endpoint, err)
+			probes = append(probes, standaloneProbe{endpoint: endpoint, err: fmt.Errorf("cluster status: %w", err)})
 			continue
 		}
 
+		hasLeader := false
 		// Check if any member reports as leader
 		for _, member := range status.Members {
 			if member.IsLeader {
-				return false
+				hasLeader = true
+				break
 			}
 		}
-
 		// Check the LeaderID field as a fallback
 		if status.LeaderID != "" && status.LeaderID != "0" {
+			hasLeader = true
+		}
+		if hasLeader {
+			// The verdict would give the same answer; stop probing.
 			return false
 		}
+		probes = append(probes, standaloneProbe{endpoint: endpoint})
 	}
 
-	return true
+	standalone, err := standaloneVerdict(probes)
+	if err != nil {
+		t.Fatalf("IsStandaloneMode: %v", err)
+	}
+	return standalone
+}
+
+// standaloneProbe is one node's answer to the cluster status probe.
+type standaloneProbe struct {
+	endpoint  string
+	err       error // connect or status error; nil when the node answered
+	hasLeader bool  // the answer named a leader (a member IsLeader, or LeaderID not "" and not "0")
+}
+
+// standaloneVerdict decides IsStandaloneMode's answer from the per-node probes.
+// Any answer naming a leader means the cluster runs consensus (false). If at
+// least one node answered and none named a leader, the cluster is standalone
+// (true). A node that did not answer says nothing about the cluster's mode, so
+// a run in which no node answered (or no node was probed) is an error: the
+// caller must fail rather than return early and skip its assertions.
+func standaloneVerdict(probes []standaloneProbe) (standalone bool, err error) {
+	if len(probes) == 0 {
+		return false, errors.New("no endpoints to probe")
+	}
+	answered := false
+	var errs []error
+	for _, p := range probes {
+		if p.err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", p.endpoint, p.err))
+			continue
+		}
+		if p.hasLeader {
+			return false, nil
+		}
+		answered = true
+	}
+	if !answered {
+		return false, fmt.Errorf("no node answered the cluster status probe: %w", errors.Join(errs...))
+	}
+	return true, nil
 }
 
 // IsStandaloneModeFromCluster probes an already-connected TestCluster to

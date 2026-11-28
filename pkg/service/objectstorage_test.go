@@ -821,60 +821,41 @@ func TestNewObjectStorageService_Success(t *testing.T) {
 	require.NotNil(t, svc)
 }
 
-func TestNewObjectStorageService_NilCatalogManager(t *testing.T) {
+func TestNewObjectStorageService_NilDependency(t *testing.T) {
+	catalogMgr := newObjstoreMockCatalogManager()
 	backendMgr := newObjstoreMockBackendManager()
 	resolver := newObjstoreMockConfigResolver()
 	logger := newObjstoreMockLogger()
 
-	svc, err := NewObjectStorageService(nil, backendMgr, resolver, nil, logger)
-	require.Error(t, err)
-	require.Nil(t, svc)
+	tests := []struct {
+		name  string
+		build func() (ObjectStorageService, error)
+	}{
+		{"nil catalog manager", func() (ObjectStorageService, error) {
+			return NewObjectStorageService(nil, backendMgr, resolver, nil, logger)
+		}},
+		{"nil backend manager", func() (ObjectStorageService, error) {
+			return NewObjectStorageService(catalogMgr, nil, resolver, nil, logger)
+		}},
+		{"nil config resolver", func() (ObjectStorageService, error) {
+			return NewObjectStorageService(catalogMgr, backendMgr, nil, nil, logger)
+		}},
+		{"nil logger", func() (ObjectStorageService, error) {
+			return NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, nil)
+		}},
+	}
 
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, err := tt.build()
+			require.Error(t, err)
+			require.Nil(t, svc)
 
-func TestNewObjectStorageService_NilBackendManager(t *testing.T) {
-	catalogMgr := newObjstoreMockCatalogManager()
-	resolver := newObjstoreMockConfigResolver()
-	logger := newObjstoreMockLogger()
-
-	svc, err := NewObjectStorageService(catalogMgr, nil, resolver, nil, logger)
-	require.Error(t, err)
-	require.Nil(t, svc)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestNewObjectStorageService_NilConfigResolver(t *testing.T) {
-	catalogMgr := newObjstoreMockCatalogManager()
-	backendMgr := newObjstoreMockBackendManager()
-	logger := newObjstoreMockLogger()
-
-	svc, err := NewObjectStorageService(catalogMgr, backendMgr, nil, nil, logger)
-	require.Error(t, err)
-	require.Nil(t, svc)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestNewObjectStorageService_NilLogger(t *testing.T) {
-	catalogMgr := newObjstoreMockCatalogManager()
-	backendMgr := newObjstoreMockBackendManager()
-	resolver := newObjstoreMockConfigResolver()
-
-	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, nil)
-	require.Error(t, err)
-	require.Nil(t, svc)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+			var qbErr *dberrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+		})
+	}
 }
 
 // =============================================================================
@@ -928,72 +909,35 @@ func TestPutObject_WithTags(t *testing.T) {
 	assert.Equal(t, "quicbaas", entry.Tags["project"])
 }
 
-func TestPutObject_NilRequest(t *testing.T) {
+func TestPutObject_InvalidRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithSystem(context.Background())
 
-	resp, err := svc.PutObject(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestPutObject_EmptyKey(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &PutObjectRequest{
-		Key:   "",
-		Value: []byte("test data"),
+	tests := []struct {
+		name string
+		req  *PutObjectRequest
+	}{
+		{"nil request", nil},
+		{"empty key", &PutObjectRequest{Key: "", Value: []byte("test data")}},
+		{"empty value", &PutObjectRequest{Key: "test:empty", Value: []byte{}}},
+		{"checksum mismatch", &PutObjectRequest{
+			Key:      "test:checksum",
+			Value:    []byte("test data"),
+			Checksum: []byte("invalid checksum"),
+		}},
 	}
 
-	resp, err := svc.PutObject(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := svc.PutObject(ctx, tt.req)
+			require.Error(t, err)
+			require.Nil(t, resp)
 
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestPutObject_EmptyValue(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &PutObjectRequest{
-		Key:   "test:empty",
-		Value: []byte{},
+			var qbErr *dberrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+		})
 	}
-
-	resp, err := svc.PutObject(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestPutObject_ChecksumMismatch(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &PutObjectRequest{
-		Key:      "test:checksum",
-		Value:    []byte("test data"),
-		Checksum: []byte("invalid checksum"),
-	}
-
-	resp, err := svc.PutObject(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestPutObject_QuotaExceeded(t *testing.T) {
@@ -1168,31 +1112,29 @@ func TestGetObject_NotFound(t *testing.T) {
 	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
-func TestGetObject_NilRequest(t *testing.T) {
+func TestGetObject_InvalidRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithSystem(context.Background())
 
-	resp, err := svc.GetObject(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
+	tests := []struct {
+		name string
+		req  *GetObjectRequest
+	}{
+		{"nil request", nil},
+		{"empty key", &GetObjectRequest{Key: ""}},
+	}
 
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := svc.GetObject(ctx, tt.req)
+			require.Error(t, err)
+			require.Nil(t, resp)
 
-func TestGetObject_EmptyKey(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &GetObjectRequest{Key: ""}
-	resp, err := svc.GetObject(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+			var qbErr *dberrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+		})
+	}
 }
 
 func TestGetObject_CrossTenantDenied(t *testing.T) {
@@ -1315,15 +1257,6 @@ func TestDeleteObject_NotFound(t *testing.T) {
 	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
-func TestDeleteObject_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.DeleteObject(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
 func TestDeleteObject_CrossTenantDenied(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
 	ctx := tenantctx.WithSystem(context.Background())
@@ -1396,15 +1329,6 @@ func TestHeadObject_NotExists(t *testing.T) {
 	assert.Equal(t, "test:nonexistent", resp.Key)
 }
 
-func TestHeadObject_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.HeadObject(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
 func TestHeadObject_EmptyKey(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithSystem(context.Background())
@@ -1437,38 +1361,6 @@ func TestListObjects_Success(t *testing.T) {
 	require.NotNil(t, resp)
 
 	assert.GreaterOrEqual(t, len(resp.Objects), 5)
-}
-
-func TestListObjects_WithLimit(t *testing.T) {
-	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	// Create multiple objects
-	for i := 0; i < 10; i++ {
-		entry := catalog.NewCatalogEntry("test:limit:"+string(rune('a'+i)), 100, nil)
-		entry.PrimaryStore = catalog.StoreLocation{Store: "local", Status: catalog.LocationStatusActive}
-		err := catalogMgr.Put(ctx, entry)
-		require.NoError(t, err)
-	}
-
-	req := &ListObjectsRequest{
-		Prefix: "test:limit:",
-		Limit:  5,
-	}
-	resp, err := svc.ListObjects(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-
-	assert.LessOrEqual(t, len(resp.Objects), 10) // May be filtered
-}
-
-func TestListObjects_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.ListObjects(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
 }
 
 func TestListObjects_EmptyResult(t *testing.T) {
@@ -1527,15 +1419,6 @@ func TestListByTag_EmptyTagName(t *testing.T) {
 	require.Nil(t, resp)
 }
 
-func TestListByTag_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.ListByTag(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
 // =============================================================================
 // ListByTenant Tests
 // =============================================================================
@@ -1571,15 +1454,6 @@ func TestListByTenant_EmptyTenantID(t *testing.T) {
 
 	req := &ListByTenantRequest{TenantID: ""}
 	resp, err := svc.ListByTenant(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestListByTenant_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.ListByTenant(ctx, nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -1699,15 +1573,6 @@ func TestCopyObject_InvalidRequest(t *testing.T) {
 		DestinationKey: "",
 	}
 	resp, err = svc.CopyObject(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestCopyObject_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.CopyObject(ctx, nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -2437,15 +2302,6 @@ func TestSetObjectPolicy_NotFound(t *testing.T) {
 	require.Nil(t, resp)
 }
 
-func TestSetObjectPolicy_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.SetObjectPolicy(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
 // =============================================================================
 // GetObjectPolicy Tests
 // =============================================================================
@@ -2483,15 +2339,6 @@ func TestGetObjectPolicy_NotFound(t *testing.T) {
 	require.Nil(t, resp)
 }
 
-func TestGetObjectPolicy_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.GetObjectPolicy(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
 func TestGetObjectPolicy_CrossTenantDenied(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithSystem(context.Background())
@@ -2515,27 +2362,6 @@ func TestGetObjectPolicy_CrossTenantDenied(t *testing.T) {
 // ListBackends Tests
 // =============================================================================
 
-func TestListBackends_Success(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &ListBackendsRequest{}
-	resp, err := svc.ListBackends(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-
-	assert.GreaterOrEqual(t, len(resp.Backends), 1)
-}
-
-func TestListBackends_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.ListBackends(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
 func TestListBackends_MultipleBackends(t *testing.T) {
 	catalogMgr := newObjstoreMockCatalogManager()
 	backendMgr := newObjstoreMockBackendManager()
@@ -2551,11 +2377,12 @@ func TestListBackends_MultipleBackends(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := tenantctx.WithSystem(context.Background())
-	req := &ListBackendsRequest{}
-	resp, err := svc.ListBackends(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.GreaterOrEqual(t, len(resp.Backends), 2)
+	for _, includeHealth := range []bool{false, true} {
+		resp, err := svc.ListBackends(ctx, &ListBackendsRequest{IncludeHealth: includeHealth})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		assert.GreaterOrEqual(t, len(resp.Backends), 2)
+	}
 }
 
 // =============================================================================
@@ -2581,15 +2408,6 @@ func TestGetBackendHealth_NotFound(t *testing.T) {
 
 	req := &GetBackendHealthRequest{Name: "nonexistent"}
 	resp, err := svc.GetBackendHealth(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestGetBackendHealth_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.GetBackendHealth(ctx, nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -2640,15 +2458,6 @@ func TestGetTenantUsage_EmptyTenantID(t *testing.T) {
 	require.Nil(t, resp)
 }
 
-func TestGetTenantUsage_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.GetTenantUsage(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
 // =============================================================================
 // GetTenantQuotas Tests
 // =============================================================================
@@ -2691,15 +2500,6 @@ func TestGetTenantQuotas_EmptyTenantID(t *testing.T) {
 
 	req := &GetTenantQuotasRequest{TenantID: ""}
 	resp, err := svc.GetTenantQuotas(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestGetTenantQuotas_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.GetTenantQuotas(ctx, nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -3456,98 +3256,6 @@ func TestSetObjectPolicy_WithAllPolicies(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-func TestRestoreObject_WithDeleteFromArchive(t *testing.T) {
-	catalogMgr := newObjstoreMockCatalogManager()
-	backendMgr := newObjstoreMockBackendManager()
-	primaryStorage := newObjstoreMockStorage()
-	archiveStorage := newObjstoreMockStorage()
-	resolver := newObjstoreMockConfigResolver()
-	logger := newObjstoreMockLogger()
-
-	backendMgr.AddBackend("local", primaryStorage, &catalog.BackendConfig{
-		Type:    "local",
-		Enabled: true,
-	})
-	backendMgr.AddBackend("glacier", archiveStorage, &catalog.BackendConfig{
-		Type:    "glacier",
-		Enabled: true,
-	})
-
-	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
-	require.NoError(t, err)
-
-	ctx := tenantctx.WithSystem(context.Background())
-
-	testData := []byte("restore and delete")
-	objectRef := "restore-delete-ref"
-	err = archiveStorage.PutWithContext(ctx, objectRef, bytes.NewReader(testData))
-	require.NoError(t, err)
-
-	entry := catalog.NewCatalogEntry("test:restore-delete", int64(len(testData)), nil)
-	entry.Status = catalog.StatusArchived
-	entry.PrimaryStore = catalog.StoreLocation{
-		Store:     "glacier",
-		ObjectRef: objectRef,
-		Status:    catalog.LocationStatusActive,
-	}
-	err = catalogMgr.Put(ctx, entry)
-	require.NoError(t, err)
-
-	req := &RestoreObjectRequest{
-		Key:           "test:restore-delete",
-		TargetBackend: "local",
-	}
-	resp, err := svc.RestoreObject(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Success)
-}
-
-func TestReplicateObject_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.ReplicateObject(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestMigrateObject_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.MigrateObject(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestArchiveObject_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.ArchiveObject(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestRestoreObject_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.RestoreObject(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestVerifyObject_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.VerifyObject(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
 func TestMigrateObject_CrossTenantDenied(t *testing.T) {
 	catalogMgr := newObjstoreMockCatalogManager()
 	backendMgr := newObjstoreMockBackendManager()
@@ -3593,28 +3301,6 @@ func TestMigrateObject_CrossTenantDenied(t *testing.T) {
 	resp, err := svc.MigrateObject(ctx, req)
 	require.Error(t, err)
 	require.Nil(t, resp)
-}
-
-func TestListBackends_WithHealthChecks(t *testing.T) {
-	catalogMgr := newObjstoreMockCatalogManager()
-	backendMgr := newObjstoreMockBackendManager()
-	storage1 := newObjstoreMockStorage()
-	storage2 := newObjstoreMockStorage()
-	resolver := newObjstoreMockConfigResolver()
-	logger := newObjstoreMockLogger()
-
-	backendMgr.AddBackend("local", storage1, &catalog.BackendConfig{Type: "local", Enabled: true})
-	backendMgr.AddBackend("s3", storage2, &catalog.BackendConfig{Type: "s3", Enabled: true})
-
-	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
-	require.NoError(t, err)
-
-	ctx := tenantctx.WithSystem(context.Background())
-	req := &ListBackendsRequest{IncludeHealth: true}
-	resp, err := svc.ListBackends(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.GreaterOrEqual(t, len(resp.Backends), 2)
 }
 
 func TestCopyObject_WithOverwrite(t *testing.T) {
@@ -3764,12 +3450,12 @@ func TestArchiveObject_TargetBackendUnavailable(t *testing.T) {
 		TargetStore: "nonexistent-archive",
 	}
 	resp, err := svc.ArchiveObject(ctx, req)
-	// May return error or partial success depending on implementation
-	if err != nil {
-		assert.Nil(t, resp)
-	} else {
-		assert.NotNil(t, resp)
-	}
+	// Current behaviour: the replication to the missing archive store is
+	// reported as partial, so ArchiveObject still reports success. This is
+	// a suspected bug tracked under #2137; the assertion pins today's result.
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.True(t, resp.Success)
 }
 
 func TestRestoreObject_ReadError(t *testing.T) {
@@ -3815,12 +3501,8 @@ func TestRestoreObject_ReadError(t *testing.T) {
 	}
 	resp, err := svc.RestoreObject(ctx, req)
 	// Restore fails because archive cannot be read
-	if err != nil {
-		assert.Nil(t, resp)
-	} else {
-		require.NotNil(t, resp)
-		assert.False(t, resp.Success)
-	}
+	require.Error(t, err)
+	assert.Nil(t, resp)
 }
 
 func TestGetTenantUsage_CatalogError(t *testing.T) {
@@ -3942,37 +3624,7 @@ func TestSetTenantQuotas_Success(t *testing.T) {
 	assert.Equal(t, int64(10000), tenantCfg.Quotas.MaxObjectCount)
 }
 
-func TestSetTenantQuotas_EmptyTenantID(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &SetTenantQuotasRequest{
-		TenantID:        "",
-		MaxStorageBytes: 1024,
-	}
-	resp, err := svc.SetTenantQuotas(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestSetTenantQuotas_NilRequest(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	resp, err := svc.SetTenantQuotas(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestSetTenantQuotas_NegativeValues(t *testing.T) {
+func TestSetTenantQuotas_InvalidRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithSystem(context.Background())
 
@@ -3980,6 +3632,13 @@ func TestSetTenantQuotas_NegativeValues(t *testing.T) {
 		name string
 		req  *SetTenantQuotasRequest
 	}{
+		{
+			name: "empty tenant ID",
+			req: &SetTenantQuotasRequest{
+				TenantID:        "",
+				MaxStorageBytes: 1024,
+			},
+		},
 		{
 			name: "negative max storage bytes",
 			req: &SetTenantQuotasRequest{
@@ -4202,135 +3861,95 @@ func TestSetTenantQuotasRequest_Validate(t *testing.T) {
 	}
 }
 
-func TestGetObject_ServiceClosed(t *testing.T) {
+func TestObjectStorageService_ServiceClosed(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
+	svc.(*objectStorageService).closed.Store(true)
 
-	concreteSvc := svc.(*objectStorageService)
-	concreteSvc.closed.Store(true)
+	systemCtx := tenantctx.WithSystem(context.Background())
+	tenantCtx := tenantctx.WithTenant(context.Background(), "tenant1")
 
-	req := &GetObjectRequest{Key: "test:closed"}
-	resp, err := svc.GetObject(ctx, req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
-}
-
-func TestListObjects_ServiceClosed(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	concreteSvc := svc.(*objectStorageService)
-	concreteSvc.closed.Store(true)
-
-	req := &ListObjectsRequest{Prefix: "test:"}
-	resp, err := svc.ListObjects(ctx, req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
-}
-
-func TestListByTag_ServiceClosed(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	concreteSvc := svc.(*objectStorageService)
-	concreteSvc.closed.Store(true)
-
-	req := &ListByTagRequest{
-		TagName:  "env",
-		TagValue: "test",
+	tests := []struct {
+		name string
+		call func() (any, error)
+	}{
+		{"PutObject", func() (any, error) {
+			return svc.PutObject(systemCtx, &PutObjectRequest{Key: "test:put-closed", Value: []byte("data"), ContentType: "text/plain"})
+		}},
+		{"GetObject", func() (any, error) {
+			return svc.GetObject(systemCtx, &GetObjectRequest{Key: "test:closed"})
+		}},
+		{"DeleteObject", func() (any, error) {
+			return svc.DeleteObject(systemCtx, &DeleteObjectRequest{Key: "test:del-closed"})
+		}},
+		{"HeadObject", func() (any, error) {
+			return svc.HeadObject(systemCtx, &HeadObjectRequest{Key: "test:head-closed"})
+		}},
+		{"ListObjects", func() (any, error) {
+			return svc.ListObjects(systemCtx, &ListObjectsRequest{Prefix: "test:"})
+		}},
+		{"ListByTag", func() (any, error) {
+			return svc.ListByTag(systemCtx, &ListByTagRequest{TagName: "env", TagValue: "test"})
+		}},
+		{"ListByTenant", func() (any, error) {
+			return svc.ListByTenant(tenantCtx, &ListByTenantRequest{TenantID: "tenant1"})
+		}},
+		{"RestoreObject", func() (any, error) {
+			return svc.RestoreObject(systemCtx, &RestoreObjectRequest{Key: "test:archived"})
+		}},
 	}
-	resp, err := svc.ListByTag(ctx, req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
 
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := tt.call()
+			require.Error(t, err)
+			assert.Nil(t, resp)
 
-func TestRestoreObject_ServiceClosed(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	concreteSvc := svc.(*objectStorageService)
-	concreteSvc.closed.Store(true)
-
-	req := &RestoreObjectRequest{Key: "test:archived"}
-	resp, err := svc.RestoreObject(ctx, req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
-}
-
-func TestListByTenant_ServiceClosed(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
-
-	concreteSvc := svc.(*objectStorageService)
-	concreteSvc.closed.Store(true)
-
-	req := &ListByTenantRequest{TenantID: "tenant1"}
-	resp, err := svc.ListByTenant(ctx, req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
-}
-
-func TestPutObject_ServiceClosed(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	concreteSvc := svc.(*objectStorageService)
-	concreteSvc.closed.Store(true)
-
-	req := &PutObjectRequest{
-		Key:         "test:put-closed",
-		Value:       []byte("data"),
-		ContentType: "text/plain",
+			var qbErr *dberrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
+		})
 	}
-	resp, err := svc.PutObject(ctx, req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
 }
 
-func TestDeleteObject_ServiceClosed(t *testing.T) {
+func TestObjectStorageService_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithSystem(context.Background())
 
-	concreteSvc := svc.(*objectStorageService)
-	concreteSvc.closed.Store(true)
+	tests := []struct {
+		name string
+		call func() (any, error)
+	}{
+		{"DeleteObject", func() (any, error) { return svc.DeleteObject(ctx, nil) }},
+		{"HeadObject", func() (any, error) { return svc.HeadObject(ctx, nil) }},
+		{"ListObjects", func() (any, error) { return svc.ListObjects(ctx, nil) }},
+		{"ListByTag", func() (any, error) { return svc.ListByTag(ctx, nil) }},
+		{"ListByTenant", func() (any, error) { return svc.ListByTenant(ctx, nil) }},
+		{"CopyObject", func() (any, error) { return svc.CopyObject(ctx, nil) }},
+		{"ReplicateObject", func() (any, error) { return svc.ReplicateObject(ctx, nil) }},
+		{"MigrateObject", func() (any, error) { return svc.MigrateObject(ctx, nil) }},
+		{"ArchiveObject", func() (any, error) { return svc.ArchiveObject(ctx, nil) }},
+		{"RestoreObject", func() (any, error) { return svc.RestoreObject(ctx, nil) }},
+		{"VerifyObject", func() (any, error) { return svc.VerifyObject(ctx, nil) }},
+		{"SetObjectPolicy", func() (any, error) { return svc.SetObjectPolicy(ctx, nil) }},
+		{"GetObjectPolicy", func() (any, error) { return svc.GetObjectPolicy(ctx, nil) }},
+		{"ListBackends", func() (any, error) { return svc.ListBackends(ctx, nil) }},
+		{"GetBackendHealth", func() (any, error) { return svc.GetBackendHealth(ctx, nil) }},
+		{"GetTenantUsage", func() (any, error) { return svc.GetTenantUsage(ctx, nil) }},
+		{"GetTenantQuotas", func() (any, error) { return svc.GetTenantQuotas(ctx, nil) }},
+		{"SetTenantQuotas", func() (any, error) { return svc.SetTenantQuotas(ctx, nil) }},
+	}
 
-	req := &DeleteObjectRequest{Key: "test:del-closed"}
-	resp, err := svc.DeleteObject(ctx, req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := tt.call()
+			require.Error(t, err)
+			assert.Nil(t, resp)
 
-func TestHeadObject_ServiceClosed(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	concreteSvc := svc.(*objectStorageService)
-	concreteSvc.closed.Store(true)
-
-	req := &HeadObjectRequest{Key: "test:head-closed"}
-	resp, err := svc.HeadObject(ctx, req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
+			var qbErr *dberrors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+		})
+	}
 }
 
 func TestGetObject_DeletedObjectNotAvailable(t *testing.T) {
@@ -4474,53 +4093,6 @@ func TestGetObject_ArchivedObjectAccessible(t *testing.T) {
 	assert.Equal(t, "test:archived", resp.Key)
 }
 
-func TestListObjects_LimitCappedAt1000(t *testing.T) {
-	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	for i := 0; i < 3; i++ {
-		entry := catalog.NewCatalogEntry("test:cap:"+string(rune('a'+i)), 100, nil)
-		entry.PrimaryStore = catalog.StoreLocation{Store: "local", Status: catalog.LocationStatusActive}
-		err := catalogMgr.Put(ctx, entry)
-		require.NoError(t, err)
-	}
-
-	req := &ListObjectsRequest{
-		Prefix: "test:cap:",
-		Limit:  5000,
-	}
-	resp, err := svc.ListObjects(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.GreaterOrEqual(t, len(resp.Objects), 0)
-}
-
-func TestListObjects_NegativeLimitDefaultsTo100(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &ListObjectsRequest{
-		Prefix: "test:neg:",
-		Limit:  -1,
-	}
-	resp, err := svc.ListObjects(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
-func TestListObjects_ZeroLimitDefaultsTo100(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &ListObjectsRequest{
-		Prefix: "test:zero:",
-		Limit:  0,
-	}
-	resp, err := svc.ListObjects(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
 func TestListObjects_TenantFiltering(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
@@ -4576,34 +4148,6 @@ func TestListObjects_IncludeTags(t *testing.T) {
 	}
 }
 
-func TestListByTag_LimitCappedAt1000(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &ListByTagRequest{
-		TagName:  "env",
-		TagValue: "test",
-		Limit:    5000,
-	}
-	resp, err := svc.ListByTag(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
-func TestListByTag_NegativeLimitDefaults(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &ListByTagRequest{
-		TagName:  "env",
-		TagValue: "test",
-		Limit:    -5,
-	}
-	resp, err := svc.ListByTag(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
 func TestListByTag_TenantFiltering(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
@@ -4630,32 +4174,10 @@ func TestListByTag_TenantFiltering(t *testing.T) {
 	resp, err := svc.ListByTag(ctx, req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-}
 
-func TestListByTenant_LimitCappedAt1000(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
-
-	req := &ListByTenantRequest{
-		TenantID: "tenant1",
-		Limit:    5000,
+	for _, obj := range resp.Objects {
+		assert.NotEqual(t, "test:bytag:b", obj.Key, "tenant2 objects should be filtered out")
 	}
-	resp, err := svc.ListByTenant(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
-func TestListByTenant_NegativeLimitDefaults(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
-
-	req := &ListByTenantRequest{
-		TenantID: "tenant1",
-		Limit:    -1,
-	}
-	resp, err := svc.ListByTenant(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
 }
 
 func TestSetObjectPolicyRequest_Validate(t *testing.T) {

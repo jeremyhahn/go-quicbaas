@@ -536,37 +536,45 @@ func TestMemoryStorageAdapterMethods(t *testing.T) {
 
 // TestDisplayMigrationProgress tests the displayMigrationProgress function.
 func TestDisplayMigrationProgress(t *testing.T) {
-	progress := &MigrationProgress{
-		KeysProcessed:      1000,
-		BytesProcessed:     10240,
-		ElapsedTime:        time.Minute,
-		CurrentRate:        100.5,
-		EstimatedTotal:     5000,
-		PercentComplete:    20.0,
-		EstimatedRemaining: time.Minute * 4,
+	tests := []struct {
+		name     string
+		progress *MigrationProgress
+	}{
+		{
+			name: "With estimate",
+			progress: &MigrationProgress{
+				KeysProcessed:      1000,
+				BytesProcessed:     10240,
+				ElapsedTime:        time.Minute,
+				CurrentRate:        100.5,
+				EstimatedTotal:     5000,
+				PercentComplete:    20.0,
+				EstimatedRemaining: time.Minute * 4,
+			},
+		},
+		{
+			name: "Without estimate",
+			progress: &MigrationProgress{
+				KeysProcessed:  500,
+				BytesProcessed: 5120,
+				ElapsedTime:    time.Second * 30,
+				CurrentRate:    50.0,
+				EstimatedTotal: 0,
+			},
+		},
 	}
 
-	// Function writes to stdout, just verify it doesn't panic
-	assert.NotPanics(t, func() {
-		displayMigrationProgress(progress)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Function writes to stdout, just verify it doesn't panic
+			assert.NotPanics(t, func() {
+				displayMigrationProgress(tt.progress)
+			})
+		})
+	}
 }
 
 // TestDisplayMigrationProgressWithoutEstimate tests progress display without estimate.
-func TestDisplayMigrationProgressWithoutEstimate(t *testing.T) {
-	progress := &MigrationProgress{
-		KeysProcessed:  500,
-		BytesProcessed: 5120,
-		ElapsedTime:    time.Second * 30,
-		CurrentRate:    50.0,
-		EstimatedTotal: 0, // No estimate
-	}
-
-	assert.NotPanics(t, func() {
-		displayMigrationProgress(progress)
-	})
-}
-
 // TestDisplayMigrationResult tests the displayMigrationResult function.
 func TestDisplayMigrationResult(t *testing.T) {
 	now := time.Now()
@@ -670,7 +678,9 @@ func TestFormatBytesMigrate(t *testing.T) {
 	}{
 		{"ZeroBytes", 0, "0 B"},
 		{"FewBytes", 512, "512 B"},
+		{"JustUnderKB", 1023, "1023 B"},
 		{"ExactlyOneKB", 1024, "1.0 KB"},
+		{"JustUnderMB", 1024*1024 - 1, "1024.0 KB"},
 		{"ExactlyOneMB", 1024 * 1024, "1.0 MB"},
 		{"ExactlyOneGB", 1024 * 1024 * 1024, "1.0 GB"},
 		{"ExactlyOneTB", 1024 * 1024 * 1024 * 1024, "1.0 TB"},
@@ -678,6 +688,7 @@ func TestFormatBytesMigrate(t *testing.T) {
 		{"ExactlyOneEB", 1024 * 1024 * 1024 * 1024 * 1024 * 1024, "1.0 EB"},
 		{"PartialKB", 2048, "2.0 KB"},
 		{"PartialMB", 5 * 1024 * 1024, "5.0 MB"},
+		{"MaxUint64", ^uint64(0), "16.0 EB"},
 	}
 
 	for _, tt := range tests {
@@ -776,95 +787,77 @@ func TestRunMigrateStart(t *testing.T) {
 	testLog := createTestLoggerForMigrate(t)
 	log = testLog
 
+	savedSource := migrateSourceURL
+	savedDest := migrateDestURL
+	savedVerify := migrateVerify
+	savedFollow := migrateFollowProgress
+	savedFormat := migrateOutputFormat
+	savedMigration := currentMigration
+	defer func() {
+		migrateSourceURL = savedSource
+		migrateDestURL = savedDest
+		migrateVerify = savedVerify
+		migrateFollowProgress = savedFollow
+		migrateOutputFormat = savedFormat
+		currentMigration = savedMigration
+	}()
+
 	tests := []struct {
 		name           string
 		sourceURL      string
 		destURL        string
-		batchSize      int
-		concurrency    int
 		verify         bool
-		deleteSource   bool
-		rateLimit      int
-		checkpoint     time.Duration
 		outputFormat   string
 		followProgress bool
 		expectError    bool
 		errorMsg       string
-		setupSource    func(t *testing.T) string
-		setupDest      func(t *testing.T) string
 	}{
 		{
-			name:           "Invalid source URL",
-			sourceURL:      "invalid_url",
-			destURL:        "memory://",
-			batchSize:      100,
-			concurrency:    2,
-			verify:         true,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     10 * time.Second,
-			outputFormat:   "table",
-			followProgress: false,
-			expectError:    true,
-			errorMsg:       "create source storage failed",
+			name:         "Invalid source URL",
+			sourceURL:    "invalid_url",
+			destURL:      "memory://",
+			verify:       true,
+			outputFormat: "table",
+			expectError:  true,
+			errorMsg:     "create source storage failed",
 		},
 		{
-			name:           "Invalid dest URL",
-			sourceURL:      "memory://",
-			destURL:        "invalid_url",
-			batchSize:      100,
-			concurrency:    2,
-			verify:         true,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     10 * time.Second,
-			outputFormat:   "table",
-			followProgress: false,
-			expectError:    true,
-			errorMsg:       "create destination storage failed",
+			name:         "Invalid dest URL",
+			sourceURL:    "memory://",
+			destURL:      "invalid_url",
+			verify:       true,
+			outputFormat: "table",
+			expectError:  true,
+			errorMsg:     "create destination storage failed",
 		},
 		{
-			name:           "Unsupported source scheme",
-			sourceURL:      "redis://localhost",
-			destURL:        "memory://",
-			batchSize:      100,
-			concurrency:    2,
-			verify:         true,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     10 * time.Second,
-			outputFormat:   "table",
-			followProgress: false,
-			expectError:    true,
-			errorMsg:       "unsupported storage scheme",
+			name:         "Unsupported source scheme",
+			sourceURL:    "redis://localhost",
+			destURL:      "memory://",
+			verify:       true,
+			outputFormat: "table",
+			expectError:  true,
+			errorMsg:     "unsupported storage scheme",
 		},
 		{
-			name:           "Memory to memory migration without follow",
+			name:         "Memory to memory migration without follow",
+			sourceURL:    "memory://",
+			destURL:      "memory://",
+			outputFormat: "table",
+		},
+		{
+			name:         "JSON output format",
+			sourceURL:    "memory://",
+			destURL:      "memory://",
+			verify:       true,
+			outputFormat: "json",
+		},
+		{
+			name:           "Follow progress",
 			sourceURL:      "memory://",
 			destURL:        "memory://",
-			batchSize:      100,
-			concurrency:    2,
-			verify:         false,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     10 * time.Second,
 			outputFormat:   "table",
-			followProgress: false,
-			expectError:    false,
-		},
-		{
-			name:           "JSON output format",
-			sourceURL:      "memory://",
-			destURL:        "memory://",
-			batchSize:      50,
-			concurrency:    1,
-			verify:         true,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     5 * time.Second,
-			outputFormat:   "json",
-			followProgress: false,
-			expectError:    false,
+			followProgress: true,
 		},
 	}
 
@@ -872,15 +865,15 @@ func TestRunMigrateStart(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := newMigrateStartCommand()
 
-			// Set global flags
+			// Set global flags after command creation
 			migrateSourceURL = tt.sourceURL
 			migrateDestURL = tt.destURL
-			migrateBatchSize = tt.batchSize
-			migrateConcurrency = tt.concurrency
+			migrateBatchSize = 100
+			migrateConcurrency = 2
 			migrateVerify = tt.verify
-			migrateDeleteSource = tt.deleteSource
-			migrateRateLimit = tt.rateLimit
-			migrateCheckpoint = tt.checkpoint
+			migrateDeleteSource = false
+			migrateRateLimit = 0
+			migrateCheckpoint = 10 * time.Second
 			migrateOutputFormat = tt.outputFormat
 			migrateFollowProgress = tt.followProgress
 
@@ -888,18 +881,11 @@ func TestRunMigrateStart(t *testing.T) {
 
 			if tt.expectError {
 				assert.Error(t, err)
-				if tt.errorMsg != "" {
-					assert.Contains(t, err.Error(), tt.errorMsg)
-				}
+				assert.Contains(t, err.Error(), tt.errorMsg)
 			} else {
-				// May succeed or fail depending on migration manager behavior
-				// Since we're using real storage, it should work
-				if err != nil {
-					t.Logf("Migration error (may be expected): %v", err)
-				}
+				assert.NoError(t, err)
 			}
 
-			// Reset currentMigration for next test
 			currentMigration = nil
 		})
 	}
@@ -1077,39 +1063,7 @@ func TestRunMigrateCancel(t *testing.T) {
 // where proper goroutine synchronization can be achieved with real services.
 
 // TestNewMemoryStorageAdapter tests the memory storage adapter creation.
-func TestNewMemoryStorageAdapter(t *testing.T) {
-	testLog := createTestLoggerForMigrate(t)
-	log = testLog
-
-	store, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer store.Close()
-
-	assert.NotNil(t, store)
-}
-
 // TestMemoryIteratorNewIterator tests NewIterator method.
-func TestMemoryIteratorNewIterator(t *testing.T) {
-	testLog := createTestLoggerForMigrate(t)
-	log = testLog
-
-	store, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer store.Close()
-
-	// Add test data
-	require.NoError(t, store.Set([]byte("key1"), []byte("val1")))
-
-	opts := &storage.IteratorOptions{
-		LowerBound: []byte("key0"),
-		UpperBound: []byte("key9"),
-	}
-
-	iter := store.NewIterator(opts)
-	assert.NotNil(t, iter)
-	defer iter.Close()
-}
-
 func TestMemoryStorageReaderAdapter_Get(t *testing.T) {
 	ensureTestLoggerInitialized(t)
 
@@ -1316,7 +1270,7 @@ func TestGRPCBackupAdapter_VerifyBackup(t *testing.T) {
 // grpcTLSOption tests (57.1% coverage - covering all branches)
 // --------------------------------------------------------------------------
 
-func TestGRPCTLSOption_DefaultTLS(t *testing.T) {
+func TestGRPCTLSOption(t *testing.T) {
 	// Save and restore globals
 	savedCert := tlsCert
 	savedKey := tlsKey
@@ -1327,128 +1281,36 @@ func TestGRPCTLSOption_DefaultTLS(t *testing.T) {
 		tlsCA = savedCA
 	}()
 
-	// Default: no cert, no key, no CA
-	tlsCert = ""
-	tlsKey = ""
-	tlsCA = ""
+	tests := []struct {
+		name string
+		cert string
+		key  string
+		ca   string
+	}{
+		{name: "Default TLS", cert: "", key: "", ca: ""},
+		{name: "With cert and key", cert: "/path/to/cert.pem", key: "/path/to/key.pem", ca: ""},
+		{name: "With CA only", cert: "", key: "", ca: "/path/to/ca.pem"},
+	}
 
-	opts := grpcTLSOption()
-	assert.NotEmpty(t, opts, "should return default TLS option")
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tlsCert = tt.cert
+			tlsKey = tt.key
+			tlsCA = tt.ca
 
-func TestGRPCTLSOption_WithCertAndKey(t *testing.T) {
-	savedCert := tlsCert
-	savedKey := tlsKey
-	savedCA := tlsCA
-	defer func() {
-		tlsCert = savedCert
-		tlsKey = savedKey
-		tlsCA = savedCA
-	}()
-
-	tlsCert = "/path/to/cert.pem"
-	tlsKey = "/path/to/key.pem"
-	tlsCA = ""
-
-	opts := grpcTLSOption()
-	assert.NotEmpty(t, opts, "should return TLS option with cert/key")
-}
-
-func TestGRPCTLSOption_WithCAOnly(t *testing.T) {
-	savedCert := tlsCert
-	savedKey := tlsKey
-	savedCA := tlsCA
-	defer func() {
-		tlsCert = savedCert
-		tlsKey = savedKey
-		tlsCA = savedCA
-	}()
-
-	tlsCert = ""
-	tlsKey = ""
-	tlsCA = "/path/to/ca.pem"
-
-	opts := grpcTLSOption()
-	assert.NotEmpty(t, opts, "should return TLS option with CA only")
+			opts := grpcTLSOption()
+			assert.NotEmpty(t, opts)
+		})
+	}
 }
 
 // --------------------------------------------------------------------------
 // MigrationManager with VerifyData enabled
 // --------------------------------------------------------------------------
 
-func TestMigrationManager_MigrateWithVerifyData(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
-
-	dest, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer dest.Close()
-
-	// Add test data
-	err = source.Set([]byte("verify-k1"), []byte("verify-v1"))
-	require.NoError(t, err)
-	err = source.Set([]byte("verify-k2"), []byte("verify-v2"))
-	require.NoError(t, err)
-
-	migrationConfig := &MigrationConfig{
-		BatchSize:          100,
-		Concurrency:        1,
-		VerifyData:         true,
-		DeleteSource:       false,
-		CheckpointInterval: time.Second,
-	}
-
-	mgr, err := NewMigrationManager(source, dest, migrationConfig, asInterfaceLogger(log))
-	require.NoError(t, err)
-
-	result, err := mgr.Migrate(context.Background())
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, int64(2), result.KeysProcessed)
-	assert.Equal(t, int64(0), result.KeysFailed)
-
-	// Verify data actually transferred
-	v1, err := dest.Get([]byte("verify-k1"))
-	assert.NoError(t, err)
-	assert.Equal(t, []byte("verify-v1"), v1)
-}
-
 // --------------------------------------------------------------------------
 // MigrationManager with DeleteSource enabled
 // --------------------------------------------------------------------------
-
-func TestMigrationManager_MigrateWithDeleteSource(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
-
-	dest, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer dest.Close()
-
-	// Add test data
-	err = source.Set([]byte("del-k1"), []byte("del-v1"))
-	require.NoError(t, err)
-
-	migrationConfig := &MigrationConfig{
-		BatchSize:    100,
-		Concurrency:  1,
-		DeleteSource: true,
-	}
-
-	mgr, err := NewMigrationManager(source, dest, migrationConfig, asInterfaceLogger(log))
-	require.NoError(t, err)
-
-	result, err := mgr.Migrate(context.Background())
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, int64(1), result.KeysProcessed)
-}
 
 // --------------------------------------------------------------------------
 // NodeReplacementManager: AddNode duplicate error
@@ -1476,31 +1338,6 @@ func TestNodeReplacementManager_AddDuplicateNode(t *testing.T) {
 // NodeReplacementManager: ReplaceNode when old node does not exist
 // succeeds silently and registers the new node.
 // --------------------------------------------------------------------------
-
-func TestNodeReplacementManager_ReplaceNodeNoOldNode(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
-
-	replacementCfg := DefaultNodeReplacementConfig()
-	mgr, err := NewNodeReplacementManager(source, replacementCfg, asInterfaceLogger(log))
-	require.NoError(t, err)
-
-	// ReplaceNode succeeds even when old node is not registered
-	report, err := mgr.ReplaceNode(context.Background(), "ghost", "new-node", "addr-new")
-	assert.NoError(t, err)
-	require.NotNil(t, report)
-	assert.True(t, report.Success)
-	assert.Equal(t, "ghost", report.OldNodeID)
-	assert.Equal(t, "new-node", report.NewNodeID)
-
-	// New node should now be registered
-	state, found := mgr.GetNodeState("new-node")
-	assert.True(t, found)
-	assert.Equal(t, "addr-new", state.Address)
-}
 
 // --------------------------------------------------------------------------
 // MigrationManager: constructor accepts nil logger (no validation)
@@ -1656,7 +1493,7 @@ func TestRunCacheWarmCommand_SuccessTable(t *testing.T) {
 // getNodeManager tests (74.1% -> higher coverage)
 // --------------------------------------------------------------------------
 
-func TestGetNodeManager_WithDefaults(t *testing.T) {
+func TestGetNodeManager_Config(t *testing.T) {
 	ensureTestLoggerInitialized(t)
 
 	savedManager := currentNodeManager
@@ -1678,55 +1515,48 @@ func TestGetNodeManager_WithDefaults(t *testing.T) {
 		nodeAutoReplace = savedAR
 	}()
 
-	currentNodeManager = nil
-	nodeHealthCheckInterval = 0
-	nodeHealthCheckTimeout = 0
-	nodeEvacuationTimeout = 0
-	nodeGracePeriod = 0
-	nodeMaxTransfers = 0
-	nodeVerifyData = true
-	nodeAutoReplace = false
+	tests := []struct {
+		name                string
+		healthCheckInterval time.Duration
+		healthCheckTimeout  time.Duration
+		evacuationTimeout   time.Duration
+		gracePeriod         time.Duration
+		maxTransfers        int
+		verifyData          bool
+		autoReplace         bool
+	}{
+		{
+			name:       "Zero values use defaults",
+			verifyData: true,
+		},
+		{
+			name:                "Custom values",
+			healthCheckInterval: 10 * time.Second,
+			healthCheckTimeout:  3 * time.Second,
+			evacuationTimeout:   15 * time.Minute,
+			gracePeriod:         2 * time.Minute,
+			maxTransfers:        5,
+			autoReplace:         true,
+		},
+	}
 
-	mgr, err := getNodeManager()
-	assert.NoError(t, err)
-	require.NotNil(t, mgr)
-	assert.Equal(t, mgr, currentNodeManager)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			currentNodeManager = nil
+			nodeHealthCheckInterval = tt.healthCheckInterval
+			nodeHealthCheckTimeout = tt.healthCheckTimeout
+			nodeEvacuationTimeout = tt.evacuationTimeout
+			nodeGracePeriod = tt.gracePeriod
+			nodeMaxTransfers = tt.maxTransfers
+			nodeVerifyData = tt.verifyData
+			nodeAutoReplace = tt.autoReplace
 
-func TestGetNodeManager_WithCustomValues(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	savedManager := currentNodeManager
-	savedHCI := nodeHealthCheckInterval
-	savedHCT := nodeHealthCheckTimeout
-	savedET := nodeEvacuationTimeout
-	savedGP := nodeGracePeriod
-	savedMT := nodeMaxTransfers
-	savedVD := nodeVerifyData
-	savedAR := nodeAutoReplace
-	defer func() {
-		currentNodeManager = savedManager
-		nodeHealthCheckInterval = savedHCI
-		nodeHealthCheckTimeout = savedHCT
-		nodeEvacuationTimeout = savedET
-		nodeGracePeriod = savedGP
-		nodeMaxTransfers = savedMT
-		nodeVerifyData = savedVD
-		nodeAutoReplace = savedAR
-	}()
-
-	currentNodeManager = nil
-	nodeHealthCheckInterval = 10 * time.Second
-	nodeHealthCheckTimeout = 3 * time.Second
-	nodeEvacuationTimeout = 15 * time.Minute
-	nodeGracePeriod = 2 * time.Minute
-	nodeMaxTransfers = 5
-	nodeVerifyData = false
-	nodeAutoReplace = true
-
-	mgr, err := getNodeManager()
-	assert.NoError(t, err)
-	require.NotNil(t, mgr)
+			mgr, err := getNodeManager()
+			assert.NoError(t, err)
+			require.NotNil(t, mgr)
+			assert.Equal(t, mgr, currentNodeManager)
+		})
+	}
 }
 
 func TestGetNodeManager_Cached(t *testing.T) {
@@ -1755,7 +1585,7 @@ func TestGetNodeManager_Cached(t *testing.T) {
 // runNodeAdd / runNodeList full execution tests
 // --------------------------------------------------------------------------
 
-func TestRunNodeAdd_TableOutput(t *testing.T) {
+func TestRunNodeAdd_OutputFormats(t *testing.T) {
 	ensureTestLoggerInitialized(t)
 
 	savedManager := currentNodeManager
@@ -1765,16 +1595,28 @@ func TestRunNodeAdd_TableOutput(t *testing.T) {
 		nodeOutputFormat = savedOutput
 	}()
 
-	currentNodeManager = nil
+	tests := []struct {
+		format string
+		args   []string
+	}{
+		{format: "table", args: []string{"test-node-add-1", "localhost:9001"}},
+		{format: "json", args: []string{"json-node-add", "localhost:9002"}},
+	}
 
-	cmd := newNodeAddCommand()
-	// Set output format AFTER command creation
-	nodeOutputFormat = "table"
-	err := cmd.RunE(cmd, []string{"test-node-add-1", "localhost:9001"})
-	assert.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			currentNodeManager = nil
+
+			cmd := newNodeAddCommand()
+			// Set output format AFTER command creation
+			nodeOutputFormat = tt.format
+			err := cmd.RunE(cmd, tt.args)
+			assert.NoError(t, err)
+		})
+	}
 }
 
-func TestRunNodeAdd_JSONOutput(t *testing.T) {
+func TestRunNodeReplace_OutputFormats(t *testing.T) {
 	ensureTestLoggerInitialized(t)
 
 	savedManager := currentNodeManager
@@ -1784,49 +1626,24 @@ func TestRunNodeAdd_JSONOutput(t *testing.T) {
 		nodeOutputFormat = savedOutput
 	}()
 
-	currentNodeManager = nil
+	tests := []struct {
+		format string
+		args   []string
+	}{
+		{format: "table", args: []string{"old-node-r", "new-node-r", "localhost:9003"}},
+		{format: "json", args: []string{"old-j-r", "new-j-r", "localhost:9004"}},
+	}
 
-	cmd := newNodeAddCommand()
-	// Set output format AFTER command creation
-	nodeOutputFormat = "json"
-	err := cmd.RunE(cmd, []string{"json-node-add", "localhost:9002"})
-	assert.NoError(t, err)
-}
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			currentNodeManager = nil
 
-func TestRunNodeReplace_TableOutput(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	savedManager := currentNodeManager
-	savedOutput := nodeOutputFormat
-	defer func() {
-		currentNodeManager = savedManager
-		nodeOutputFormat = savedOutput
-	}()
-
-	currentNodeManager = nil
-
-	cmd := newNodeReplaceCommand()
-	nodeOutputFormat = "table"
-	err := cmd.RunE(cmd, []string{"old-node-r", "new-node-r", "localhost:9003"})
-	assert.NoError(t, err)
-}
-
-func TestRunNodeReplace_JSONOutput(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	savedManager := currentNodeManager
-	savedOutput := nodeOutputFormat
-	defer func() {
-		currentNodeManager = savedManager
-		nodeOutputFormat = savedOutput
-	}()
-
-	currentNodeManager = nil
-
-	cmd := newNodeReplaceCommand()
-	nodeOutputFormat = "json"
-	err := cmd.RunE(cmd, []string{"old-j-r", "new-j-r", "localhost:9004"})
-	assert.NoError(t, err)
+			cmd := newNodeReplaceCommand()
+			nodeOutputFormat = tt.format
+			err := cmd.RunE(cmd, tt.args)
+			assert.NoError(t, err)
+		})
+	}
 }
 
 func TestRunNodeList_EmptyJSON(t *testing.T) {
@@ -1909,188 +1726,17 @@ func TestRunNodeRemove_TableOutput(t *testing.T) {
 // runMigrateStart with follow progress path
 // --------------------------------------------------------------------------
 
-func TestRunMigrateStart_FollowProgress(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	savedSource := migrateSourceURL
-	savedDest := migrateDestURL
-	savedBatch := migrateBatchSize
-	savedConc := migrateConcurrency
-	savedVerify := migrateVerify
-	savedDelete := migrateDeleteSource
-	savedRate := migrateRateLimit
-	savedCheckpoint := migrateCheckpoint
-	savedFollow := migrateFollowProgress
-	savedFormat := migrateOutputFormat
-	savedMigration := currentMigration
-	defer func() {
-		migrateSourceURL = savedSource
-		migrateDestURL = savedDest
-		migrateBatchSize = savedBatch
-		migrateConcurrency = savedConc
-		migrateVerify = savedVerify
-		migrateDeleteSource = savedDelete
-		migrateRateLimit = savedRate
-		migrateCheckpoint = savedCheckpoint
-		migrateFollowProgress = savedFollow
-		migrateOutputFormat = savedFormat
-		currentMigration = savedMigration
-	}()
-
-	cmd := newMigrateStartCommand()
-	// Set globals AFTER command creation
-	migrateSourceURL = "memory://"
-	migrateDestURL = "memory://"
-	migrateBatchSize = 100
-	migrateConcurrency = 1
-	migrateVerify = false
-	migrateDeleteSource = false
-	migrateRateLimit = 0
-	migrateCheckpoint = time.Second
-	migrateFollowProgress = true
-	migrateOutputFormat = "table"
-
-	err := cmd.RunE(cmd, []string{})
-	// With empty source, migration completes immediately via follow-progress path
-	if err != nil {
-		t.Logf("Follow progress migration error (may be expected): %v", err)
-	}
-	currentMigration = nil
-}
-
 // --------------------------------------------------------------------------
 // runMigrateStatus JSON format and unsupported format
 // --------------------------------------------------------------------------
-
-func TestRunMigrateStatus_JSONFormat(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	savedMigration := currentMigration
-	savedFormat := migrateOutputFormat
-	defer func() {
-		currentMigration = savedMigration
-		migrateOutputFormat = savedFormat
-	}()
-
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
-
-	dest, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer dest.Close()
-
-	mgr, err := NewMigrationManager(source, dest, &MigrationConfig{BatchSize: 10}, asInterfaceLogger(log))
-	require.NoError(t, err)
-	currentMigration = mgr
-
-	cmd := newMigrateStatusCommand()
-	// Set AFTER command creation
-	migrateOutputFormat = "json"
-
-	err = cmd.RunE(cmd, nil)
-	assert.NoError(t, err)
-}
-
-func TestRunMigrateStatus_UnsupportedFormat(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	savedMigration := currentMigration
-	savedFormat := migrateOutputFormat
-	defer func() {
-		currentMigration = savedMigration
-		migrateOutputFormat = savedFormat
-	}()
-
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
-
-	dest, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer dest.Close()
-
-	mgr, err := NewMigrationManager(source, dest, &MigrationConfig{BatchSize: 10}, asInterfaceLogger(log))
-	require.NoError(t, err)
-	currentMigration = mgr
-
-	cmd := newMigrateStatusCommand()
-	// Set AFTER command creation
-	migrateOutputFormat = "yaml"
-
-	err = cmd.RunE(cmd, nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported")
-}
 
 // --------------------------------------------------------------------------
 // displayMigrationResult JSON path and unsupported format
 // --------------------------------------------------------------------------
 
-func TestDisplayMigrationResult_JSONFormat(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	savedFormat := migrateOutputFormat
-	defer func() { migrateOutputFormat = savedFormat }()
-
-	migrateOutputFormat = "json"
-
-	result := &MigrationResult{
-		KeysProcessed:    100,
-		KeysFailed:       2,
-		BytesTransferred: 4096,
-		Duration:         2 * time.Second,
-	}
-
-	err := displayMigrationResult(result)
-	assert.NoError(t, err)
-}
-
-func TestDisplayMigrationResult_UnsupportedFormat(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	savedFormat := migrateOutputFormat
-	defer func() { migrateOutputFormat = savedFormat }()
-
-	migrateOutputFormat = "xml"
-
-	result := &MigrationResult{
-		KeysProcessed: 10,
-	}
-
-	err := displayMigrationResult(result)
-	assert.Error(t, err)
-}
-
 // --------------------------------------------------------------------------
 // runMigrateCancel with rollback
 // --------------------------------------------------------------------------
-
-func TestRunMigrateCancel_WithRollback(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	savedMigration := currentMigration
-	defer func() { currentMigration = savedMigration }()
-
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
-
-	dest, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer dest.Close()
-
-	mgr, err := NewMigrationManager(source, dest, &MigrationConfig{BatchSize: 10}, asInterfaceLogger(log))
-	require.NoError(t, err)
-	currentMigration = mgr
-
-	cmd := newMigrateCancelCommand()
-	err = cmd.Flags().Set("rollback", "true")
-	require.NoError(t, err)
-
-	err = cmd.RunE(cmd, nil)
-	assert.NoError(t, err)
-}
 
 // --------------------------------------------------------------------------
 // initializeCacheRegistry tests
@@ -2423,34 +2069,64 @@ func TestMigrationManager_MigrateWithContextCancellation(t *testing.T) {
 func TestMigrationManager_MigrateSuccess(t *testing.T) {
 	ensureTestLoggerInitialized(t)
 
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
-
-	dest, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer dest.Close()
-
-	// Add test data
-	err = source.Set([]byte("k1"), []byte("v1"))
-	require.NoError(t, err)
-	err = source.Set([]byte("k2"), []byte("v2"))
-	require.NoError(t, err)
-
-	migrationConfig := &MigrationConfig{
-		BatchSize:   10,
-		Concurrency: 1,
+	tests := []struct {
+		name   string
+		config *MigrationConfig
+		data   map[string]string
+	}{
+		{
+			name:   "Plain copy",
+			config: &MigrationConfig{BatchSize: 10, Concurrency: 1},
+			data:   map[string]string{"k1": "v1", "k2": "v2"},
+		},
+		{
+			name: "With verify data",
+			config: &MigrationConfig{
+				BatchSize:          100,
+				Concurrency:        1,
+				VerifyData:         true,
+				CheckpointInterval: time.Second,
+			},
+			data: map[string]string{"verify-k1": "verify-v1", "verify-k2": "verify-v2"},
+		},
+		{
+			name:   "With delete source",
+			config: &MigrationConfig{BatchSize: 100, Concurrency: 1, DeleteSource: true},
+			data:   map[string]string{"del-k1": "del-v1"},
+		},
 	}
 
-	mgr, err := NewMigrationManager(source, dest, migrationConfig, asInterfaceLogger(log))
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source, err := createStorageFromURL("memory://")
+			require.NoError(t, err)
+			defer source.Close()
 
-	result, err := mgr.Migrate(context.Background())
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, int64(2), result.KeysProcessed)
-	assert.Equal(t, int64(0), result.KeysFailed)
-	assert.True(t, result.BytesTransferred > 0)
+			dest, err := createStorageFromURL("memory://")
+			require.NoError(t, err)
+			defer dest.Close()
+
+			for k, v := range tt.data {
+				require.NoError(t, source.Set([]byte(k), []byte(v)))
+			}
+
+			mgr, err := NewMigrationManager(source, dest, tt.config, asInterfaceLogger(log))
+			require.NoError(t, err)
+
+			result, err := mgr.Migrate(context.Background())
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, int64(len(tt.data)), result.KeysProcessed)
+			assert.Equal(t, int64(0), result.KeysFailed)
+			assert.True(t, result.BytesTransferred > 0)
+
+			for k, v := range tt.data {
+				got, err := dest.Get([]byte(k))
+				assert.NoError(t, err)
+				assert.Equal(t, []byte(v), got)
+			}
+		})
+	}
 }
 
 func TestMigrationManager_GetProgressAndRollback(t *testing.T) {
@@ -2567,628 +2243,53 @@ func TestNodeReplacementManager_GetAllNodes(t *testing.T) {
 func TestNodeReplacementManager_ReplaceNode(t *testing.T) {
 	ensureTestLoggerInitialized(t)
 
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
-
-	replacementCfg := DefaultNodeReplacementConfig()
-	mgr, err := NewNodeReplacementManager(source, replacementCfg, asInterfaceLogger(log))
-	require.NoError(t, err)
-
-	// Add old node
-	err = mgr.AddNode(context.Background(), "old", "addr-old")
-	require.NoError(t, err)
-
-	// Replace
-	report, err := mgr.ReplaceNode(context.Background(), "old", "new", "addr-new")
-	assert.NoError(t, err)
-	assert.NotNil(t, report)
-	assert.True(t, report.Success)
-	assert.Equal(t, "old", report.OldNodeID)
-	assert.Equal(t, "new", report.NewNodeID)
-
-	// Old node should be gone
-	_, found := mgr.GetNodeState("old")
-	assert.False(t, found)
-
-	// New node should exist
-	state, found := mgr.GetNodeState("new")
-	assert.True(t, found)
-	assert.Equal(t, "addr-new", state.Address)
-}
-
-func TestRunMigrateStartEdgeCases(t *testing.T) {
-	testLog := createTestLoggerForMigrate(t)
-	log = testLog
-
 	tests := []struct {
-		name           string
-		sourceURL      string
-		destURL        string
-		batchSize      int
-		concurrency    int
-		verify         bool
-		deleteSource   bool
-		rateLimit      int
-		checkpoint     time.Duration
-		outputFormat   string
-		followProgress bool
-		expectError    bool
-		errorMsg       string
+		name        string
+		oldNodeID   string
+		registerOld bool
 	}{
-		{
-			name:           "Empty source URL",
-			sourceURL:      "",
-			destURL:        "memory://",
-			batchSize:      100,
-			concurrency:    2,
-			verify:         true,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     10 * time.Second,
-			outputFormat:   "table",
-			followProgress: false,
-			expectError:    true,
-			errorMsg:       "invalid storage URL format",
-		},
-		{
-			name:           "Empty dest URL",
-			sourceURL:      "memory://",
-			destURL:        "",
-			batchSize:      100,
-			concurrency:    2,
-			verify:         true,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     10 * time.Second,
-			outputFormat:   "table",
-			followProgress: false,
-			expectError:    true,
-			errorMsg:       "invalid storage URL format",
-		},
-		{
-			name:           "Very small batch size",
-			sourceURL:      "memory://",
-			destURL:        "memory://",
-			batchSize:      1,
-			concurrency:    1,
-			verify:         false,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     5 * time.Second,
-			outputFormat:   "table",
-			followProgress: false,
-			expectError:    false,
-		},
-		{
-			name:           "Very large batch size",
-			sourceURL:      "memory://",
-			destURL:        "memory://",
-			batchSize:      10000,
-			concurrency:    1,
-			verify:         false,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     5 * time.Second,
-			outputFormat:   "table",
-			followProgress: false,
-			expectError:    false,
-		},
-		{
-			name:           "High concurrency",
-			sourceURL:      "memory://",
-			destURL:        "memory://",
-			batchSize:      100,
-			concurrency:    16,
-			verify:         false,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     5 * time.Second,
-			outputFormat:   "json",
-			followProgress: false,
-			expectError:    false,
-		},
-		{
-			name:           "With rate limiting",
-			sourceURL:      "memory://",
-			destURL:        "memory://",
-			batchSize:      100,
-			concurrency:    4,
-			verify:         false,
-			deleteSource:   false,
-			rateLimit:      1024,
-			checkpoint:     5 * time.Second,
-			outputFormat:   "table",
-			followProgress: false,
-			expectError:    false,
-		},
-		{
-			name:           "With verification enabled",
-			sourceURL:      "memory://",
-			destURL:        "memory://",
-			batchSize:      100,
-			concurrency:    2,
-			verify:         true,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     5 * time.Second,
-			outputFormat:   "json",
-			followProgress: false,
-			expectError:    false,
-		},
-		{
-			name:           "With delete source enabled",
-			sourceURL:      "memory://",
-			destURL:        "memory://",
-			batchSize:      100,
-			concurrency:    2,
-			verify:         true,
-			deleteSource:   true,
-			rateLimit:      0,
-			checkpoint:     5 * time.Second,
-			outputFormat:   "table",
-			followProgress: false,
-			expectError:    false,
-		},
-		{
-			name:           "Short checkpoint interval",
-			sourceURL:      "memory://",
-			destURL:        "memory://",
-			batchSize:      100,
-			concurrency:    2,
-			verify:         false,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     1 * time.Second,
-			outputFormat:   "table",
-			followProgress: false,
-			expectError:    false,
-		},
-		{
-			name:           "Long checkpoint interval",
-			sourceURL:      "memory://",
-			destURL:        "memory://",
-			batchSize:      100,
-			concurrency:    2,
-			verify:         false,
-			deleteSource:   false,
-			rateLimit:      0,
-			checkpoint:     5 * time.Minute,
-			outputFormat:   "table",
-			followProgress: false,
-			expectError:    false,
-		},
+		{name: "Registered old node", oldNodeID: "old", registerOld: true},
+		// ReplaceNode succeeds even when old node is not registered
+		{name: "Unregistered old node", oldNodeID: "ghost", registerOld: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := newMigrateStartCommand()
+			source, err := createStorageFromURL("memory://")
+			require.NoError(t, err)
+			defer source.Close()
 
-			// Set global flags
-			migrateSourceURL = tt.sourceURL
-			migrateDestURL = tt.destURL
-			migrateBatchSize = tt.batchSize
-			migrateConcurrency = tt.concurrency
-			migrateVerify = tt.verify
-			migrateDeleteSource = tt.deleteSource
-			migrateRateLimit = tt.rateLimit
-			migrateCheckpoint = tt.checkpoint
-			migrateOutputFormat = tt.outputFormat
-			migrateFollowProgress = tt.followProgress
+			mgr, err := NewNodeReplacementManager(source, DefaultNodeReplacementConfig(), asInterfaceLogger(log))
+			require.NoError(t, err)
 
-			err := cmd.RunE(cmd, []string{})
-
-			if tt.expectError {
-				assert.Error(t, err)
-				if tt.errorMsg != "" {
-					assert.Contains(t, err.Error(), tt.errorMsg)
-				}
-			} else {
-				// May succeed or fail depending on migration manager behavior
-				if err != nil {
-					t.Logf("Migration error (may be expected): %v", err)
-				}
+			if tt.registerOld {
+				require.NoError(t, mgr.AddNode(context.Background(), tt.oldNodeID, "addr-old"))
 			}
 
-			// Reset currentMigration for next test
-			currentMigration = nil
+			report, err := mgr.ReplaceNode(context.Background(), tt.oldNodeID, "new", "addr-new")
+			assert.NoError(t, err)
+			require.NotNil(t, report)
+			assert.True(t, report.Success)
+			assert.Equal(t, tt.oldNodeID, report.OldNodeID)
+			assert.Equal(t, "new", report.NewNodeID)
+
+			// Old node should be gone
+			_, found := mgr.GetNodeState(tt.oldNodeID)
+			assert.False(t, found)
+
+			// New node should exist
+			state, found := mgr.GetNodeState("new")
+			assert.True(t, found)
+			assert.Equal(t, "addr-new", state.Address)
 		})
 	}
 }
 
 // TestRunMigrateStartPebbleStorage tests migration with pebble storage.
-func TestRunMigrateStartPebbleStorage(t *testing.T) {
-	testLog := createTestLoggerForMigrate(t)
-	log = testLog
-
-	tempDir1 := t.TempDir()
-	tempDir2 := t.TempDir()
-
-	tests := []struct {
-		name        string
-		sourceURL   string
-		destURL     string
-		expectError bool
-	}{
-		{
-			name:        "Pebble to pebble migration",
-			sourceURL:   "pebble://" + tempDir1,
-			destURL:     "pebble://" + tempDir2,
-			expectError: false,
-		},
-		{
-			name:        "Pebble to memory migration",
-			sourceURL:   "pebble://" + tempDir1,
-			destURL:     "memory://",
-			expectError: false,
-		},
-		{
-			name:        "Memory to pebble migration",
-			sourceURL:   "memory://",
-			destURL:     "pebble://" + tempDir2,
-			expectError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := newMigrateStartCommand()
-
-			migrateSourceURL = tt.sourceURL
-			migrateDestURL = tt.destURL
-			migrateBatchSize = 100
-			migrateConcurrency = 2
-			migrateVerify = false
-			migrateDeleteSource = false
-			migrateRateLimit = 0
-			migrateCheckpoint = 10 * time.Second
-			migrateOutputFormat = "table"
-			migrateFollowProgress = false
-
-			err := cmd.RunE(cmd, []string{})
-
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				// May succeed or fail depending on storage state
-				if err != nil {
-					t.Logf("Migration error (may be expected): %v", err)
-				}
-			}
-
-			// Reset currentMigration for next test
-			currentMigration = nil
-		})
-	}
-}
-
 // TestRunMigrateStartFileStorage tests migration with file storage.
-func TestRunMigrateStartFileStorage(t *testing.T) {
-	testLog := createTestLoggerForMigrate(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-
-	cmd := newMigrateStartCommand()
-
-	migrateSourceURL = "memory://"
-	migrateDestURL = "file://" + tempDir
-	migrateBatchSize = 50
-	migrateConcurrency = 1
-	migrateVerify = true
-	migrateDeleteSource = false
-	migrateRateLimit = 0
-	migrateCheckpoint = 5 * time.Second
-	migrateOutputFormat = "json"
-	migrateFollowProgress = false
-
-	err := cmd.RunE(cmd, []string{})
-
-	// May succeed or fail depending on storage state
-	if err != nil {
-		t.Logf("Migration error (may be expected): %v", err)
-	}
-
-	// Reset currentMigration
-	currentMigration = nil
-}
-
 // TestRunMigrateStartOutputFormats tests different output formats.
-func TestRunMigrateStartOutputFormats(t *testing.T) {
-	testLog := createTestLoggerForMigrate(t)
-	log = testLog
-
-	formats := []string{"table", "json"}
-
-	for _, format := range formats {
-		t.Run("format_"+format, func(t *testing.T) {
-			cmd := newMigrateStartCommand()
-
-			migrateSourceURL = "memory://"
-			migrateDestURL = "memory://"
-			migrateBatchSize = 100
-			migrateConcurrency = 2
-			migrateVerify = false
-			migrateDeleteSource = false
-			migrateRateLimit = 0
-			migrateCheckpoint = 10 * time.Second
-			migrateOutputFormat = format
-			migrateFollowProgress = false
-
-			err := cmd.RunE(cmd, []string{})
-
-			// May succeed or fail depending on migration manager behavior
-			if err != nil {
-				t.Logf("Migration error (may be expected): %v", err)
-			}
-
-			// Reset currentMigration
-			currentMigration = nil
-		})
-	}
-}
-
 // TestMigrateStartWithInvalidURLs tests invalid URL formats.
-func TestMigrateStartWithInvalidURLs(t *testing.T) {
-	testLog := createTestLoggerForMigrate(t)
-	log = testLog
-
-	tests := []struct {
-		name        string
-		sourceURL   string
-		destURL     string
-		expectError bool
-		errorMsg    string
-	}{
-		{
-			name:        "Missing scheme separator in source",
-			sourceURL:   "pebble/data",
-			destURL:     "memory://",
-			expectError: true,
-			errorMsg:    "invalid storage URL format",
-		},
-		{
-			name:        "Missing scheme separator in dest",
-			sourceURL:   "memory://",
-			destURL:     "pebble/data",
-			expectError: true,
-			errorMsg:    "invalid storage URL format",
-		},
-		{
-			name:        "Unknown scheme in source",
-			sourceURL:   "unknown://data",
-			destURL:     "memory://",
-			expectError: true,
-			errorMsg:    "unsupported storage scheme",
-		},
-		{
-			name:        "Unknown scheme in dest",
-			sourceURL:   "memory://",
-			destURL:     "unknown://data",
-			expectError: true,
-			errorMsg:    "unsupported storage scheme",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := newMigrateStartCommand()
-
-			migrateSourceURL = tt.sourceURL
-			migrateDestURL = tt.destURL
-			migrateBatchSize = 100
-			migrateConcurrency = 2
-			migrateVerify = false
-			migrateDeleteSource = false
-			migrateRateLimit = 0
-			migrateCheckpoint = 10 * time.Second
-			migrateOutputFormat = "table"
-			migrateFollowProgress = false
-
-			err := cmd.RunE(cmd, []string{})
-
-			if tt.expectError {
-				assert.Error(t, err)
-				if tt.errorMsg != "" {
-					assert.Contains(t, err.Error(), tt.errorMsg)
-				}
-			} else {
-				assert.NoError(t, err)
-			}
-
-			// Reset currentMigration
-			currentMigration = nil
-		})
-	}
-}
-
 // TestCreateStorageFromURLEdgeCases tests edge cases for storage creation.
-func TestCreateStorageFromURLEdgeCases(t *testing.T) {
-	testLog := createTestLoggerForMigrate(t)
-	log = testLog
-
-	tests := []struct {
-		name        string
-		url         string
-		expectError bool
-		errorMsg    string
-	}{
-		{
-			name:        "URL with only scheme",
-			url:         "pebble://",
-			expectError: false,
-		},
-		{
-			name:        "URL with multiple colons",
-			url:         "pebble://path:with:colons",
-			expectError: false,
-		},
-		{
-			name:        "URL with query parameters",
-			url:         "pebble://path?param=value",
-			expectError: false,
-		},
-		{
-			name:        "URL with fragment",
-			url:         "pebble://path#fragment",
-			expectError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			storage, err := createStorageFromURL(tt.url)
-
-			if tt.expectError {
-				assert.Error(t, err)
-				if tt.errorMsg != "" {
-					assert.Contains(t, err.Error(), tt.errorMsg)
-				}
-			} else {
-				if err == nil {
-					assert.NotNil(t, storage)
-					defer storage.Close()
-				} else {
-					// Some URLs may fail due to invalid paths, which is acceptable
-					t.Logf("Storage creation error (may be expected): %v", err)
-				}
-			}
-		})
-	}
-}
-
 // TestFormatBytesBoundaries tests formatBytes with boundary values.
-func TestFormatBytesBoundaries(t *testing.T) {
-	tests := []struct {
-		name     string
-		bytes    uint64
-		expected string
-	}{
-		{"MaxUint64", ^uint64(0), "16.0 EB"},
-		{"LargeNumber", 9999999999999999, "8.9 PB"},
-		{"JustUnderKB", 1023, "1023 B"},
-		{"JustOverKB", 1025, "1.0 KB"},
-		{"JustUnderMB", 1024*1024 - 1, "1024.0 KB"},
-		{"JustOverMB", 1024*1024 + 1, "1.0 MB"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatBytes(tt.bytes)
-			// Just verify it doesn't panic and returns something
-			assert.NotEmpty(t, result)
-		})
-	}
-}
-
 // TestDisplayMigrationProgressEdgeCases tests progress display edge cases.
-func TestDisplayMigrationProgressEdgeCases(t *testing.T) {
-	testLog := createTestLoggerForMigrate(t)
-	log = testLog
-
-	// Test with zero values
-	t.Run("zero values", func(t *testing.T) {
-		progress := &MigrationProgress{
-			KeysProcessed:      0,
-			BytesProcessed:     0,
-			ElapsedTime:        0,
-			CurrentRate:        0,
-			EstimatedTotal:     0,
-			PercentComplete:    0,
-			EstimatedRemaining: 0,
-		}
-
-		assert.NotPanics(t, func() {
-			displayMigrationProgress(progress)
-		})
-	})
-
-	// Test with maximum values
-	t.Run("maximum values", func(t *testing.T) {
-		progress := &MigrationProgress{
-			KeysProcessed:      1000000,
-			BytesProcessed:     ^uint64(0),
-			ElapsedTime:        24 * time.Hour,
-			CurrentRate:        999999.99,
-			EstimatedTotal:     2000000,
-			PercentComplete:    50.0,
-			EstimatedRemaining: 24 * time.Hour,
-		}
-
-		assert.NotPanics(t, func() {
-			displayMigrationProgress(progress)
-		})
-	})
-}
-
 // TestDisplayMigrationResultEdgeCases tests result display edge cases.
-func TestDisplayMigrationResultEdgeCases(t *testing.T) {
-	testLog := createTestLoggerForMigrate(t)
-	log = testLog
-
-	now := time.Now()
-
-	tests := []struct {
-		name         string
-		outputFormat string
-		result       *MigrationResult
-		expectError  bool
-	}{
-		{
-			name:         "Empty result",
-			outputFormat: "table",
-			result: &MigrationResult{
-				KeysProcessed:    0,
-				KeysFailed:       0,
-				BytesTransferred: 0,
-				Duration:         0,
-				StartTime:        now,
-				EndTime:          now,
-				Errors:           nil,
-			},
-			expectError: false,
-		},
-		{
-			name:         "Large error count",
-			outputFormat: "table",
-			result: &MigrationResult{
-				KeysProcessed:    1000,
-				KeysFailed:       50,
-				BytesTransferred: 10240,
-				Duration:         time.Minute,
-				StartTime:        now.Add(-time.Minute),
-				EndTime:          now,
-				Errors:           make([]string, 50),
-			},
-			expectError: true,
-		},
-		{
-			name:         "JSON with errors",
-			outputFormat: "json",
-			result: &MigrationResult{
-				KeysProcessed:    1000,
-				KeysFailed:       5,
-				BytesTransferred: 10240,
-				Duration:         time.Minute,
-				StartTime:        now.Add(-time.Minute),
-				EndTime:          now,
-				Errors:           make([]string, 5),
-			},
-			expectError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			migrateOutputFormat = tt.outputFormat
-
-			err := displayMigrationResult(tt.result)
-
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}

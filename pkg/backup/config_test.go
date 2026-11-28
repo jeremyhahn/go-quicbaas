@@ -33,11 +33,16 @@ import (
 )
 
 func TestConfig_Validate(t *testing.T) {
+	const defaultWorkDir = "/tmp/quicbaas-backups"
 	tests := []struct {
 		name        string
 		config      *Config
 		wantErr     bool
 		errContains string
+		// Validate fills in Timeout and WorkDir; these are the values a
+		// valid config holds afterwards.
+		wantTimeout time.Duration
+		wantWorkDir string
 	}{
 		{
 			name: "valid config with local storage",
@@ -48,7 +53,8 @@ func TestConfig_Validate(t *testing.T) {
 				WorkDir:            "/tmp/backups",
 				Timeout:            5 * time.Minute,
 			},
-			wantErr: false,
+			wantTimeout: 5 * time.Minute,
+			wantWorkDir: "/tmp/backups",
 		},
 		{
 			name: "valid config with S3 storage",
@@ -59,7 +65,17 @@ func TestConfig_Validate(t *testing.T) {
 				WorkDir:            "/tmp/backups",
 				Timeout:            5 * time.Minute,
 			},
-			wantErr: false,
+			wantTimeout: 5 * time.Minute,
+			wantWorkDir: "/tmp/backups",
+		},
+		{
+			name: "valid config with none compression",
+			config: &Config{
+				StorageBackend:     "local",
+				DefaultCompression: CompressionNone,
+			},
+			wantTimeout: 30 * time.Minute,
+			wantWorkDir: defaultWorkDir,
 		},
 		{
 			name: "valid config with encryption",
@@ -71,7 +87,52 @@ func TestConfig_Validate(t *testing.T) {
 				WorkDir:            "/tmp/backups",
 				Timeout:            5 * time.Minute,
 			},
-			wantErr: false,
+			wantTimeout: 5 * time.Minute,
+			wantWorkDir: "/tmp/backups",
+		},
+		{
+			name: "valid config with GCS",
+			config: &Config{
+				StorageBackend: "gcs",
+				Timeout:        1 * time.Minute,
+			},
+			wantTimeout: 1 * time.Minute,
+			wantWorkDir: defaultWorkDir,
+		},
+		{
+			name: "valid config with Azure",
+			config: &Config{
+				StorageBackend: "azure",
+				Timeout:        1 * time.Minute,
+			},
+			wantTimeout: 1 * time.Minute,
+			wantWorkDir: defaultWorkDir,
+		},
+		{
+			name: "zero timeout gets default",
+			config: &Config{
+				StorageBackend: "local",
+			},
+			wantTimeout: 30 * time.Minute,
+			wantWorkDir: defaultWorkDir,
+		},
+		{
+			name: "negative timeout gets default",
+			config: &Config{
+				StorageBackend: "local",
+				Timeout:        -1 * time.Minute,
+			},
+			wantTimeout: 30 * time.Minute,
+			wantWorkDir: defaultWorkDir,
+		},
+		{
+			name: "relative work dir is kept",
+			config: &Config{
+				StorageBackend: "local",
+				WorkDir:        "backups",
+			},
+			wantTimeout: 30 * time.Minute,
+			wantWorkDir: "backups",
 		},
 		{
 			name: "missing storage backend",
@@ -85,6 +146,14 @@ func TestConfig_Validate(t *testing.T) {
 			name: "unsupported storage backend",
 			config: &Config{
 				StorageBackend: "unsupported",
+			},
+			wantErr:     true,
+			errContains: "unsupported storage backend",
+		},
+		{
+			name: "storage backend is case sensitive",
+			config: &Config{
+				StorageBackend: "Local",
 			},
 			wantErr:     true,
 			errContains: "unsupported storage backend",
@@ -108,11 +177,31 @@ func TestConfig_Validate(t *testing.T) {
 			errContains: "unsupported encryption type",
 		},
 		{
-			name: "AES encryption with wrong key size",
+			name: "AES encryption with 16 byte key",
 			config: &Config{
 				StorageBackend:    "local",
 				DefaultEncryption: EncryptionAES256GCM,
 				EncryptionKey:     make([]byte, 16),
+			},
+			wantErr:     true,
+			errContains: "32 bytes",
+		},
+		{
+			name: "AES encryption with 31 byte key",
+			config: &Config{
+				StorageBackend:    "local",
+				DefaultEncryption: EncryptionAES256GCM,
+				EncryptionKey:     make([]byte, 31),
+			},
+			wantErr:     true,
+			errContains: "32 bytes",
+		},
+		{
+			name: "AES encryption with 33 byte key",
+			config: &Config{
+				StorageBackend:    "local",
+				DefaultEncryption: EncryptionAES256GCM,
+				EncryptionKey:     make([]byte, 33),
 			},
 			wantErr:     true,
 			errContains: "32 bytes",
@@ -126,43 +215,19 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr:     true,
 			errContains: "32 bytes",
 		},
-		{
-			name: "valid config with GCS",
-			config: &Config{
-				StorageBackend: "gcs",
-				Timeout:        1 * time.Minute,
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid config with Azure",
-			config: &Config{
-				StorageBackend: "azure",
-				Timeout:        1 * time.Minute,
-			},
-			wantErr: false,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.config.Validate()
 			if tt.wantErr {
-				assert.Error(t, err)
-				if tt.errContains != "" {
-					assert.Contains(t, err.Error(), tt.errContains)
-				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
 				return
 			}
 			require.NoError(t, err)
-
-			// Verify defaults are applied during validation
-			if tt.config.Timeout == 0 {
-				assert.Equal(t, 30*time.Minute, tt.config.Timeout)
-			}
-			if tt.config.WorkDir == "" {
-				assert.Equal(t, "/tmp/quicbaas-backups", tt.config.WorkDir)
-			}
+			assert.Equal(t, tt.wantTimeout, tt.config.Timeout)
+			assert.Equal(t, tt.wantWorkDir, tt.config.WorkDir)
 		})
 	}
 }
@@ -224,6 +289,7 @@ func TestConfig_WithDefaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			original := *tt.config
 			result := tt.config.WithDefaults()
 
 			assert.Equal(t, tt.expectedComp, result.DefaultCompression)
@@ -231,292 +297,10 @@ func TestConfig_WithDefaults(t *testing.T) {
 			assert.Equal(t, tt.expectedTimeout, result.Timeout)
 			assert.Equal(t, tt.expectedWorkDir, result.WorkDir)
 
-			// Original config should not be modified
-			if tt.config.DefaultCompression == "" {
-				assert.Empty(t, tt.config.DefaultCompression)
-			}
+			// WithDefaults returns a copy; the receiver is not modified.
+			assert.Equal(t, original, *tt.config)
 		})
 	}
-}
-
-func TestConfig_ValidateAndApplyDefaults(t *testing.T) {
-	config := &Config{
-		StorageBackend: "local",
-	}
-
-	// Apply defaults
-	config = config.WithDefaults()
-
-	// Validate
-	err := config.Validate()
-	require.NoError(t, err)
-
-	// Check all defaults are set
-	assert.Equal(t, CompressionZstd, config.DefaultCompression)
-	assert.Equal(t, EncryptionNone, config.DefaultEncryption)
-	assert.Equal(t, 30*time.Minute, config.Timeout)
-	assert.Equal(t, "/tmp/quicbaas-backups", config.WorkDir)
-}
-
-func TestConfig_ValidateCompressionTypes(t *testing.T) {
-	tests := []struct {
-		name        string
-		compression CompressionType
-		wantErr     bool
-	}{
-		{"none", CompressionNone, false},
-		{"gzip", CompressionGzip, false},
-		{"zstd", CompressionZstd, false},
-		{"invalid", CompressionType("snappy"), true},
-		{"empty", CompressionType(""), false}, // Empty is ok, will get default
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				StorageBackend:     "local",
-				DefaultCompression: tt.compression,
-			}
-
-			err := config.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestConfig_ValidateEncryptionTypes(t *testing.T) {
-	tests := []struct {
-		name       string
-		encryption EncryptionType
-		key        []byte
-		wantErr    bool
-	}{
-		{"none", EncryptionNone, nil, false},
-		{"aes256gcm valid", EncryptionAES256GCM, make([]byte, 32), false},
-		{"aes256gcm short key", EncryptionAES256GCM, make([]byte, 16), true},
-		{"aes256gcm long key", EncryptionAES256GCM, make([]byte, 64), true},
-		{"invalid type", EncryptionType("invalid"), nil, true},
-		{"empty", EncryptionType(""), nil, false}, // Empty is ok, will get default
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				StorageBackend:    "local",
-				DefaultEncryption: tt.encryption,
-				EncryptionKey:     tt.key,
-			}
-
-			err := config.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestConfig_ValidateStorageBackends(t *testing.T) {
-	tests := []struct {
-		name    string
-		backend string
-		wantErr bool
-	}{
-		{"local", "local", false},
-		{"s3", "s3", false},
-		{"gcs", "gcs", false},
-		{"azure", "azure", false},
-		{"invalid", "invalid", true},
-		{"empty", "", true},
-		{"case sensitive", "Local", true},
-		{"case sensitive s3", "S3", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				StorageBackend: tt.backend,
-			}
-
-			err := config.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestConfig_TimeoutDefaults(t *testing.T) {
-	tests := []struct {
-		name            string
-		inputTimeout    time.Duration
-		expectedTimeout time.Duration
-	}{
-		{"zero timeout", 0, 30 * time.Minute},
-		{"negative timeout", -1 * time.Minute, 30 * time.Minute},
-		{"custom timeout", 10 * time.Minute, 10 * time.Minute},
-		{"very long timeout", 24 * time.Hour, 24 * time.Hour},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				StorageBackend: "local",
-				Timeout:        tt.inputTimeout,
-			}
-
-			err := config.Validate()
-			require.NoError(t, err)
-
-			assert.Equal(t, tt.expectedTimeout, config.Timeout)
-		})
-	}
-}
-
-func TestConfig_WorkDirDefaults(t *testing.T) {
-	tests := []struct {
-		name            string
-		inputWorkDir    string
-		expectedWorkDir string
-	}{
-		{"empty work dir", "", "/tmp/quicbaas-backups"},
-		{"custom work dir", "/custom/dir", "/custom/dir"},
-		{"relative path", "backups", "backups"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				StorageBackend: "local",
-				WorkDir:        tt.inputWorkDir,
-			}
-
-			err := config.Validate()
-			require.NoError(t, err)
-
-			assert.Equal(t, tt.expectedWorkDir, config.WorkDir)
-		})
-	}
-}
-
-func TestConfig_ScheduleConfig(t *testing.T) {
-	config := &Config{
-		StorageBackend: "local",
-		Schedule: &ScheduleConfig{
-			Enabled:        true,
-			CronExpression: "0 2 * * *",
-			BackupType:     BackupTypeFull,
-			RetentionPolicy: &RetentionPolicy{
-				MaxBackups: 10,
-				MaxAge:     30 * 24 * time.Hour,
-			},
-		},
-	}
-
-	err := config.Validate()
-	require.NoError(t, err)
-
-	assert.NotNil(t, config.Schedule)
-	assert.True(t, config.Schedule.Enabled)
-	assert.Equal(t, "0 2 * * *", config.Schedule.CronExpression)
-	assert.NotNil(t, config.Schedule.RetentionPolicy)
-}
-
-func TestConfig_StorageConfig(t *testing.T) {
-	config := &Config{
-		StorageBackend: "s3",
-		StorageConfig: map[string]string{
-			"bucket":     "my-bucket",
-			"region":     "us-east-1",
-			"access_key": "key",
-			"secret_key": "secret",
-		},
-	}
-
-	err := config.Validate()
-	require.NoError(t, err)
-
-	assert.NotNil(t, config.StorageConfig)
-	assert.Equal(t, "my-bucket", config.StorageConfig["bucket"])
-	assert.Equal(t, "us-east-1", config.StorageConfig["region"])
-}
-
-func TestConfig_EncryptionKeyValidation(t *testing.T) {
-	tests := []struct {
-		name    string
-		keyLen  int
-		wantErr bool
-	}{
-		{"1 byte", 1, true},
-		{"16 bytes", 16, true},
-		{"31 bytes", 31, true},
-		{"32 bytes", 32, false},
-		{"33 bytes", 33, true},
-		{"64 bytes", 64, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				StorageBackend:    "local",
-				DefaultEncryption: EncryptionAES256GCM,
-				EncryptionKey:     make([]byte, tt.keyLen),
-			}
-
-			err := config.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestConfig_NilSchedule(t *testing.T) {
-	config := &Config{
-		StorageBackend: "local",
-		Schedule:       nil,
-	}
-
-	err := config.Validate()
-	require.NoError(t, err)
-}
-
-func TestConfig_EmptyStorageConfig(t *testing.T) {
-	config := &Config{
-		StorageBackend: "local",
-		StorageConfig:  map[string]string{},
-	}
-
-	err := config.Validate()
-	require.NoError(t, err)
-}
-
-func TestConfig_WithDefaults_Immutability(t *testing.T) {
-	original := &Config{
-		StorageBackend: "local",
-	}
-
-	// Apply defaults
-	withDefaults := original.WithDefaults()
-
-	// Original should remain unchanged
-	assert.Empty(t, original.DefaultCompression)
-	assert.Empty(t, original.DefaultEncryption)
-	assert.Equal(t, time.Duration(0), original.Timeout)
-
-	// New config should have defaults
-	assert.Equal(t, CompressionZstd, withDefaults.DefaultCompression)
-	assert.Equal(t, EncryptionNone, withDefaults.DefaultEncryption)
-	assert.Equal(t, 30*time.Minute, withDefaults.Timeout)
 }
 
 func setupTestBackupManagerWithErrors(t *testing.T) (*BackupManager, *mockStorage, *MockStorageWithErrors) {
@@ -773,7 +557,7 @@ func TestListBackups_InvalidNextToken(t *testing.T) {
 	result, err := manager.listBackups(ctx, 10, "invalid-token-that-does-not-exist")
 	require.NoError(t, err)
 	// Should return 1 backup (all backups since token doesn't exist)
-	assert.GreaterOrEqual(t, len(result.Backups), 0)
+	assert.Len(t, result.Backups, 1)
 }
 
 // TestListBackups_ListError tests listBackups when backend list fails.
@@ -1092,93 +876,55 @@ func TestReadKeyValue_ShortRead(t *testing.T) {
 	assert.Nil(t, value)
 }
 
-// TestNewStorageBackend_UnsupportedBackend tests NewStorageBackend with unsupported backend.
-func TestNewStorageBackend_UnsupportedBackend(t *testing.T) {
-	config := &Config{
-		StorageBackend: "unsupported-backend",
-		WorkDir:        t.TempDir(),
-		StorageConfig: map[string]string{
-			"path": t.TempDir(),
+// TestNewStorageBackend_LocalAndUnsupported tests the storage backend factory
+// for the local backend and for a backend it does not know.
+func TestNewStorageBackend_LocalAndUnsupported(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  *Config
+		wantErr bool
+	}{
+		{
+			name: "local backend with path",
+			config: &Config{
+				StorageBackend: "local",
+				StorageConfig:  map[string]string{"path": t.TempDir()},
+			},
+		},
+		{
+			name: "local backend with nil storage config",
+			config: &Config{
+				StorageBackend: "local",
+			},
+			wantErr: true,
+		},
+		{
+			name: "unsupported backend",
+			config: &Config{
+				StorageBackend: "unsupported-backend",
+				WorkDir:        t.TempDir(),
+				StorageConfig:  map[string]string{"path": t.TempDir()},
+			},
+			wantErr: true,
 		},
 	}
 
-	backend, err := NewStorageBackend(config)
-	assert.Error(t, err)
-	assert.Nil(t, backend)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend, err := NewStorageBackend(tt.config)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, backend)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, backend)
+		})
+	}
 }
 
-func TestMockStorage_ExistsCoverage(t *testing.T) {
-	storage := NewMockStorage()
-	ctx := context.Background()
-
-	// Key does not exist
-	exists, err := storage.Exists(ctx, "nonexistent-key")
-	require.NoError(t, err)
-	assert.False(t, exists)
-
-	// Put a key
-	err = storage.Put("exists-key", bytes.NewReader([]byte("data")))
-	require.NoError(t, err)
-
-	// Key exists now
-	exists, err = storage.Exists(ctx, "exists-key")
-	require.NoError(t, err)
-	assert.True(t, exists)
-}
-
-// TestMockStorage_GetMetadataCoverage tests MockStorage.GetMetadata for various states.
-func TestMockStorage_GetMetadataCoverage(t *testing.T) {
-	storage := NewMockStorage()
-	ctx := context.Background()
-
-	// Get metadata for non-existent key
-	_, err := storage.GetMetadata(ctx, "no-key")
-	require.Error(t, err)
-
-	// Put data without metadata
-	err = storage.Put("bare-key", bytes.NewReader([]byte("data")))
-	require.NoError(t, err)
-
-	meta, err := storage.GetMetadata(ctx, "bare-key")
-	require.NoError(t, err)
-	assert.NotNil(t, meta)
-
-	// Put data with metadata
-	err = storage.PutWithMetadata(ctx, "meta-key", bytes.NewReader([]byte("data")), &common.Metadata{
-		ContentType: "text/plain",
-	})
-	require.NoError(t, err)
-
-	meta, err = storage.GetMetadata(ctx, "meta-key")
-	require.NoError(t, err)
-	assert.Equal(t, "text/plain", meta.ContentType)
-}
-
-// TestMockStorage_UpdateMetadataCoverage tests MockStorage.UpdateMetadata.
-func TestMockStorage_UpdateMetadataCoverage(t *testing.T) {
-	storage := NewMockStorage()
-	ctx := context.Background()
-
-	// Update on non-existent key
-	err := storage.UpdateMetadata(ctx, "no-key", &common.Metadata{})
-	require.Error(t, err)
-
-	// Put then update metadata
-	err = storage.Put("update-meta-key", bytes.NewReader([]byte("data")))
-	require.NoError(t, err)
-
-	err = storage.UpdateMetadata(ctx, "update-meta-key", &common.Metadata{
-		ContentType: "application/json",
-	})
-	require.NoError(t, err)
-
-	meta, err := storage.GetMetadata(ctx, "update-meta-key")
-	require.NoError(t, err)
-	assert.Equal(t, "application/json", meta.ContentType)
-}
-
-// TestMockStorage_DeleteWithContextCoverage tests MockStorage.DeleteWithContext.
-func TestMockStorage_DeleteWithContextCoverage(t *testing.T) {
+// TestMockStorage_DeleteWithContext tests MockStorage.DeleteWithContext.
+func TestMockStorage_DeleteWithContext(t *testing.T) {
 	storage := NewMockStorage()
 	ctx := context.Background()
 
@@ -1193,64 +939,6 @@ func TestMockStorage_DeleteWithContextCoverage(t *testing.T) {
 	// Verify deleted
 	_, err = storage.Get("ctx-del-key")
 	require.Error(t, err)
-}
-
-// TestMockStorage_ListWithContextCoverage tests MockStorage.ListWithContext.
-func TestMockStorage_ListWithContextCoverage(t *testing.T) {
-	storage := NewMockStorage()
-	ctx := context.Background()
-
-	// Put several keys with a prefix
-	err := storage.Put("prefix/a", bytes.NewReader([]byte("a")))
-	require.NoError(t, err)
-	err = storage.Put("prefix/b", bytes.NewReader([]byte("b")))
-	require.NoError(t, err)
-	err = storage.Put("other/c", bytes.NewReader([]byte("c")))
-	require.NoError(t, err)
-
-	keys, err := storage.ListWithContext(ctx, "prefix/")
-	require.NoError(t, err)
-	assert.Len(t, keys, 2)
-}
-
-// TestMockStorage_ListWithOptionsCoverage tests MockStorage.ListWithOptions with pagination.
-func TestMockStorage_ListWithOptionsCoverage(t *testing.T) {
-	storage := NewMockStorage()
-	ctx := context.Background()
-
-	// Put several keys
-	for i := 0; i < 5; i++ {
-		key := "list/" + string(rune('a'+i))
-		err := storage.Put(key, bytes.NewReader([]byte("data")))
-		require.NoError(t, err)
-	}
-
-	t.Run("list with nil options", func(t *testing.T) {
-		result, err := storage.ListWithOptions(ctx, nil)
-		require.NoError(t, err)
-		assert.NotNil(t, result)
-		assert.GreaterOrEqual(t, len(result.Objects), 5)
-	})
-
-	t.Run("list with prefix and max results", func(t *testing.T) {
-		result, err := storage.ListWithOptions(ctx, &common.ListOptions{
-			Prefix:     "list/",
-			MaxResults: 2,
-		})
-		require.NoError(t, err)
-		assert.Len(t, result.Objects, 2)
-	})
-}
-
-// TestMockStorage_ConfigureCoverage tests MockStorage.Configure.
-func TestMockStorage_ConfigureCoverage(t *testing.T) {
-	storage := NewMockStorage()
-
-	err := storage.Configure(map[string]string{
-		"region": "us-east-1",
-		"bucket": "test-bucket",
-	})
-	require.NoError(t, err)
 }
 
 // TestNoneCompressor_CompressDecompress tests the "none" compressor round trip.
@@ -1365,35 +1053,6 @@ func TestLocalStorage_DownloadSuccessPath(t *testing.T) {
 	downloaded, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	assert.Equal(t, backupData, downloaded)
-}
-
-// TestNewStorageBackend_LocalBackendSuccess verifies the local backend
-// is created successfully via the factory when a valid path is provided.
-func TestNewStorageBackend_LocalBackendSuccess(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := &Config{
-		StorageBackend: "local",
-		StorageConfig: map[string]string{
-			"path": tmpDir,
-		},
-	}
-
-	backend, err := NewStorageBackend(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, backend)
-}
-
-// TestNewStorageBackend_LocalBackendNilConfig verifies that providing
-// a nil StorageConfig to the local backend results in a factory error.
-func TestNewStorageBackend_LocalBackendNilConfig(t *testing.T) {
-	cfg := &Config{
-		StorageBackend: "local",
-		StorageConfig:  nil,
-	}
-
-	storage, err := NewStorageBackend(cfg)
-	assert.Error(t, err)
-	assert.Nil(t, storage)
 }
 
 func TestMockStorage_Configure(t *testing.T) {
@@ -1590,6 +1249,11 @@ func TestMockStorage_List(t *testing.T) {
 	assert.Len(t, keys, 2)
 	assert.Contains(t, keys, "prefix/key1")
 	assert.Contains(t, keys, "prefix/key2")
+
+	// ListWithContext applies the same prefix filter.
+	keys, err = storage.ListWithContext(context.Background(), "prefix/")
+	require.NoError(t, err)
+	assert.Len(t, keys, 2)
 }
 
 // TestMockStorage_ListWithOptions tests ListWithOptions method.
@@ -1623,6 +1287,11 @@ func TestMockStorage_ListWithOptions(t *testing.T) {
 	result2, err := storage.ListWithOptions(ctx, opts2)
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len(result2.Objects), 5)
+
+	// Nil options list every object.
+	all, err := storage.ListWithOptions(ctx, nil)
+	require.NoError(t, err)
+	assert.Len(t, all.Objects, 10)
 }
 
 // TestMockStorage_Archive tests Archive method.

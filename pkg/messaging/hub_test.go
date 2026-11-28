@@ -915,6 +915,7 @@ func TestNotificationHub_ClientRegistration(t *testing.T) {
 		}, testTimeout, testPollInterval)
 
 		hub.RegisterClient(nil)
+		hub.UnregisterClient(nil)
 
 		// Should not crash and client count should remain 0
 		assert.Equal(t, 0, hub.ClientCount())
@@ -1064,11 +1065,20 @@ func TestNotificationHub_RegisterAlreadyRegisteredClient(t *testing.T) {
 		// Register the same client again - should not increase count
 		hub.RegisterClient(client)
 
-		// Small delay to let the duplicate registration be processed
-		time.Sleep(50 * time.Millisecond)
+		// The barrier is an acknowledgment naming client-2, not the count:
+		// a duplicate that wrongly counted would itself make the count 2
+		// while client-2 is still queued. A plain subscribe (no register)
+		// succeeds only once the loop has registered client-2, and the
+		// register queue is FIFO, so the duplicate ahead of it has been
+		// handled by then.
+		client2 := NewClient("client-2", 256)
+		hub.RegisterClient(client2)
+		require.Eventually(t, func() bool {
+			return hub.SubscribeToChannel(client2, "duplicate-barrier") == nil
+		}, testTimeout, testPollInterval, "client-2's registration was never acknowledged")
 
-		// Count should still be 1
-		assert.Equal(t, 1, hub.ClientCount())
+		// The duplicate must not have been counted
+		assert.Equal(t, 2, hub.ClientCount())
 	})
 }
 
@@ -1086,6 +1096,15 @@ func TestNotificationHub_DeleteNonExistentChannel(t *testing.T) {
 
 		err := hub.DeleteChannel("non-existent")
 		require.Error(t, err)
+	})
+
+	t.Run("returns error for empty channel name", func(t *testing.T) {
+		t.Parallel()
+		hub := NewNotificationHub(newTestLogger(t))
+
+		err := hub.DeleteChannel("")
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrEmptyChannelName))
 	})
 }
 

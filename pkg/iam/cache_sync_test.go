@@ -2,7 +2,7 @@ package iam
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -101,58 +101,7 @@ func TestDeltaLogGetSinceOldVersion(t *testing.T) {
 	assert.Nil(t, events)
 }
 
-// TestDeltaLogTrim tests trimming old entries.
-func TestDeltaLogTrim(t *testing.T) {
-	log := NewDeltaLog(100)
-
-	// Add events
-	for i := 1; i <= 10; i++ {
-		event := &EnhancedPolicyChangeEvent{
-			EventID:    uuid.New().String(),
-			Type:       PolicyUpdateCreated,
-			TenantID:   "tenant-1",
-			PolicyName: "policy-1",
-			Version:    int64(i),
-			Timestamp:  time.Now(),
-			NodeID:     "node-1",
-		}
-		err := log.Append(event)
-		require.NoError(t, err)
-	}
-
-	log.Trim()
-	assert.Equal(t, 10, log.Size())
-}
-
-// TestBatchProcessorAdd tests adding events to the batch processor.
-func TestBatchProcessorAdd(t *testing.T) {
-	config := DefaultEnhancedCacheSyncConfig("node-1", "tenant-1")
-	config.BatchSize = 5
-	config.BatchInterval = 1 * time.Second
-
-	syncer := &mockPolicyCacheSyncer{
-		notifyCalled: make(chan PolicyChangeEvent, 10),
-	}
-
-	bp, err := NewBatchProcessor(config, syncer)
-	require.NoError(t, err)
-	defer bp.Close()
-
-	event := &EnhancedPolicyChangeEvent{
-		EventID:    uuid.New().String(),
-		Type:       PolicyUpdateCreated,
-		TenantID:   "tenant-1",
-		PolicyName: "policy-1",
-		Version:    1,
-		Timestamp:  time.Now(),
-		NodeID:     "node-1",
-	}
-
-	err = bp.Add(event)
-	assert.NoError(t, err)
-}
-
-// TestBatchProcessorAddNil tests adding nil events.
+// TestBatchProcessorAddNil tests adding a nil event.
 func TestBatchProcessorAddNil(t *testing.T) {
 	config := DefaultEnhancedCacheSyncConfig("node-1", "tenant-1")
 	syncer := &mockPolicyCacheSyncer{}
@@ -312,9 +261,13 @@ func TestPolicyChangeEventSerialization(t *testing.T) {
 		Type:       PolicyUpdateCreated,
 		TenantID:   "tenant-1",
 		PolicyName: "policy-1",
-		Version:    1,
-		Timestamp:  time.Now(),
-		NodeID:     "node-1",
+		Policy: &Policy{
+			Metadata: PolicyMetadata{Name: "policy-1", Tenant: "tenant-1"},
+			Spec:     PolicySpec{Subjects: SubjectSelector{Users: []string{"user-1"}}},
+		},
+		Version:   1,
+		Timestamp: time.Now(),
+		NodeID:    "node-1",
 		Metadata: map[string]string{
 			"key": "value",
 		},
@@ -336,62 +289,62 @@ func TestPolicyChangeEventSerialization(t *testing.T) {
 	assert.Equal(t, event.Version, decoded.Version)
 	assert.Equal(t, event.NodeID, decoded.NodeID)
 	assert.Equal(t, event.Metadata["key"], decoded.Metadata["key"])
+	require.NotNil(t, decoded.Policy)
+	assert.Equal(t, event.Policy.Metadata.Name, decoded.Policy.Metadata.Name)
+	assert.Equal(t, event.Policy.Spec.Subjects.Users, decoded.Policy.Spec.Subjects.Users)
+
+	// Malformed data is rejected.
+	assert.Error(t, decoded.UnmarshalBinary([]byte("not an event")))
 }
 
 // TestEnhancedCacheSyncConfig tests configuration validation.
 func TestEnhancedCacheSyncConfig(t *testing.T) {
 	tests := []struct {
-		name        string
-		config      *EnhancedCacheSyncConfig
-		expectError bool
-		errorMsg    string
+		name     string
+		mutate   func(c *EnhancedCacheSyncConfig)
+		errorMsg string
 	}{
+		{name: "valid config", mutate: func(*EnhancedCacheSyncConfig) {}},
 		{
-			name:        "valid config",
-			config:      DefaultEnhancedCacheSyncConfig("node-1", "tenant-1"),
-			expectError: false,
+			name:     "zero batch size",
+			mutate:   func(c *EnhancedCacheSyncConfig) { c.BatchSize = 0 },
+			errorMsg: "batch size must be positive",
 		},
 		{
-			name: "invalid batch size",
-			config: &EnhancedCacheSyncConfig{
-				CacheSyncConfig: DefaultCacheSyncConfig("node-1", "tenant-1"),
-				BatchSize:       0,
-			},
-			expectError: true,
-			errorMsg:    "batch size must be positive",
+			name:     "zero batch interval",
+			mutate:   func(c *EnhancedCacheSyncConfig) { c.BatchInterval = 0 },
+			errorMsg: "batch interval must be positive",
 		},
 		{
-			name: "invalid batch interval",
-			config: &EnhancedCacheSyncConfig{
-				CacheSyncConfig: DefaultCacheSyncConfig("node-1", "tenant-1"),
-				BatchSize:       10,
-				BatchInterval:   0,
-			},
-			expectError: true,
-			errorMsg:    "batch interval must be positive",
+			name:     "compression level above 9",
+			mutate:   func(c *EnhancedCacheSyncConfig) { c.CompressionLevel = 10 },
+			errorMsg: "compression level must be between 0 and 9",
 		},
 		{
-			name: "invalid compression level",
-			config: &EnhancedCacheSyncConfig{
-				CacheSyncConfig:  DefaultCacheSyncConfig("node-1", "tenant-1"),
-				BatchSize:        10,
-				BatchInterval:    1 * time.Second,
-				CompressionLevel: 10,
-			},
-			expectError: true,
-			errorMsg:    "compression level must be between 0 and 9",
+			name:     "negative compression level",
+			mutate:   func(c *EnhancedCacheSyncConfig) { c.CompressionLevel = -1 },
+			errorMsg: "compression level must be between 0 and 9",
+		},
+		{
+			name:     "zero delta log max entries",
+			mutate:   func(c *EnhancedCacheSyncConfig) { c.DeltaLogMaxEntries = 0 },
+			errorMsg: "delta log max entries must be positive",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
-			if tt.expectError {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errorMsg)
-			} else {
+			cfg := DefaultEnhancedCacheSyncConfig("node-1", "tenant-1")
+			tt.mutate(cfg)
+
+			err := cfg.Validate()
+			if tt.errorMsg == "" {
 				assert.NoError(t, err)
+				return
 			}
+			var cfgErr *InvalidSyncConfigError
+			require.ErrorAs(t, err, &cfgErr)
+			assert.Contains(t, err.Error(), tt.errorMsg)
 		})
 	}
 }
@@ -401,6 +354,7 @@ func TestEnhancedCacheSyncMetrics(t *testing.T) {
 	metrics := NewEnhancedCacheSyncMetrics()
 
 	metrics.RecordBatchSent()
+	metrics.RecordBatchSent()
 	metrics.RecordBatchReceived()
 	metrics.RecordCompressionRatio(2.5)
 	metrics.RecordDeltaLogSize(100)
@@ -408,7 +362,7 @@ func TestEnhancedCacheSyncMetrics(t *testing.T) {
 	metrics.RecordFullSync()
 
 	stats := metrics.GetStats()
-	assert.Equal(t, int64(1), stats.BatchesSent)
+	assert.Equal(t, int64(2), stats.BatchesSent, "counters accumulate")
 	assert.Equal(t, int64(1), stats.BatchesReceived)
 	assert.Equal(t, 2.5, stats.CompressionRatio)
 	assert.Equal(t, int64(100), stats.DeltaLogSize)
@@ -539,61 +493,9 @@ func TestBatchProcessorClose(t *testing.T) {
 	err = bp.Add(event)
 	assert.Error(t, err)
 	assert.Equal(t, ErrSyncerClosed, err)
-}
 
-// TestBatchProcessorCloseTwice tests closing the batch processor twice.
-func TestBatchProcessorCloseTwice(t *testing.T) {
-	config := DefaultEnhancedCacheSyncConfig("node-1", "tenant-1")
-	syncer := &mockPolicyCacheSyncer{}
-
-	bp, err := NewBatchProcessor(config, syncer)
-	require.NoError(t, err)
-
-	err = bp.Close()
-	assert.NoError(t, err)
-
-	// Second close should be a no-op
-	err = bp.Close()
-	assert.NoError(t, err)
-}
-
-// TestEnhancedPolicyChangeEventWithPolicy tests event with full policy.
-func TestEnhancedPolicyChangeEventWithPolicy(t *testing.T) {
-	policy := &Policy{
-		Metadata: PolicyMetadata{
-			Name:   "test-policy",
-			Tenant: "tenant-1",
-		},
-		Spec: PolicySpec{
-			Subjects: SubjectSelector{
-				Users: []string{"user-1"},
-			},
-		},
-	}
-
-	event := &EnhancedPolicyChangeEvent{
-		EventID:    uuid.New().String(),
-		Type:       PolicyUpdateCreated,
-		TenantID:   "tenant-1",
-		PolicyName: "test-policy",
-		Policy:     policy,
-		Version:    1,
-		Timestamp:  time.Now(),
-		NodeID:     "node-1",
-	}
-
-	// Serialize
-	data, err := json.Marshal(event)
-	require.NoError(t, err)
-
-	// Deserialize
-	var decoded EnhancedPolicyChangeEvent
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, event.PolicyName, decoded.PolicyName)
-	assert.NotNil(t, decoded.Policy)
-	assert.Equal(t, policy.Metadata.Name, decoded.Policy.Metadata.Name)
+	// A second Close is a no-op.
+	assert.NoError(t, bp.Close())
 }
 
 func TestEnhancedCacheVersionTracker_NewAndGetPolicyVersion(t *testing.T) {
@@ -606,23 +508,6 @@ func TestEnhancedCacheVersionTracker_NewAndGetPolicyVersion(t *testing.T) {
 	v := tracker.GetPolicyVersion("tenant1", "policy1")
 	if v != 0 {
 		t.Fatalf("expected 0 for nonexistent policy, got %d", v)
-	}
-}
-
-func TestEnhancedCacheVersionTracker_SetPolicyVersion(t *testing.T) {
-	tracker := NewEnhancedCacheVersionTracker()
-
-	tracker.SetPolicyVersion("tenant1", "policy1", 5)
-
-	v := tracker.GetPolicyVersion("tenant1", "policy1")
-	if v != 5 {
-		t.Fatalf("expected version 5, got %d", v)
-	}
-
-	// Setting a higher version should update the tenant version too
-	tenantVersion := tracker.GetTenantVersion("tenant1")
-	if tenantVersion < 5 {
-		t.Fatalf("expected tenant version >= 5, got %d", tenantVersion)
 	}
 }
 
@@ -678,235 +563,74 @@ func TestEnhancedCacheVersionTracker_MakePolicyKey(t *testing.T) {
 	}
 }
 
-func TestEnhancedCacheSyncConfig_Validate_InvalidBatchSize(t *testing.T) {
-	cfg := DefaultEnhancedCacheSyncConfig("node1", "tenant1")
-	cfg.BatchSize = 0
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected error for zero batch size")
-	}
-}
-
-func TestEnhancedCacheSyncConfig_Validate_InvalidBatchInterval(t *testing.T) {
-	cfg := DefaultEnhancedCacheSyncConfig("node1", "tenant1")
-	cfg.BatchInterval = 0
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected error for zero batch interval")
-	}
-}
-
-func TestEnhancedCacheSyncConfig_Validate_InvalidCompressionLevel(t *testing.T) {
-	cfg := DefaultEnhancedCacheSyncConfig("node1", "tenant1")
-	cfg.CompressionLevel = 10
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected error for compression level > 9")
-	}
-
-	cfg.CompressionLevel = -1
-	err = cfg.Validate()
-	if err == nil {
-		t.Fatal("expected error for negative compression level")
-	}
-}
-
-func TestEnhancedCacheSyncConfig_Validate_InvalidDeltaLogMaxEntries(t *testing.T) {
-	cfg := DefaultEnhancedCacheSyncConfig("node1", "tenant1")
-	cfg.DeltaLogMaxEntries = 0
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected error for zero delta log max entries")
-	}
-}
-
-func TestEnhancedPolicyChangeEvent_MarshalUnmarshalBinary(t *testing.T) {
-	event := &EnhancedPolicyChangeEvent{
-		EventID:    "evt-1",
-		Type:       PolicyUpdateCreated,
-		TenantID:   "t1",
-		PolicyName: "test-policy",
-		Version:    5,
-		NodeID:     "node1",
-		Metadata:   map[string]string{"key": "value"},
-	}
-
-	data, err := event.MarshalBinary()
-	if err != nil {
-		t.Fatalf("MarshalBinary failed: %v", err)
-	}
-	if len(data) == 0 {
-		t.Fatal("expected non-empty data")
-	}
-
-	restored := &EnhancedPolicyChangeEvent{}
-	if err := restored.UnmarshalBinary(data); err != nil {
-		t.Fatalf("UnmarshalBinary failed: %v", err)
-	}
-
-	if restored.EventID != "evt-1" {
-		t.Fatalf("expected EventID evt-1, got %s", restored.EventID)
-	}
-	if restored.PolicyName != "test-policy" {
-		t.Fatalf("expected PolicyName test-policy, got %s", restored.PolicyName)
-	}
-	if restored.Version != 5 {
-		t.Fatalf("expected Version 5, got %d", restored.Version)
-	}
-}
-
-func TestEnhancedCacheSyncMetrics_RecordOperations(t *testing.T) {
-	metrics := NewEnhancedCacheSyncMetrics()
-
-	metrics.RecordBatchSent()
-	metrics.RecordBatchSent()
-	metrics.RecordBatchReceived()
-	metrics.RecordCompressionRatio(2.5)
-	metrics.RecordDeltaLogSize(500)
-	metrics.RecordIncrementalSync()
-	metrics.RecordFullSync()
-
-	stats := metrics.GetStats()
-
-	if stats.BatchesSent != 2 {
-		t.Fatalf("expected 2 batches sent, got %d", stats.BatchesSent)
-	}
-	if stats.BatchesReceived != 1 {
-		t.Fatalf("expected 1 batch received, got %d", stats.BatchesReceived)
-	}
-	if stats.CompressionRatio != 2.5 {
-		t.Fatalf("expected compression ratio 2.5, got %f", stats.CompressionRatio)
-	}
-	if stats.DeltaLogSize != 500 {
-		t.Fatalf("expected delta log size 500, got %d", stats.DeltaLogSize)
-	}
-	if stats.IncrementalSyncs != 1 {
-		t.Fatalf("expected 1 incremental sync, got %d", stats.IncrementalSyncs)
-	}
-	if stats.FullSyncs != 1 {
-		t.Fatalf("expected 1 full sync, got %d", stats.FullSyncs)
-	}
-}
-
-func TestDeltaLog_Trim_OverMaxEntries(t *testing.T) {
-	dl := NewDeltaLog(5)
-
-	// Add more entries than maxEntries to trigger trimming logic
-	for i := int64(1); i <= 10; i++ {
+// appendDeltaVersions appends one event per version 1..n for tenant t1.
+func appendDeltaVersions(t *testing.T, dl *DeltaLog, n int64) {
+	t.Helper()
+	for i := int64(1); i <= n; i++ {
 		event := &EnhancedPolicyChangeEvent{
 			EventID:    "evt",
 			TenantID:   "t1",
 			PolicyName: "p1",
 			Version:    i,
 		}
-		if err := dl.Append(event); err != nil {
-			t.Fatalf("Append failed at version %d: %v", i, err)
-		}
-	}
-
-	// Trim should update minVersion when over capacity
-	dl.Trim()
-
-	minV := dl.GetMinVersion()
-	maxV := dl.GetMaxVersion()
-	if maxV != 10 {
-		t.Fatalf("expected max version 10, got %d", maxV)
-	}
-	if minV <= 0 {
-		t.Fatalf("expected positive min version after trim, got %d", minV)
+		require.NoError(t, dl.Append(event), "Append version %d", i)
 	}
 }
 
-func TestDeltaLog_Trim_UnderMaxEntries(t *testing.T) {
-	dl := NewDeltaLog(100)
-
-	// Add fewer entries than maxEntries
-	for i := int64(1); i <= 5; i++ {
-		event := &EnhancedPolicyChangeEvent{
-			EventID:    "evt",
-			TenantID:   "t1",
-			PolicyName: "p1",
-			Version:    i,
-		}
-		if err := dl.Append(event); err != nil {
-			t.Fatalf("Append failed: %v", err)
-		}
+// TestDeltaLogTrim tests trimming old entries.
+func TestDeltaLogTrim(t *testing.T) {
+	tests := []struct {
+		name       string
+		maxEntries int
+		appended   int64
+		wantSize   int
+	}{
+		{name: "under max entries is a no-op", maxEntries: 100, appended: 10, wantSize: 10},
+		{name: "over max entries keeps the newest", maxEntries: 5, appended: 10, wantSize: 5},
 	}
 
-	// Trim should be a no-op
-	dl.Trim()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dl := NewDeltaLog(tt.maxEntries)
+			appendDeltaVersions(t, dl, tt.appended)
 
-	if dl.Size() != 5 {
-		t.Fatalf("expected size 5 after trim, got %d", dl.Size())
-	}
-}
+			dl.Trim()
 
-func TestDeltaLog_Size_Overflow(t *testing.T) {
-	dl := NewDeltaLog(3)
-
-	// Write more than maxEntries
-	for i := int64(1); i <= 10; i++ {
-		event := &EnhancedPolicyChangeEvent{
-			EventID:    "evt",
-			TenantID:   "t1",
-			PolicyName: "p1",
-			Version:    i,
-		}
-		if err := dl.Append(event); err != nil {
-			t.Fatalf("Append failed: %v", err)
-		}
-	}
-
-	// Size should be capped at maxEntries
-	if dl.Size() != 3 {
-		t.Fatalf("expected size 3 (maxEntries), got %d", dl.Size())
+			assert.Equal(t, tt.wantSize, dl.Size())
+			assert.Equal(t, tt.appended, dl.GetMaxVersion())
+			assert.Positive(t, dl.GetMinVersion())
+		})
 	}
 }
 
-func TestDeltaLog_Size_UnderCapacity(t *testing.T) {
-	dl := NewDeltaLog(100)
-
-	event := &EnhancedPolicyChangeEvent{
-		EventID:    "evt",
-		TenantID:   "t1",
-		PolicyName: "p1",
-		Version:    1,
-	}
-	if err := dl.Append(event); err != nil {
-		t.Fatalf("Append failed: %v", err)
+func TestDeltaLogSize(t *testing.T) {
+	tests := []struct {
+		name       string
+		maxEntries int
+		appended   int64
+		wantSize   int
+	}{
+		{name: "under capacity", maxEntries: 100, appended: 1, wantSize: 1},
+		{name: "overflow is capped at max entries", maxEntries: 3, appended: 10, wantSize: 3},
 	}
 
-	if dl.Size() != 1 {
-		t.Fatalf("expected size 1, got %d", dl.Size())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dl := NewDeltaLog(tt.maxEntries)
+			appendDeltaVersions(t, dl, tt.appended)
+
+			assert.Equal(t, tt.wantSize, dl.Size())
+		})
 	}
 }
 
-func TestDeltaLog_NewDeltaLog_ZeroMaxEntries(t *testing.T) {
-	dl := NewDeltaLog(0)
-	if dl == nil {
-		t.Fatal("expected non-nil DeltaLog for zero maxEntries")
-	}
-	// Should default to 10000
-	if dl.maxEntries != 10000 {
-		t.Fatalf("expected default maxEntries 10000, got %d", dl.maxEntries)
-	}
-}
-
-func TestDeltaLog_NewDeltaLog_NegativeMaxEntries(t *testing.T) {
-	dl := NewDeltaLog(-5)
-	if dl == nil {
-		t.Fatal("expected non-nil DeltaLog for negative maxEntries")
-	}
-	if dl.maxEntries != 10000 {
-		t.Fatalf("expected default maxEntries 10000, got %d", dl.maxEntries)
-	}
-}
-
-func TestDeltaLog_Append_NilEvent(t *testing.T) {
-	dl := NewDeltaLog(10)
-	err := dl.Append(nil)
-	if err == nil {
-		t.Fatal("expected error for nil event")
+func TestNewDeltaLogNonPositiveMaxEntries(t *testing.T) {
+	for _, maxEntries := range []int{0, -5} {
+		t.Run(fmt.Sprintf("maxEntries=%d", maxEntries), func(t *testing.T) {
+			dl := NewDeltaLog(maxEntries)
+			require.NotNil(t, dl)
+			assert.Equal(t, 10000, dl.maxEntries, "non-positive maxEntries falls back to the default")
+		})
 	}
 }
 

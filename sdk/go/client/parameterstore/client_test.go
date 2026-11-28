@@ -77,6 +77,9 @@ func TestClient_GetParameter_Success(t *testing.T) {
 			if getReq.Path != "/app/config/test" {
 				t.Errorf("unexpected path: %s", getReq.Path)
 			}
+			if !getReq.WithDecryption {
+				t.Error("expected WithDecryption to be true")
+			}
 			return &GetParameterResponse{
 				Parameter: &ParameterValue{
 					Path:      "/app/config/test",
@@ -114,99 +117,75 @@ func TestClient_GetParameter_Success(t *testing.T) {
 }
 
 func TestClient_GetParameter_Validation(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &GetParameterResponse{
-				Parameter: &ParameterValue{Path: "/app/config/test"},
-				Timestamp: time.Now(),
-			}, nil
-		},
-	}
-	c := NewClient(mockT)
 	ctx := context.Background()
+	validReq := &GetParameterRequest{Path: "/app/config/test"}
+	validResp := &GetParameterResponse{
+		Parameter: &ParameterValue{Path: "/app/config/test"},
+		Timestamp: time.Now(),
+	}
 
 	tests := []struct {
-		name    string
-		req     *GetParameterRequest
-		wantErr bool
+		name     string
+		req      *GetParameterRequest
+		resp     interface{}
+		respErr  error
+		wantErr  bool
+		wantCode errors.ErrorCode
 	}{
 		{
-			name:    "nil request",
-			req:     nil,
-			wantErr: true,
+			name:     "nil request",
+			req:      nil,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "empty path",
-			req:     &GetParameterRequest{},
-			wantErr: true,
+			name:     "empty path",
+			req:      &GetParameterRequest{},
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "valid request",
-			req:     &GetParameterRequest{Path: "/app/config/test"},
-			wantErr: false,
+			name:     "transport error",
+			req:      validReq,
+			respErr:  errors.NewUnavailable("test", "server unavailable"),
+			wantErr:  true,
+			wantCode: errors.CodeUnavailable,
+		},
+		{
+			name:     "nil response",
+			req:      validReq,
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name:     "invalid response type",
+			req:      validReq,
+			resp:     "invalid-type",
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name: "valid request",
+			req:  validReq,
+			resp: validResp,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return tt.resp, tt.respErr
+				},
+			})
 			_, err := c.GetParameter(ctx, tt.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("GetParameter() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("GetParameter() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil {
-				if !errors.IsInvalidInput(err) {
-					t.Errorf("expected InvalidInput error, got %v", err)
-				}
+			if tt.wantErr && errors.Code(err) != tt.wantCode {
+				t.Errorf("expected %v error, got %v", tt.wantCode, err)
 			}
 		})
-	}
-}
-
-func TestClient_GetParameter_TransportError(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, errors.NewUnavailable("test", "server unavailable")
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.GetParameter(ctx, &GetParameterRequest{Path: "/app/config/test"})
-	if err == nil {
-		t.Error("expected error")
-	}
-	if !errors.IsUnavailable(err) {
-		t.Errorf("expected Unavailable error, got %v", err)
-	}
-}
-
-func TestClient_GetParameter_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return "invalid-type", nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.GetParameter(ctx, &GetParameterRequest{Path: "/app/config/test"})
-	if err == nil {
-		t.Error("expected error for invalid response type")
-	}
-}
-
-func TestClient_GetParameter_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.GetParameter(ctx, &GetParameterRequest{Path: "/app/config/test"})
-	if err == nil {
-		t.Error("expected error for nil response")
 	}
 }
 
@@ -224,6 +203,12 @@ func TestClient_SetParameter_Success(t *testing.T) {
 			if setReq.Path != "/app/config/new" {
 				t.Errorf("unexpected path: %s", setReq.Path)
 			}
+			if setReq.TTLSeconds != 3600 {
+				t.Errorf("expected TTLSeconds 3600, got %d", setReq.TTLSeconds)
+			}
+			if setReq.KMSKeyID != "alias/my-key" {
+				t.Errorf("expected KMSKeyID alias/my-key, got %s", setReq.KMSKeyID)
+			}
 			return &SetParameterResponse{
 				Path:      "/app/config/new",
 				Created:   true,
@@ -239,6 +224,8 @@ func TestClient_SetParameter_Success(t *testing.T) {
 		Value:       []byte("new-value"),
 		Description: "Test parameter",
 		Tags:        map[string]string{"env": "test"},
+		TTLSeconds:  3600,
+		KMSKeyID:    "alias/my-key",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -255,101 +242,78 @@ func TestClient_SetParameter_Success(t *testing.T) {
 }
 
 func TestClient_SetParameter_Validation(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &SetParameterResponse{Path: "/app/config/test", Created: true, Timestamp: time.Now()}, nil
-		},
-	}
-	c := NewClient(mockT)
 	ctx := context.Background()
+	validReq := &SetParameterRequest{Path: "/app/config/test", Value: []byte("value")}
+	validResp := &SetParameterResponse{Path: "/app/config/test", Created: true, Timestamp: time.Now()}
 
 	tests := []struct {
-		name    string
-		req     *SetParameterRequest
-		wantErr bool
+		name     string
+		req      *SetParameterRequest
+		resp     interface{}
+		respErr  error
+		wantErr  bool
+		wantCode errors.ErrorCode
 	}{
 		{
-			name:    "nil request",
-			req:     nil,
-			wantErr: true,
+			name:     "nil request",
+			req:      nil,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "empty path",
-			req:     &SetParameterRequest{Value: []byte("value")},
-			wantErr: true,
+			name:     "empty path",
+			req:      &SetParameterRequest{Value: []byte("value")},
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "empty value",
-			req:     &SetParameterRequest{Path: "/app/config/test"},
-			wantErr: true,
+			name:     "empty value",
+			req:      &SetParameterRequest{Path: "/app/config/test"},
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "valid request",
-			req:     &SetParameterRequest{Path: "/app/config/test", Value: []byte("value")},
-			wantErr: false,
+			name:     "transport error",
+			req:      validReq,
+			respErr:  errors.NewConflict("test", "parameter exists"),
+			wantErr:  true,
+			wantCode: errors.CodeConflict,
+		},
+		{
+			name:     "nil response",
+			req:      validReq,
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name:     "invalid response type",
+			req:      validReq,
+			resp:     "invalid-type",
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name: "valid request",
+			req:  validReq,
+			resp: validResp,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return tt.resp, tt.respErr
+				},
+			})
 			_, err := c.SetParameter(ctx, tt.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("SetParameter() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("SetParameter() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil {
-				if !errors.IsInvalidInput(err) {
-					t.Errorf("expected InvalidInput error, got %v", err)
-				}
+			if tt.wantErr && errors.Code(err) != tt.wantCode {
+				t.Errorf("expected %v error, got %v", tt.wantCode, err)
 			}
 		})
-	}
-}
-
-func TestClient_SetParameter_TransportError(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, errors.NewConflict("test", "parameter exists")
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SetParameter(ctx, &SetParameterRequest{Path: "/app/config/test", Value: []byte("value")})
-	if err == nil {
-		t.Error("expected error")
-	}
-	if !errors.IsConflict(err) {
-		t.Errorf("expected Conflict error, got %v", err)
-	}
-}
-
-func TestClient_SetParameter_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SetParameter(ctx, &SetParameterRequest{Path: "/app/config/test", Value: []byte("value")})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-}
-
-func TestClient_SetParameter_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return "invalid-type", nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SetParameter(ctx, &SetParameterRequest{Path: "/app/config/test", Value: []byte("value")})
-	if err == nil {
-		t.Error("expected error for invalid response type")
 	}
 }
 
@@ -383,96 +347,72 @@ func TestClient_DeleteParameter_Success(t *testing.T) {
 }
 
 func TestClient_DeleteParameter_Validation(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &DeleteParameterResponse{Deleted: true, Timestamp: time.Now()}, nil
-		},
-	}
-	c := NewClient(mockT)
 	ctx := context.Background()
+	validReq := &DeleteParameterRequest{Path: "/app/config/test"}
+	validResp := &DeleteParameterResponse{Deleted: true, Timestamp: time.Now()}
 
 	tests := []struct {
-		name    string
-		req     *DeleteParameterRequest
-		wantErr bool
+		name     string
+		req      *DeleteParameterRequest
+		resp     interface{}
+		respErr  error
+		wantErr  bool
+		wantCode errors.ErrorCode
 	}{
 		{
-			name:    "nil request",
-			req:     nil,
-			wantErr: true,
+			name:     "nil request",
+			req:      nil,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "empty path",
-			req:     &DeleteParameterRequest{},
-			wantErr: true,
+			name:     "empty path",
+			req:      &DeleteParameterRequest{},
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "valid request",
-			req:     &DeleteParameterRequest{Path: "/app/config/test"},
-			wantErr: false,
+			name:     "transport not found",
+			req:      &DeleteParameterRequest{Path: "/app/config/missing"},
+			respErr:  errors.NewNotFound("test", "parameter not found"),
+			wantErr:  true,
+			wantCode: errors.CodeNotFound,
+		},
+		{
+			name:     "nil response",
+			req:      validReq,
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name:     "invalid response type",
+			req:      validReq,
+			resp:     "invalid-type",
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name: "valid request",
+			req:  validReq,
+			resp: validResp,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return tt.resp, tt.respErr
+				},
+			})
 			_, err := c.DeleteParameter(ctx, tt.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("DeleteParameter() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("DeleteParameter() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil {
-				if !errors.IsInvalidInput(err) {
-					t.Errorf("expected InvalidInput error, got %v", err)
-				}
+			if tt.wantErr && errors.Code(err) != tt.wantCode {
+				t.Errorf("expected %v error, got %v", tt.wantCode, err)
 			}
 		})
-	}
-}
-
-func TestClient_DeleteParameter_NotFound(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, errors.NewNotFound("test", "parameter not found")
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.DeleteParameter(ctx, &DeleteParameterRequest{Path: "/app/config/missing"})
-	if err == nil {
-		t.Error("expected error")
-	}
-	if !errors.IsNotFound(err) {
-		t.Errorf("expected NotFound error, got %v", err)
-	}
-}
-
-func TestClient_DeleteParameter_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.DeleteParameter(ctx, &DeleteParameterRequest{Path: "/app/config/test"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-}
-
-func TestClient_DeleteParameter_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return "invalid-type", nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.DeleteParameter(ctx, &DeleteParameterRequest{Path: "/app/config/test"})
-	if err == nil {
-		t.Error("expected error for invalid response type")
 	}
 }
 
@@ -515,49 +455,67 @@ func TestClient_GetParameters_Success(t *testing.T) {
 }
 
 func TestClient_GetParameters_Validation(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &GetParametersResponse{
-				Parameters: []*ParameterValue{},
-				Timestamp:  time.Now(),
-			}, nil
-		},
-	}
-	c := NewClient(mockT)
 	ctx := context.Background()
+	validReq := &GetParametersRequest{Paths: []string{"/app/config/a"}}
+	validResp := &GetParametersResponse{
+		Parameters: []*ParameterValue{},
+		Timestamp:  time.Now(),
+	}
 
 	tests := []struct {
-		name    string
-		req     *GetParametersRequest
-		wantErr bool
+		name     string
+		req      *GetParametersRequest
+		resp     interface{}
+		respErr  error
+		wantErr  bool
+		wantCode errors.ErrorCode
 	}{
 		{
-			name:    "nil request",
-			req:     nil,
-			wantErr: true,
+			name:     "nil request",
+			req:      nil,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "empty paths",
-			req:     &GetParametersRequest{Paths: []string{}},
-			wantErr: true,
+			name:     "empty paths",
+			req:      &GetParametersRequest{Paths: []string{}},
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "valid request",
-			req:     &GetParametersRequest{Paths: []string{"/app/config/a"}},
-			wantErr: false,
+			name:     "transport error",
+			req:      validReq,
+			respErr:  errors.NewTimeout("test", "request timed out"),
+			wantErr:  true,
+			wantCode: errors.CodeTimeout,
+		},
+		{
+			name:     "invalid response type",
+			req:      validReq,
+			resp:     "invalid-type",
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name: "valid request",
+			req:  validReq,
+			resp: validResp,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return tt.resp, tt.respErr
+				},
+			})
 			_, err := c.GetParameters(ctx, tt.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("GetParameters() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("GetParameters() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil {
-				if !errors.IsInvalidInput(err) {
-					t.Errorf("expected InvalidInput error, got %v", err)
-				}
+			if tt.wantErr && errors.Code(err) != tt.wantCode {
+				t.Errorf("expected %v error, got %v", tt.wantCode, err)
 			}
 		})
 	}
@@ -581,39 +539,6 @@ func TestClient_GetParameters_NilResponse(t *testing.T) {
 	}
 	if resp.Parameters == nil {
 		t.Error("expected non-nil parameters slice")
-	}
-}
-
-func TestClient_GetParameters_TransportError(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, errors.NewTimeout("test", "request timed out")
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.GetParameters(ctx, &GetParametersRequest{Paths: []string{"/app/config/a"}})
-	if err == nil {
-		t.Error("expected error")
-	}
-	if !errors.IsTimeout(err) {
-		t.Errorf("expected Timeout error, got %v", err)
-	}
-}
-
-func TestClient_GetParameters_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return "invalid-type", nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.GetParameters(ctx, &GetParametersRequest{Paths: []string{"/app/config/a"}})
-	if err == nil {
-		t.Error("expected error for invalid response type")
 	}
 }
 
@@ -654,131 +579,98 @@ func TestClient_SetParameters_Success(t *testing.T) {
 }
 
 func TestClient_SetParameters_Validation(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &SetParametersResponse{Results: []*SetParameterResult{}, Timestamp: time.Now()}, nil
-		},
-	}
-	c := NewClient(mockT)
 	ctx := context.Background()
+	validReq := &SetParametersRequest{Parameters: []*SetParameterRequest{
+		{Path: "/app/config/a", Value: []byte("value")},
+	}}
+	validResp := &SetParametersResponse{Results: []*SetParameterResult{}, Timestamp: time.Now()}
 
 	tests := []struct {
-		name    string
-		req     *SetParametersRequest
-		wantErr bool
+		name     string
+		req      *SetParametersRequest
+		resp     interface{}
+		respErr  error
+		wantErr  bool
+		wantCode errors.ErrorCode
 	}{
 		{
-			name:    "nil request",
-			req:     nil,
-			wantErr: true,
+			name:     "nil request",
+			req:      nil,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "empty parameters",
-			req:     &SetParametersRequest{Parameters: []*SetParameterRequest{}},
-			wantErr: true,
+			name:     "empty parameters",
+			req:      &SetParametersRequest{Parameters: []*SetParameterRequest{}},
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
 			name: "nil parameter in slice",
 			req: &SetParametersRequest{Parameters: []*SetParameterRequest{
 				nil,
 			}},
-			wantErr: true,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
 			name: "parameter with empty path",
 			req: &SetParametersRequest{Parameters: []*SetParameterRequest{
 				{Value: []byte("value")},
 			}},
-			wantErr: true,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
 			name: "parameter with empty value",
 			req: &SetParametersRequest{Parameters: []*SetParameterRequest{
 				{Path: "/app/config/a"},
 			}},
-			wantErr: true,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
+		},
+		{
+			name:     "transport error",
+			req:      validReq,
+			respErr:  errors.NewUnavailable("test", "server unavailable"),
+			wantErr:  true,
+			wantCode: errors.CodeUnavailable,
+		},
+		{
+			name:     "nil response",
+			req:      validReq,
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name:     "invalid response type",
+			req:      validReq,
+			resp:     "invalid-type",
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
 		},
 		{
 			name: "valid request",
-			req: &SetParametersRequest{Parameters: []*SetParameterRequest{
-				{Path: "/app/config/a", Value: []byte("value")},
-			}},
-			wantErr: false,
+			req:  validReq,
+			resp: validResp,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return tt.resp, tt.respErr
+				},
+			})
 			_, err := c.SetParameters(ctx, tt.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("SetParameters() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("SetParameters() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil {
-				if !errors.IsInvalidInput(err) {
-					t.Errorf("expected InvalidInput error, got %v", err)
-				}
+			if tt.wantErr && errors.Code(err) != tt.wantCode {
+				t.Errorf("expected %v error, got %v", tt.wantCode, err)
 			}
 		})
-	}
-}
-
-func TestClient_SetParameters_TransportError(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, errors.NewUnavailable("test", "server unavailable")
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SetParameters(ctx, &SetParametersRequest{
-		Parameters: []*SetParameterRequest{
-			{Path: "/app/config/a", Value: []byte("value")},
-		},
-	})
-	if err == nil {
-		t.Error("expected error")
-	}
-	if !errors.IsUnavailable(err) {
-		t.Errorf("expected Unavailable error, got %v", err)
-	}
-}
-
-func TestClient_SetParameters_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SetParameters(ctx, &SetParametersRequest{
-		Parameters: []*SetParameterRequest{
-			{Path: "/app/config/a", Value: []byte("value")},
-		},
-	})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-}
-
-func TestClient_SetParameters_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return "invalid-type", nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SetParameters(ctx, &SetParametersRequest{
-		Parameters: []*SetParameterRequest{
-			{Path: "/app/config/a", Value: []byte("value")},
-		},
-	})
-	if err == nil {
-		t.Error("expected error for invalid response type")
 	}
 }
 
@@ -817,100 +709,76 @@ func TestClient_DeleteParameters_Success(t *testing.T) {
 }
 
 func TestClient_DeleteParameters_Validation(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &DeleteParametersResponse{
-				Results:      []*DeleteParameterResult{},
-				DeletedCount: 0,
-				Timestamp:    time.Now(),
-			}, nil
-		},
-	}
-	c := NewClient(mockT)
 	ctx := context.Background()
+	validReq := &DeleteParametersRequest{Paths: []string{"/app/config/a"}}
+	validResp := &DeleteParametersResponse{
+		Results:      []*DeleteParameterResult{},
+		DeletedCount: 0,
+		Timestamp:    time.Now(),
+	}
 
 	tests := []struct {
-		name    string
-		req     *DeleteParametersRequest
-		wantErr bool
+		name     string
+		req      *DeleteParametersRequest
+		resp     interface{}
+		respErr  error
+		wantErr  bool
+		wantCode errors.ErrorCode
 	}{
 		{
-			name:    "nil request",
-			req:     nil,
-			wantErr: true,
+			name:     "nil request",
+			req:      nil,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "empty paths",
-			req:     &DeleteParametersRequest{Paths: []string{}},
-			wantErr: true,
+			name:     "empty paths",
+			req:      &DeleteParametersRequest{Paths: []string{}},
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "valid request",
-			req:     &DeleteParametersRequest{Paths: []string{"/app/config/a"}},
-			wantErr: false,
+			name:     "transport error",
+			req:      validReq,
+			respErr:  errors.NewTimeout("test", "request timed out"),
+			wantErr:  true,
+			wantCode: errors.CodeTimeout,
+		},
+		{
+			name:     "nil response",
+			req:      validReq,
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name:     "invalid response type",
+			req:      validReq,
+			resp:     "invalid-type",
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name: "valid request",
+			req:  validReq,
+			resp: validResp,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return tt.resp, tt.respErr
+				},
+			})
 			_, err := c.DeleteParameters(ctx, tt.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("DeleteParameters() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("DeleteParameters() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil {
-				if !errors.IsInvalidInput(err) {
-					t.Errorf("expected InvalidInput error, got %v", err)
-				}
+			if tt.wantErr && errors.Code(err) != tt.wantCode {
+				t.Errorf("expected %v error, got %v", tt.wantCode, err)
 			}
 		})
-	}
-}
-
-func TestClient_DeleteParameters_TransportError(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, errors.NewTimeout("test", "request timed out")
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.DeleteParameters(ctx, &DeleteParametersRequest{Paths: []string{"/app/config/a"}})
-	if err == nil {
-		t.Error("expected error")
-	}
-	if !errors.IsTimeout(err) {
-		t.Errorf("expected Timeout error, got %v", err)
-	}
-}
-
-func TestClient_DeleteParameters_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.DeleteParameters(ctx, &DeleteParametersRequest{Paths: []string{"/app/config/a"}})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-}
-
-func TestClient_DeleteParameters_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return "invalid-type", nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.DeleteParameters(ctx, &DeleteParametersRequest{Paths: []string{"/app/config/a"}})
-	if err == nil {
-		t.Error("expected error for invalid response type")
 	}
 }
 
@@ -959,49 +827,66 @@ func TestClient_ListParameters_Success(t *testing.T) {
 }
 
 func TestClient_ListParameters_Validation(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &ListParametersResponse{
-				Parameters: []*ParameterValue{},
-				Timestamp:  time.Now(),
-			}, nil
-		},
-	}
-	c := NewClient(mockT)
 	ctx := context.Background()
+	validReq := &ListParametersRequest{Prefix: "/app/"}
+	validResp := &ListParametersResponse{
+		Parameters: []*ParameterValue{},
+		Timestamp:  time.Now(),
+	}
 
 	tests := []struct {
-		name    string
-		req     *ListParametersRequest
-		wantErr bool
+		name     string
+		req      *ListParametersRequest
+		resp     interface{}
+		respErr  error
+		wantErr  bool
+		wantCode errors.ErrorCode
 	}{
 		{
-			name:    "nil request",
-			req:     nil,
-			wantErr: true,
+			name:     "nil request",
+			req:      nil,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "empty prefix is valid (lists all)",
-			req:     &ListParametersRequest{},
-			wantErr: false,
+			name:     "transport error",
+			req:      validReq,
+			respErr:  errors.NewUnavailable("test", "server unavailable"),
+			wantErr:  true,
+			wantCode: errors.CodeUnavailable,
 		},
 		{
-			name:    "valid request with prefix",
-			req:     &ListParametersRequest{Prefix: "/app/"},
-			wantErr: false,
+			name:     "invalid response type",
+			req:      validReq,
+			resp:     "invalid-type",
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name: "empty prefix is valid (lists all)",
+			req:  &ListParametersRequest{},
+			resp: validResp,
+		},
+		{
+			name: "valid request with prefix",
+			req:  validReq,
+			resp: validResp,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return tt.resp, tt.respErr
+				},
+			})
 			_, err := c.ListParameters(ctx, tt.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ListParameters() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("ListParameters() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil {
-				if !errors.IsInvalidInput(err) {
-					t.Errorf("expected InvalidInput error, got %v", err)
-				}
+			if tt.wantErr && errors.Code(err) != tt.wantCode {
+				t.Errorf("expected %v error, got %v", tt.wantCode, err)
 			}
 		})
 	}
@@ -1028,39 +913,6 @@ func TestClient_ListParameters_NilResponse(t *testing.T) {
 	}
 }
 
-func TestClient_ListParameters_TransportError(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, errors.NewUnavailable("test", "server unavailable")
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.ListParameters(ctx, &ListParametersRequest{Prefix: "/app/"})
-	if err == nil {
-		t.Error("expected error")
-	}
-	if !errors.IsUnavailable(err) {
-		t.Errorf("expected Unavailable error, got %v", err)
-	}
-}
-
-func TestClient_ListParameters_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return "invalid-type", nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.ListParameters(ctx, &ListParametersRequest{Prefix: "/app/"})
-	if err == nil {
-		t.Error("expected error for invalid response type")
-	}
-}
-
 func TestClient_SearchByTags_Success(t *testing.T) {
 	now := time.Now()
 	mockT := &mockTransport{
@@ -1074,6 +926,9 @@ func TestClient_SearchByTags_Success(t *testing.T) {
 			}
 			if searchReq.Tags["env"] != "production" {
 				t.Errorf("unexpected tag value: %s", searchReq.Tags["env"])
+			}
+			if searchReq.Prefix != "/app/config/" {
+				t.Errorf("expected prefix /app/config/, got %s", searchReq.Prefix)
 			}
 			return &SearchByTagsResponse{
 				Parameters: []*ParameterValue{
@@ -1090,6 +945,7 @@ func TestClient_SearchByTags_Success(t *testing.T) {
 
 	resp, err := c.SearchByTags(ctx, &SearchByTagsRequest{
 		Tags:       map[string]string{"env": "production"},
+		Prefix:     "/app/config/",
 		WithValues: true,
 	})
 	if err != nil {
@@ -1104,49 +960,67 @@ func TestClient_SearchByTags_Success(t *testing.T) {
 }
 
 func TestClient_SearchByTags_Validation(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &SearchByTagsResponse{
-				Parameters: []*ParameterValue{},
-				Timestamp:  time.Now(),
-			}, nil
-		},
-	}
-	c := NewClient(mockT)
 	ctx := context.Background()
+	validReq := &SearchByTagsRequest{Tags: map[string]string{"env": "prod"}}
+	validResp := &SearchByTagsResponse{
+		Parameters: []*ParameterValue{},
+		Timestamp:  time.Now(),
+	}
 
 	tests := []struct {
-		name    string
-		req     *SearchByTagsRequest
-		wantErr bool
+		name     string
+		req      *SearchByTagsRequest
+		resp     interface{}
+		respErr  error
+		wantErr  bool
+		wantCode errors.ErrorCode
 	}{
 		{
-			name:    "nil request",
-			req:     nil,
-			wantErr: true,
+			name:     "nil request",
+			req:      nil,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "empty tags",
-			req:     &SearchByTagsRequest{Tags: map[string]string{}},
-			wantErr: true,
+			name:     "empty tags",
+			req:      &SearchByTagsRequest{Tags: map[string]string{}},
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "valid request",
-			req:     &SearchByTagsRequest{Tags: map[string]string{"env": "prod"}},
-			wantErr: false,
+			name:     "transport error",
+			req:      validReq,
+			respErr:  errors.NewTimeout("test", "request timed out"),
+			wantErr:  true,
+			wantCode: errors.CodeTimeout,
+		},
+		{
+			name:     "invalid response type",
+			req:      validReq,
+			resp:     "invalid-type",
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name: "valid request",
+			req:  validReq,
+			resp: validResp,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return tt.resp, tt.respErr
+				},
+			})
 			_, err := c.SearchByTags(ctx, tt.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("SearchByTags() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("SearchByTags() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil {
-				if !errors.IsInvalidInput(err) {
-					t.Errorf("expected InvalidInput error, got %v", err)
-				}
+			if tt.wantErr && errors.Code(err) != tt.wantCode {
+				t.Errorf("expected %v error, got %v", tt.wantCode, err)
 			}
 		})
 	}
@@ -1170,39 +1044,6 @@ func TestClient_SearchByTags_NilResponse(t *testing.T) {
 	}
 	if resp.Parameters == nil {
 		t.Error("expected non-nil parameters slice")
-	}
-}
-
-func TestClient_SearchByTags_TransportError(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, errors.NewTimeout("test", "request timed out")
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SearchByTags(ctx, &SearchByTagsRequest{Tags: map[string]string{"env": "prod"}})
-	if err == nil {
-		t.Error("expected error")
-	}
-	if !errors.IsTimeout(err) {
-		t.Errorf("expected Timeout error, got %v", err)
-	}
-}
-
-func TestClient_SearchByTags_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return "invalid-type", nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SearchByTags(ctx, &SearchByTagsRequest{Tags: map[string]string{"env": "prod"}})
-	if err == nil {
-		t.Error("expected error for invalid response type")
 	}
 }
 
@@ -1256,93 +1097,6 @@ func TestValidateSetParametersRequest_ValueRequired(t *testing.T) {
 	}
 	if qbErr.Context["path"] != "/valid/path" {
 		t.Errorf("expected path in context, got %v", qbErr.Context["path"])
-	}
-}
-
-func TestClient_GetParameter_WithDecryption(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			getReq := req.(*GetParameterRequest)
-			if !getReq.WithDecryption {
-				t.Error("expected WithDecryption to be true")
-			}
-			return &GetParameterResponse{
-				Parameter: &ParameterValue{
-					Path:        "/app/secrets/key",
-					Value:       []byte("decrypted-value"),
-					IsEncrypted: true,
-					KMSKeyID:    "alias/my-key",
-				},
-				Timestamp: time.Now(),
-			}, nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	resp, err := c.GetParameter(ctx, &GetParameterRequest{
-		Path:           "/app/secrets/key",
-		WithDecryption: true,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if string(resp.Parameter.Value) != "decrypted-value" {
-		t.Errorf("unexpected value: %s", string(resp.Parameter.Value))
-	}
-}
-
-func TestClient_SetParameter_WithTTL(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			setReq := req.(*SetParameterRequest)
-			if setReq.TTLSeconds != 3600 {
-				t.Errorf("expected TTLSeconds 3600, got %d", setReq.TTLSeconds)
-			}
-			return &SetParameterResponse{
-				Path:      setReq.Path,
-				Created:   true,
-				Timestamp: time.Now(),
-			}, nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SetParameter(ctx, &SetParameterRequest{
-		Path:       "/app/tokens/session",
-		Value:      []byte("temp-token"),
-		TTLSeconds: 3600,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestClient_SetParameter_WithEncryption(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			setReq := req.(*SetParameterRequest)
-			if setReq.KMSKeyID != "alias/my-key" {
-				t.Errorf("expected KMSKeyID alias/my-key, got %s", setReq.KMSKeyID)
-			}
-			return &SetParameterResponse{
-				Path:      setReq.Path,
-				Created:   true,
-				Timestamp: time.Now(),
-			}, nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SetParameter(ctx, &SetParameterRequest{
-		Path:     "/app/secrets/api-key",
-		Value:    []byte("secret-value"),
-		KMSKeyID: "alias/my-key",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -1403,38 +1157,5 @@ func TestClient_ListParameters_WithPagination(t *testing.T) {
 	}
 	if resp2.HasMore {
 		t.Error("expected HasMore to be false")
-	}
-}
-
-func TestClient_SearchByTags_WithPrefixFilter(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			searchReq := req.(*SearchByTagsRequest)
-			if searchReq.Prefix != "/app/config/" {
-				t.Errorf("expected prefix /app/config/, got %s", searchReq.Prefix)
-			}
-			if searchReq.Tags["env"] != "prod" {
-				t.Errorf("expected env=prod tag, got %s", searchReq.Tags["env"])
-			}
-			return &SearchByTagsResponse{
-				Parameters: []*ParameterValue{
-					{Path: "/app/config/a", Tags: map[string]string{"env": "prod"}},
-				},
-				Timestamp: time.Now(),
-			}, nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	resp, err := c.SearchByTags(ctx, &SearchByTagsRequest{
-		Tags:   map[string]string{"env": "prod"},
-		Prefix: "/app/config/",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(resp.Parameters) != 1 {
-		t.Errorf("expected 1 parameter, got %d", len(resp.Parameters))
 	}
 }
