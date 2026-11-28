@@ -97,7 +97,9 @@ func bearerFromContext(ctx context.Context) string {
 // missing token, an unmapped method, an invalid/inactive token, or a missing
 // scope all reject the call. The gRPC metadata path carries no DPoP proof, so
 // the empty dpopProof / htm / htu args are passed deliberately (see
-// GRPCValidatorAuthorizer).
+// GRPCValidatorAuthorizer). A call with no bearer is decided by
+// authorizeVerifiedCertificate: only a chain-verified client certificate,
+// offered to an authorizer that has the certificate seam, can admit it.
 func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRPCValidatorAuthorizer, sealedBypass *sealedwindow.AuthBypass) (context.Context, error) {
 	if isPublicGRPCMethod(fullMethod) {
 		return ctx, nil
@@ -119,7 +121,7 @@ func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRP
 
 	token := bearerFromContext(ctx)
 	if token == "" {
-		return ctx, status.Error(codes.Unauthenticated, (&MissingTokenError{Method: fullMethod}).Error())
+		return authorizeVerifiedCertificate(ctx, fullMethod, authorizer)
 	}
 
 	// IdentityGated verbs (the qrdb barrier share-claim methods): any
@@ -161,6 +163,33 @@ func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRP
 		return ctx, status.Error(codes.PermissionDenied, (&CrossTenantMethodError{Method: fullMethod}).Error())
 	}
 
+	return contextWithAuthorizedSubject(ctx, authzCtx), nil
+}
+
+// authorizeVerifiedCertificate decides a call that carries no bearer. It is
+// admitted only when the authorizer has the certificate seam, the method is
+// not IdentityGated (those verbs keep requiring a validated token), and the
+// TLS handshake VERIFIED the peer's chain; the leaf is then checked against
+// the method's mapped permission exactly as a bearer would be. Every other
+// bearer-less call is MissingTokenError, as before.
+func authorizeVerifiedCertificate(ctx context.Context, fullMethod string, authorizer GRPCValidatorAuthorizer) (context.Context, error) {
+	missing := status.Error(codes.Unauthenticated, (&MissingTokenError{Method: fullMethod}).Error())
+	certAuthorizer, ok := authorizer.(GRPCVerifiedCertificateAuthorizer)
+	if !ok || qrdbIdentityGatedMethods[fullMethod] {
+		return ctx, missing
+	}
+	leaf := verifiedPeerCertFromGRPC(ctx)
+	if leaf == nil {
+		return ctx, missing
+	}
+	resource, action, ok := grpcResourceAndAction(fullMethod)
+	if !ok {
+		return ctx, status.Error(codes.PermissionDenied, (&UnmappedMethodError{Method: fullMethod}).Error())
+	}
+	authzCtx, err := certAuthorizer.AuthorizeVerifiedCertificate(ctx, leaf, resource+":"+action)
+	if err != nil {
+		return ctx, validatorGRPCStatus(err)
+	}
 	return contextWithAuthorizedSubject(ctx, authzCtx), nil
 }
 
