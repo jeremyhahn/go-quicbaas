@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1151,7 +1152,10 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
 	defer cancel()
 
-	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs, s.dueJobFilter())
+	// The scan counts only jobs this node can dispatch, so jobs pinned to
+	// another node, or cluster-wide jobs on a follower, cannot fill the
+	// page and starve the ones this node can run.
+	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs, s.sweepDueFilter(storageCtx))
 	if err != nil {
 		s.logError(sweepLogPrefix+" failed: component=scheduler error=%q", err.Error())
 		s.storageErrors.Add(1)
@@ -1279,56 +1283,83 @@ func (s *SchedulerEngine) claimFiring(ctx context.Context, job *Job) bool {
 //     is disabled and affine jobs always fire — preserving
 //     pre-clustering behavior for single-node deployments.
 func (s *SchedulerEngine) shouldExecute(job *Job) bool {
+	ok, reason := s.canDispatch(job)
+	if ok {
+		return true
+	}
+	if strings.HasPrefix(reason, leaderCheckFailedReason) {
+		s.logWarn("Skipping job %d (%s): %s", job.ID, job.Name, reason)
+	} else {
+		s.logDebug("Skipping job %d (%s): %s", job.ID, job.Name, reason)
+	}
+	return false
+}
+
+// leaderCheckFailedReason prefixes the canDispatch reason for a failed
+// leadership check, which shouldExecute logs as a warning.
+const leaderCheckFailedReason = "leader check failed"
+
+// canDispatch reports whether this node can dispatch job and, when it
+// cannot, why. It does not log: the due scan calls it for every candidate.
+func (s *SchedulerEngine) canDispatch(job *Job) (bool, string) {
+	return s.canDispatchWith(job, s.isLeader)
+}
+
+// isLeader asks the leader checker whether this node leads. It is called only
+// when s.leader is non-nil.
+func (s *SchedulerEngine) isLeader() (bool, error) {
+	return s.leader.IsLeader()
+}
+
+// canDispatchWith is canDispatch with the leadership lookup supplied, so the
+// due scan can share one lookup across every candidate of a sweep.
+func (s *SchedulerEngine) canDispatchWith(job *Job, isLeader func() (bool, error)) (bool, string) {
 	if job.NodeAffinity != "" && s.nodeID != "" {
 		if job.NodeAffinity != s.nodeID {
-			s.logDebug("Skipping job %d (%s): NodeAffinity=%q, this node=%q",
-				job.ID, job.Name, job.NodeAffinity, s.nodeID)
-			return false
+			return false, fmt.Sprintf("NodeAffinity=%q, this node=%q", job.NodeAffinity, s.nodeID)
 		}
 		// Affinity matches: always execute regardless of leadership.
-		return true
+		return true, ""
 	}
 	// Cluster-wide job: gate on leadership.
 	if s.leader == nil {
-		return true
+		return true, ""
 	}
-	isLeader, err := s.leader.IsLeader()
+	leads, err := isLeader()
 	if err != nil {
-		s.logWarn("Skipping job %d (%s): leader check failed: %v",
-			job.ID, job.Name, err)
-		return false
+		return false, fmt.Sprintf("%s: %v", leaderCheckFailedReason, err)
 	}
-	if !isLeader {
-		s.logDebug("Skipping job %d (%s): not leader", job.ID, job.Name)
-		return false
+	if !leads {
+		return false, "not leader"
 	}
-	return true
+	return true, ""
 }
 
-// placementAllows is shouldExecute's decision, without logging, for a
-// leadership state sampled by the caller: a job with affinity runs only on
-// its node, any other job only on the leader.
-func (s *SchedulerEngine) placementAllows(job *Job, isLeader bool) bool {
-	if job.NodeAffinity != "" && s.nodeID != "" {
-		return job.NodeAffinity == s.nodeID
-	}
-	return isLeader
-}
-
-// dueJobFilter returns the filter a due-job sweep hands its storage so the
-// batch limit counts only jobs this node may run. Leadership is sampled once
-// per sweep; shouldExecute re-checks it before each job fires.
-func (s *SchedulerEngine) dueJobFilter() DueJobFilter {
-	isLeader := true
-	if s.leader != nil {
-		leader, err := s.leader.IsLeader()
-		if err != nil {
-			s.logWarn("Due-job sweep treats this node as a follower: leader check failed: %v", err)
-			leader = false
+// sweepDueFilter returns the due scan's filter for one sweep. Leadership does
+// not depend on the job, so the sweep asks the leader checker at most once,
+// on its first cluster-wide candidate, and reuses the answer (a failed lookup
+// included) for every other candidate: the scan never waits on one lookup per
+// rejected job. Once the sweep's context is done the filter admits nothing.
+func (s *SchedulerEngine) sweepDueFilter(ctx context.Context) DueJobFilter {
+	var (
+		asked    bool
+		leads    bool
+		leadsErr error
+	)
+	once := func() (bool, error) {
+		if !asked {
+			asked = true
+			leads, leadsErr = s.isLeader()
 		}
-		isLeader = leader
+		return leads, leadsErr
 	}
-	return func(job *Job) bool { return s.placementAllows(job, isLeader) }
+	return func(j *Job) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		ok, _ := s.canDispatchWith(j, once)
+		return ok
+	}
 }
 
 // triggerRequest is one queued manual trigger: the job, the scope it was

@@ -829,7 +829,7 @@ func (m *Module) bind() (*grpcServers, error) {
 	// pkg/server/lifecycle.go builds it for the legacy transport: gated on
 	// Crypto().
 	if cryptoSvc := svc.Crypto(); cryptoSvc != nil {
-		built.crypto = grpcapi.NewCryptoServer(cryptoSvc, m.log)
+		built.crypto = nodeCryptoServer{CryptoServer: grpcapi.NewCryptoServer(cryptoSvc, m.log)}
 	}
 
 	// AttestationService is quicbaas-native for the same reason (package doc):

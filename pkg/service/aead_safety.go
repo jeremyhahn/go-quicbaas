@@ -18,6 +18,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -73,14 +75,99 @@ type AEADUsage struct {
 	// LastUpdated is the timestamp of the last operation
 	LastUpdated atomic.Int64
 
-	// Config is the safety configuration for this key
+	// Config is the safety configuration for this key. It is read and
+	// written only under mu.
 	Config AEADSafetyConfig
+
+	// Version is the key version the counters belong to (0 when unknown).
+	// It is read and written only under mu.
+	Version uint64
+
+	// mu serialises Config reads and writes with the counter add and limit
+	// check of a reservation and with a counter reset, so a reservation never
+	// sees a half-written config and a reset never lands between an add and
+	// its limit check.
+	mu sync.Mutex
+}
+
+// snapshot returns the counters and config of u as one consistent view.
+func (u *AEADUsage) snapshot() (ops, bytes uint64, cfg AEADSafetyConfig) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.OperationCount.Load(), u.BytesProcessed.Load(), u.Config
+}
+
+// setConfig replaces u's config.
+func (u *AEADUsage) setConfig(cfg AEADSafetyConfig) {
+	u.mu.Lock()
+	u.Config = cfg
+	u.mu.Unlock()
+}
+
+// resetCounters zeroes u's operation and byte counters.
+func (u *AEADUsage) resetCounters() {
+	u.mu.Lock()
+	u.OperationCount.Store(0)
+	u.BytesProcessed.Store(0)
+	u.mu.Unlock()
+}
+
+// retireLocked returns a copy of the counters of u's version and restarts
+// u's counters for the next version; u.mu must be held.
+func (u *AEADUsage) retireLocked() *AEADUsage {
+	retired := &AEADUsage{Config: u.Config, Version: u.Version}
+	retired.OperationCount.Store(u.OperationCount.Load())
+	retired.BytesProcessed.Store(u.BytesProcessed.Load())
+	retired.LastUpdated.Store(u.LastUpdated.Load())
+	u.OperationCount.Store(0)
+	u.BytesProcessed.Store(0)
+	return retired
+}
+
+// usagePercentOf is the highest share of a configured limit that ops and
+// bytes use under cfg.
+func usagePercentOf(ops, bytes uint64, cfg AEADSafetyConfig) uint64 {
+	var maxPercent uint64
+
+	if cfg.MaxOperations > 0 {
+		opsPercent := (ops * 100) / cfg.MaxOperations
+		if opsPercent > maxPercent {
+			maxPercent = opsPercent
+		}
+	}
+
+	if cfg.MaxBytes > 0 {
+		bytesPercent := (bytes * 100) / cfg.MaxBytes
+		if bytesPercent > maxPercent {
+			maxPercent = bytesPercent
+		}
+	}
+
+	return maxPercent
 }
 
 // IncrementUsage atomically increments the usage counters.
 // Returns true if the limits are exceeded after this operation.
 func (u *AEADUsage) IncrementUsage(bytesProcessed uint64) (limitExceeded bool) {
-	u.OperationCount.Add(1)
+	return u.IncrementUsageBy(1, bytesProcessed)
+}
+
+// IncrementUsageBy records operations AEAD operations processing
+// bytesProcessed bytes in total. A batch reserves one operation per item so
+// that it cannot bypass MaxOperations.
+func (u *AEADUsage) IncrementUsageBy(operations, bytesProcessed uint64) (limitExceeded bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.incrementLocked(operations, bytesProcessed)
+}
+
+// incrementLocked adds to the counters and checks the limits; u.mu must be
+// held.
+func (u *AEADUsage) incrementLocked(operations, bytesProcessed uint64) (limitExceeded bool) {
+	if operations == 0 {
+		operations = 1
+	}
+	u.OperationCount.Add(operations)
 	u.BytesProcessed.Add(bytesProcessed)
 	u.LastUpdated.Store(time.Now().UnixNano())
 
@@ -96,6 +183,8 @@ func (u *AEADUsage) IncrementUsage(bytesProcessed uint64) (limitExceeded bool) {
 
 // WarningNeeded checks if a warning should be generated.
 func (u *AEADUsage) WarningNeeded() (bool, string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	if u.Config.WarningPercent <= 0 {
 		return false, ""
 	}
@@ -123,6 +212,8 @@ func (u *AEADUsage) WarningNeeded() (bool, string) {
 
 // AutoRotateNeeded checks if automatic rotation should be triggered.
 func (u *AEADUsage) AutoRotateNeeded() bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	if u.Config.AutoRotatePercent <= 0 {
 		return false
 	}
@@ -148,23 +239,8 @@ func (u *AEADUsage) AutoRotateNeeded() bool {
 
 // UsagePercent returns the highest percentage of limit used.
 func (u *AEADUsage) UsagePercent() uint64 {
-	var maxPercent uint64
-
-	if u.Config.MaxOperations > 0 {
-		opsPercent := (u.OperationCount.Load() * 100) / u.Config.MaxOperations
-		if opsPercent > maxPercent {
-			maxPercent = opsPercent
-		}
-	}
-
-	if u.Config.MaxBytes > 0 {
-		bytesPercent := (u.BytesProcessed.Load() * 100) / u.Config.MaxBytes
-		if bytesPercent > maxPercent {
-			maxPercent = bytesPercent
-		}
-	}
-
-	return maxPercent
+	ops, bytes, cfg := u.snapshot()
+	return usagePercentOf(ops, bytes, cfg)
 }
 
 // =============================================================================
@@ -185,6 +261,23 @@ type AEADSafetyTracker struct {
 
 	// dekConfigs stores per-DEK configuration overrides
 	dekConfigs syncMap[string, AEADSafetyConfig]
+
+	// keyGates holds each key's rotation gate: crypto calls hold it for
+	// reading (BeginKeyUse) and a rotation holds it for writing
+	// (RotateKeyUsage).
+	keyGates syncMap[string, *sync.RWMutex]
+
+	// retiredKeyUsage holds the counters of key versions that are no longer
+	// their key's latest (keyUsage holds the latest), keyed by
+	// retiredUsageKey. They persist: a retained version stays decryptable and
+	// its decrypts are still charged to it.
+	retiredKeyUsage syncMap[string, *AEADUsage]
+
+	// keyVersionSource, when set, reports a key's current version from
+	// authoritative replicated state. Key usage is counted per version: a
+	// rotation performed on any node starts the new version's count from
+	// zero here once it is observed, and the old version keeps its count.
+	keyVersionSource atomic.Pointer[func(ctx context.Context, keyID string) (uint64, error)]
 
 	// serverConfig is the server-level default configuration
 	serverConfig AEADSafetyConfig
@@ -316,17 +409,35 @@ func (t *AEADSafetyTracker) initMetrics() {
 }
 
 // RecordKeyEncrypt records an encryption operation for a key.
+// The operation is charged to the key's current version.
 func (t *AEADSafetyTracker) RecordKeyEncrypt(ctx context.Context, keyID string, bytesEncrypted uint64) error {
-	return t.recordOperation(ctx, keyID, bytesEncrypted, false)
+	return t.recordOperation(ctx, keyID, t.currentKeyVersion(ctx, keyID), 1, bytesEncrypted, false)
+}
+
+// RecordKeyVersionUse records operations under one version of a key: a
+// decrypt is charged to the version its ciphertext is sealed under, an
+// encrypt to the version its ciphertext was sealed under. Each version keeps
+// its own counters, so a rotation never restores the allowance of a version
+// that stays usable. Version 0 (unknown) charges the key's latest version.
+func (t *AEADSafetyTracker) RecordKeyVersionUse(ctx context.Context, keyID string, version, operations, bytesProcessed uint64) error {
+	return t.recordOperation(ctx, keyID, version, operations, bytesProcessed, false)
+}
+
+// RecordKeyEncryptBatch records a batch of operations encryptions under a
+// key, reserving the whole batch against the key's limits before any item is
+// encrypted.
+func (t *AEADSafetyTracker) RecordKeyEncryptBatch(ctx context.Context, keyID string, operations, bytesEncrypted uint64) error {
+	return t.recordOperation(ctx, keyID, t.currentKeyVersion(ctx, keyID), operations, bytesEncrypted, false)
 }
 
 // RecordDEKEncrypt records an encryption operation for a DEK.
 func (t *AEADSafetyTracker) RecordDEKEncrypt(ctx context.Context, dekPath string, bytesEncrypted uint64) error {
-	return t.recordOperation(ctx, dekPath, bytesEncrypted, true)
+	return t.recordOperation(ctx, dekPath, 0, 1, bytesEncrypted, true)
 }
 
 // recordOperation is the common implementation for recording operations.
-func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, bytesProcessed uint64, isDEK bool) error {
+// version is the key version charged (keys only; 0 when unknown).
+func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, version, operations, bytesProcessed uint64, isDEK bool) error {
 	var usageMap *syncMap[string, *AEADUsage]
 	var keyType string
 
@@ -338,16 +449,19 @@ func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, byte
 		keyType = "key"
 	}
 
-	// Get or create usage tracker
-	usage := usageMap.LoadOrStore(id, &AEADUsage{
-		Config: t.getEffectiveConfig(id, isDEK),
-	})
-
-	// Increment counters
-	limitExceeded := usage.IncrementUsage(bytesProcessed)
+	var usage *AEADUsage
+	var limitExceeded bool
+	if isDEK {
+		usage = usageMap.LoadOrStore(id, &AEADUsage{
+			Config: t.getEffectiveConfig(id, isDEK),
+		})
+		limitExceeded = usage.IncrementUsageBy(operations, bytesProcessed)
+	} else {
+		usage, limitExceeded = t.chargeKeyVersion(id, version, operations, bytesProcessed, true)
+	}
 
 	// Record metrics
-	t.metrics.operationsTotal.With(id, keyType).Inc()
+	t.metrics.operationsTotal.With(id, keyType).Add(float64(operations))
 	t.metrics.bytesProcessed.With(id, keyType).Add(float64(bytesProcessed))
 	t.metrics.usagePercent.With(id, keyType).Set(float64(usage.UsagePercent()))
 
@@ -430,7 +544,7 @@ func (t *AEADSafetyTracker) SetKeyConfig(keyID string, config AEADSafetyConfig) 
 
 	// Also update the existing usage tracker if one exists
 	usage := t.keyUsage.LoadOrStore(keyID, &AEADUsage{})
-	usage.Config = config
+	usage.setConfig(config)
 }
 
 // SetDEKConfig sets the safety configuration for a specific DEK.
@@ -442,7 +556,7 @@ func (t *AEADSafetyTracker) SetDEKConfig(dekPath string, config AEADSafetyConfig
 
 	// Also update the existing usage tracker if one exists
 	usage := t.dekUsage.LoadOrStore(dekPath, &AEADUsage{})
-	usage.Config = config
+	usage.setConfig(config)
 }
 
 // ClearKeyConfig removes per-key configuration (reverts to server defaults).
@@ -453,9 +567,9 @@ func (t *AEADSafetyTracker) ClearKeyConfig(keyID string) {
 	// Update existing usage tracker to use defaults
 	if usage, ok := t.keyUsage.Load(keyID); ok {
 		if t.enforceDefaults {
-			usage.Config = t.serverConfig
+			usage.setConfig(t.serverConfig)
 		} else {
-			usage.Config = AEADSafetyConfig{}
+			usage.setConfig(AEADSafetyConfig{})
 		}
 	}
 }
@@ -468,9 +582,9 @@ func (t *AEADSafetyTracker) ClearDEKConfig(dekPath string) {
 	// Update existing usage tracker to use defaults
 	if usage, ok := t.dekUsage.Load(dekPath); ok {
 		if t.enforceDefaults {
-			usage.Config = t.serverConfig
+			usage.setConfig(t.serverConfig)
 		} else {
-			usage.Config = AEADSafetyConfig{}
+			usage.setConfig(AEADSafetyConfig{})
 		}
 	}
 }
@@ -490,7 +604,8 @@ func (t *AEADSafetyTracker) GetDEKConfig(dekPath string) AEADSafetyConfig {
 // GetKeyUsage returns the current usage for a key.
 func (t *AEADSafetyTracker) GetKeyUsage(keyID string) (operationCount, bytesProcessed uint64, usagePercent int) {
 	if usage, ok := t.keyUsage.Load(keyID); ok {
-		return usage.OperationCount.Load(), usage.BytesProcessed.Load(), conv.ClampUint64ToInt(usage.UsagePercent())
+		ops, bytes, cfg := usage.snapshot()
+		return ops, bytes, conv.ClampUint64ToInt(usagePercentOf(ops, bytes, cfg))
 	}
 	return 0, 0, 0
 }
@@ -519,30 +634,34 @@ func (t *AEADSafetyTracker) SafetyCheck(thresholdPercent int) []SafetyCheckResul
 	var results []SafetyCheckResult
 
 	t.keyUsage.Range(func(keyID string, usage *AEADUsage) bool {
-		if conv.ClampUint64ToInt(usage.UsagePercent()) >= thresholdPercent {
+		ops, bytes, cfg := usage.snapshot()
+		percent := conv.ClampUint64ToInt(usagePercentOf(ops, bytes, cfg))
+		if percent >= thresholdPercent {
 			results = append(results, SafetyCheckResult{
 				ID:             keyID,
 				Type:           "key",
-				OperationCount: usage.OperationCount.Load(),
-				BytesProcessed: usage.BytesProcessed.Load(),
-				UsagePercent:   conv.ClampUint64ToInt(usage.UsagePercent()),
-				MaxOperations:  usage.Config.MaxOperations,
-				MaxBytes:       usage.Config.MaxBytes,
+				OperationCount: ops,
+				BytesProcessed: bytes,
+				UsagePercent:   percent,
+				MaxOperations:  cfg.MaxOperations,
+				MaxBytes:       cfg.MaxBytes,
 			})
 		}
 		return true
 	})
 
 	t.dekUsage.Range(func(dekPath string, usage *AEADUsage) bool {
-		if conv.ClampUint64ToInt(usage.UsagePercent()) >= thresholdPercent {
+		ops, bytes, cfg := usage.snapshot()
+		percent := conv.ClampUint64ToInt(usagePercentOf(ops, bytes, cfg))
+		if percent >= thresholdPercent {
 			results = append(results, SafetyCheckResult{
 				ID:             dekPath,
 				Type:           "dek",
-				OperationCount: usage.OperationCount.Load(),
-				BytesProcessed: usage.BytesProcessed.Load(),
-				UsagePercent:   conv.ClampUint64ToInt(usage.UsagePercent()),
-				MaxOperations:  usage.Config.MaxOperations,
-				MaxBytes:       usage.Config.MaxBytes,
+				OperationCount: ops,
+				BytesProcessed: bytes,
+				UsagePercent:   percent,
+				MaxOperations:  cfg.MaxOperations,
+				MaxBytes:       cfg.MaxBytes,
 			})
 		}
 		return true
@@ -559,15 +678,149 @@ func (t *AEADSafetyTracker) SafetyReport() []SafetyCheckResult {
 // ResetUsage resets the usage counters for a key (called after rotation).
 func (t *AEADSafetyTracker) ResetKeyUsage(keyID string) {
 	if usage, ok := t.keyUsage.Load(keyID); ok {
-		usage.OperationCount.Store(0)
-		usage.BytesProcessed.Store(0)
+		usage.resetCounters()
 	}
 }
 
 // ResetDEKUsage resets the usage counters for a DEK (called after rotation).
 func (t *AEADSafetyTracker) ResetDEKUsage(dekPath string) {
 	if usage, ok := t.dekUsage.Load(dekPath); ok {
-		usage.OperationCount.Store(0)
-		usage.BytesProcessed.Store(0)
+		usage.resetCounters()
 	}
+}
+
+// keyGate returns keyID's rotation gate, creating it on first use.
+func (t *AEADSafetyTracker) keyGate(keyID string) *sync.RWMutex {
+	if gate, ok := t.keyGates.Load(keyID); ok {
+		return gate
+	}
+	return t.keyGates.LoadOrStore(keyID, &sync.RWMutex{})
+}
+
+// BeginKeyUse holds keyID's rotation gate for reading until the returned end
+// is called. A crypto call holds it from its usage reservation through the
+// cryptographic operation, so a key's usage is only ever charged to the
+// version that is current while the gate is held: RotateKeyUsage waits for
+// every in-flight use to end before it publishes a new version and resets the
+// count. The holder must not call RotateKeyUsage or BeginKeyUse on the same
+// key before end, and the tracker's warning and rotation callbacks, which run
+// inside the hold, must not rotate the key synchronously.
+func (t *AEADSafetyTracker) BeginKeyUse(keyID string) (end func()) {
+	gate := t.keyGate(keyID)
+	gate.RLock()
+	return gate.RUnlock
+}
+
+// RotateKeyUsage holds keyID's rotation gate for writing, runs rotate, which
+// returns the key's new version, and when it succeeds makes that version the
+// key's latest, then releases the gate. The old version keeps its counters:
+// it stays decryptable, and its decrypts are still charged to it
+// (RecordKeyVersionUse), so a rotation never grants a retained version a new
+// allowance. No crypto call holding the gate (BeginKeyUse) overlaps rotate,
+// so a use reserved before the rotation stays on the old version and a use
+// after it is counted against the new one. rotate must not call BeginKeyUse
+// or RotateKeyUsage on the same key, and the tracker's callbacks must not
+// rotate synchronously.
+func (t *AEADSafetyTracker) RotateKeyUsage(keyID string, rotate func() (newVersion uint64, err error)) error {
+	gate := t.keyGate(keyID)
+	gate.Lock()
+	defer gate.Unlock()
+
+	newVersion, err := rotate()
+	if err != nil {
+		return err
+	}
+	t.chargeKeyVersion(keyID, newVersion, 0, 0, false)
+	return nil
+}
+
+// SetKeyVersionSource sets the function that reports a key's current
+// version from authoritative (replicated) state. nil removes it.
+func (t *AEADSafetyTracker) SetKeyVersionSource(source func(ctx context.Context, keyID string) (uint64, error)) {
+	if source == nil {
+		t.keyVersionSource.Store(nil)
+		return
+	}
+	t.keyVersionSource.Store(&source)
+}
+
+// currentKeyVersion reports the version a new encryption under keyID is
+// charged to: the newer of the version source's answer and the latest
+// version this tracker has seen. 0 means unknown, which charges the latest
+// tracked version.
+func (t *AEADSafetyTracker) currentKeyVersion(ctx context.Context, keyID string) uint64 {
+	var version uint64
+	if source := t.keyVersionSource.Load(); source != nil {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if v, err := (*source)(ctx, keyID); err == nil {
+			version = v
+		}
+	}
+	if usage, ok := t.keyUsage.Load(keyID); ok {
+		usage.mu.Lock()
+		if usage.Version > version {
+			version = usage.Version
+		}
+		usage.mu.Unlock()
+	}
+	return version
+}
+
+// retiredUsageKey names the counters of a version of keyID that is no longer
+// its latest.
+func retiredUsageKey(keyID string, version uint64) string {
+	return keyID + "\x00v" + strconv.FormatUint(version, 10)
+}
+
+// chargeKeyVersion charges operations to version's counters of keyID (when
+// charge is set) and returns them with whether a limit is exceeded. The
+// key's keyUsage entry holds its latest version; a newer version moves the
+// latest's counters to retiredKeyUsage and starts from zero, and an older
+// version is charged to its retired counters, which persist. Version 0
+// charges the latest version. The decision and the charge happen under the
+// latest entry's lock, so a concurrent version change cannot move a charge
+// to another version's counters.
+func (t *AEADSafetyTracker) chargeKeyVersion(keyID string, version, operations, bytesProcessed uint64, charge bool) (*AEADUsage, bool) {
+	usage := t.keyUsage.LoadOrStore(keyID, &AEADUsage{
+		Config: t.getEffectiveConfig(keyID, false),
+	})
+	usage.mu.Lock()
+	defer usage.mu.Unlock()
+
+	if version != 0 && usage.Version != 0 && version < usage.Version {
+		retired := t.retiredKeyUsage.LoadOrStore(retiredUsageKey(keyID, version), &AEADUsage{
+			Config:  usage.Config,
+			Version: version,
+		})
+		// A retained version is held to the key's current config, which
+		// SetKeyConfig and ClearKeyConfig write under usage.mu (held here).
+		retired.mu.Lock()
+		retired.Config = usage.Config
+		var exceeded bool
+		if charge {
+			exceeded = retired.incrementLocked(operations, bytesProcessed)
+		}
+		retired.mu.Unlock()
+		return retired, exceeded
+	}
+	if version > usage.Version {
+		previous := usage.Version
+		if previous == 0 && version > 1 && (usage.OperationCount.Load() > 0 || usage.BytesProcessed.Load() > 0) {
+			// Counts of an unknown version, seen before the key's version
+			// was: they belong to the version this one superseded.
+			previous = version - 1
+		}
+		if previous != 0 {
+			usage.Version = previous
+			t.retiredKeyUsage.Store(retiredUsageKey(keyID, previous), usage.retireLocked())
+		}
+		usage.Version = version
+	}
+	if !charge {
+		return usage, false
+	}
+	exceeded := usage.incrementLocked(operations, bytesProcessed)
+	return usage, exceeded
 }

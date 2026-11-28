@@ -279,6 +279,9 @@ func TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly(t *testing.T) {
 	for _, entry := range grpcRegistrations {
 		unixOnly[entry.desc.ServiceName] = entry.unixOnly
 	}
+	crypto := pb.Crypto_ServiceDesc.ServiceName
+	_, cryptoRegistered := info[crypto]
+	assert.True(t, cryptoRegistered, "service %s must be registered", crypto)
 	legacy := []string{
 		pb.CertificateService_ServiceDesc.ServiceName,
 		pb.TrustService_ServiceDesc.ServiceName,
@@ -290,6 +293,212 @@ func TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly(t *testing.T) {
 		assert.True(t, unixOnly[name], "service %s must be unixOnly: TCP callers use go-xkms's canonical surface", name)
 	}
 	assert.False(t, unixOnly[pb.Crypto_ServiceDesc.ServiceName], "Crypto is served to every peer: go-xkms serves no quicbaas.kms.v1 name")
+}
+
+// TestModule_Crypto_NilGatedOnCryptoService proves bind() builds the
+// quicbaas.kms.v1.Crypto server from the facade's Crypto() exactly when it is
+// configured, the same nil-gating pkg/server/lifecycle.go applies on the
+// legacy transport: the pinned go-xkms serves no quicbaas.kms.v1 name, so
+// the node must serve it itself.
+func TestModule_Crypto_NilGatedOnCryptoService(t *testing.T) {
+	without, err := NewModule(func() service.QuicBaaS { return &mocks.MockQuicBaaS{} }, testLogger(t))
+	require.NoError(t, err)
+	servers, err := without.bind()
+	require.NoError(t, err)
+	assert.Nil(t, servers.crypto, "Crypto must stay unbound while the facade has no CryptoService")
+
+	with, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{MockCryptoService: &mocks.MockCryptoService{}}
+	}, testLogger(t))
+	require.NoError(t, err)
+	servers, err = with.bind()
+	require.NoError(t, err)
+	_, ok := servers.crypto.(nodeCryptoServer)
+	assert.True(t, ok, "Crypto must be bound to a nodeCryptoServer when the facade has a CryptoService")
+}
+
+// reversingCryptoService is a MockCryptoService whose Encrypt reverses the
+// plaintext and whose Decrypt reverses it back, so a round trip through the
+// node's Crypto server can be checked end to end. Its HMAC funcs fail the
+// test: the node must never reach them.
+func reversingCryptoService(t *testing.T) *mocks.MockCryptoService {
+	t.Helper()
+	reverse := func(in []byte) []byte {
+		out := make([]byte, len(in))
+		for i, b := range in {
+			out[len(in)-1-i] = b
+		}
+		return out
+	}
+	return &mocks.MockCryptoService{
+		EncryptFunc: func(_ context.Context, req *service.EncryptRequest) (*service.EncryptResponse, error) {
+			return &service.EncryptResponse{KeyID: req.KeyID, KeyVersion: 1, Ciphertext: reverse(req.Plaintext)}, nil
+		},
+		DecryptFunc: func(_ context.Context, req *service.DecryptRequest) (*service.DecryptResponse, error) {
+			return &service.DecryptResponse{KeyID: req.KeyID, KeyVersion: 1, Plaintext: reverse(req.Ciphertext)}, nil
+		},
+		GenerateHMACFunc: func(context.Context, *service.HMACRequest) (*service.HMACResponse, error) {
+			t.Error("GenerateHMAC must not reach the crypto backend on the node")
+			return &service.HMACResponse{}, nil
+		},
+		VerifyHMACFunc: func(context.Context, *service.VerifyHMACRequest) (*service.VerifyHMACResponse, error) {
+			t.Error("VerifyHMAC must not reach the crypto backend on the node")
+			return &service.VerifyHMACResponse{}, nil
+		},
+		SignFunc: func(context.Context, *service.SignRequest) (*service.SignResponse, error) {
+			t.Error("Sign must not reach the crypto backend on the node")
+			return &service.SignResponse{}, nil
+		},
+		VerifyFunc: func(context.Context, *service.VerifyRequest) (*service.VerifyResponse, error) {
+			t.Error("Verify must not reach the crypto backend on the node")
+			return &service.VerifyResponse{}, nil
+		},
+	}
+}
+
+// TestModule_Crypto_EncryptDecryptRoundTripsOverGRPC drives the registered
+// node gRPC surface: Encrypt then Decrypt through quicbaas.kms.v1.Crypto
+// returns the original plaintext.
+func TestModule_Crypto_EncryptDecryptRoundTripsOverGRPC(t *testing.T) {
+	m, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{MockCryptoService: reversingCryptoService(t)}
+	}, testLogger(t))
+	require.NoError(t, err)
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+
+	plaintext := []byte("node crypto round trip")
+	enc, err := client.Encrypt(context.Background(), &pb.CryptoEncryptRequest{KeyId: "k1", Plaintext: plaintext})
+	require.NoError(t, err)
+	require.NotEqual(t, plaintext, enc.Ciphertext)
+
+	dec, err := client.Decrypt(context.Background(), &pb.CryptoDecryptRequest{
+		KeyId: "k1", Ciphertext: enc.Ciphertext, KeyVersion: enc.KeyVersion,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, dec.Plaintext)
+}
+
+// TestModule_Crypto_HMACUnimplementedOverGRPC proves the node answers
+// GenerateHMAC and VerifyHMAC Unimplemented (nodeCryptoServer): the crypto
+// backend has no stable MAC key, so a MAC it generated could never verify.
+func TestModule_Crypto_HMACUnimplementedOverGRPC(t *testing.T) {
+	m, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{MockCryptoService: reversingCryptoService(t)}
+	}, testLogger(t))
+	require.NoError(t, err)
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+
+	_, err = client.GenerateHMAC(context.Background(), &pb.HMACRequest{KeyId: "k1", Message: []byte("m")})
+	assert.Equal(t, codes.Unimplemented, status.Code(err), "GenerateHMAC: got %v", err)
+
+	_, err = client.VerifyHMAC(context.Background(), &pb.VerifyHMACRequest{
+		KeyId: "k1", Message: []byte("m"), Hmac: []byte("mac"),
+	})
+	assert.Equal(t, codes.Unimplemented, status.Code(err), "VerifyHMAC: got %v", err)
+}
+
+// TestModule_Crypto_SignVerifyUnimplementedOverGRPC proves the node answers
+// Sign and Verify Unimplemented (nodeCryptoServer) without reaching the
+// crypto backend: the backend does not resolve the signing key version, so
+// it would sign with a stale key after RotateKey.
+func TestModule_Crypto_SignVerifyUnimplementedOverGRPC(t *testing.T) {
+	m, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{MockCryptoService: reversingCryptoService(t)}
+	}, testLogger(t))
+	require.NoError(t, err)
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	want := status.Convert(errNodeSignUnserved).Message()
+
+	t.Run("Sign", func(t *testing.T) {
+		_, err := client.Sign(context.Background(), &pb.SignRequest{KeyId: "k1", Message: []byte("m")})
+		assert.Equal(t, codes.Unimplemented, status.Code(err), "Sign: got %v", err)
+		assert.Equal(t, want, status.Convert(err).Message())
+	})
+
+	t.Run("Verify", func(t *testing.T) {
+		_, err := client.Verify(context.Background(), &pb.VerifyRequest{
+			KeyId: "k1", Message: []byte("m"), Signature: []byte("sig"), KeyVersion: 1,
+		})
+		assert.Equal(t, codes.Unimplemented, status.Code(err), "Verify: got %v", err)
+		assert.Equal(t, want, status.Convert(err).Message())
+	})
+
+	t.Run("Rewrap", func(t *testing.T) {
+		_, err := client.Rewrap(context.Background(), &pb.RewrapRequest{
+			KeyId: "k1", Ciphertext: []byte("ct"),
+		})
+		assert.Equal(t, codes.Unimplemented, status.Code(err), "Rewrap: got %v", err)
+		assert.Equal(t, status.Convert(errNodeRewrapUnserved).Message(), status.Convert(err).Message())
+	})
+}
+
+// dataKeyCryptoService is a MockCryptoService that counts the data-key
+// generations reaching the crypto backend.
+func dataKeyCryptoService(dataKeys, wrappedKeys *int) *mocks.MockCryptoService {
+	return &mocks.MockCryptoService{
+		GenerateDataKeyFunc: func(_ context.Context, req *service.GenerateDataKeyRequest) (*service.GenerateDataKeyResponse, error) {
+			*dataKeys++
+			return &service.GenerateDataKeyResponse{
+				KeyID: req.KeyID, Plaintext: []byte("dek"), CiphertextBlob: []byte("wrapped"),
+			}, nil
+		},
+		GenerateWrappedDataKeyFunc: func(_ context.Context, req *service.GenerateWrappedDataKeyRequest) (*service.GenerateWrappedDataKeyResponse, error) {
+			*wrappedKeys++
+			return &service.GenerateWrappedDataKeyResponse{KeyID: req.KeyID, CiphertextBlob: []byte("wrapped")}, nil
+		},
+	}
+}
+
+// TestModule_Crypto_DataKeyContextRejectedOverGRPC proves the node answers
+// GenerateDataKey and GenerateWrappedDataKey InvalidArgument when the request
+// carries a non-empty context (nodeCryptoServer): the backend drops it, so
+// the blob would not be bound to it. The backend is never reached.
+func TestModule_Crypto_DataKeyContextRejectedOverGRPC(t *testing.T) {
+	var dataKeys, wrappedKeys int
+	m, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{MockCryptoService: dataKeyCryptoService(&dataKeys, &wrappedKeys)}
+	}, testLogger(t))
+	require.NoError(t, err)
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	spec := &pb.KeySpec{KeySize: 256}
+
+	_, err = client.GenerateDataKey(context.Background(), &pb.GenerateDataKeyRequest{
+		KeyId: "k1", KeySpec: spec, Context: []byte("aad"),
+	})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "GenerateDataKey: got %v", err)
+
+	_, err = client.GenerateWrappedDataKey(context.Background(), &pb.GenerateWrappedDataKeyRequest{
+		KeyId: "k1", KeySpec: spec, Context: []byte("aad"),
+	})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "GenerateWrappedDataKey: got %v", err)
+
+	assert.Zero(t, dataKeys, "GenerateDataKey with a context must not reach the crypto backend")
+	assert.Zero(t, wrappedKeys, "GenerateWrappedDataKey with a context must not reach the crypto backend")
+}
+
+// TestModule_Crypto_DataKeyWithoutContextServedOverGRPC proves the node still
+// serves GenerateDataKey and GenerateWrappedDataKey when the request carries
+// no context.
+func TestModule_Crypto_DataKeyWithoutContextServedOverGRPC(t *testing.T) {
+	var dataKeys, wrappedKeys int
+	m, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{MockCryptoService: dataKeyCryptoService(&dataKeys, &wrappedKeys)}
+	}, testLogger(t))
+	require.NoError(t, err)
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	spec := &pb.KeySpec{KeySize: 256}
+
+	dk, err := client.GenerateDataKey(context.Background(), &pb.GenerateDataKeyRequest{KeyId: "k1", KeySpec: spec})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("dek"), dk.Plaintext)
+	assert.Equal(t, []byte("wrapped"), dk.CiphertextBlob)
+
+	wk, err := client.GenerateWrappedDataKey(context.Background(), &pb.GenerateWrappedDataKeyRequest{KeyId: "k1", KeySpec: spec})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("wrapped"), wk.CiphertextBlob)
+
+	assert.Equal(t, 1, dataKeys)
+	assert.Equal(t, 1, wrappedKeys)
 }
 
 // startBufconnModule registers the module on a bufconn-backed gRPC server and

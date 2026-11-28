@@ -685,8 +685,13 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 		return nil, err
 	}
 
+	// Never regenerate a version another node already created.
+	kb.refreshVersion(ctx, keyID, meta)
+
 	// Calculate new version
+	kb.mu.RLock()
 	oldVersion := meta.Version
+	kb.mu.RUnlock()
 	newVersion := oldVersion + 1
 
 	// Build attributes for the new versioned key
@@ -738,6 +743,48 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 	kb.metadata[keyID] = meta
 
 	return meta, nil
+}
+
+// refreshVersion moves the cached version of keyID up to the newest version
+// that exists in the go-xkms store and that this backend owns as keyID's
+// version. Another node's RotateKey creates
+// `<key>_v<N>` in the shared store but cannot update this backend's cache, so
+// Encrypt and RotateKey call this first. The version only moves forward.
+func (kb *XKMSBackend) refreshVersion(ctx context.Context, keyID string, meta *KeyMetadata) {
+	kb.mu.RLock()
+	current := meta.Version
+	algorithm := meta.Algorithm
+	kb.mu.RUnlock()
+
+	if !kb.isSymmetricAlgorithm(algorithm) {
+		return
+	}
+
+	v := current
+	for {
+		kid := kb.buildFullKeyID(kb.buildVersionedKeyID(keyID, v+1), algorithm)
+		if _, err := xkms.GetSymmetricKey(ctx, kid); err != nil {
+			break
+		}
+		// Only a version this backend wrote as keyID's own version is
+		// followed: a key stored under the versioned name that is
+		// standalone, or another key's version, is not keyID's rotation.
+		if kb.checkOwnedXKMSKeyVersion(ctx, keyID, v+1, algorithm) != nil {
+			break
+		}
+		v++
+	}
+	if v == current {
+		return
+	}
+
+	kb.mu.Lock()
+	defer kb.mu.Unlock()
+	// A concurrent RotateKey may already have moved the version further.
+	if v > meta.Version {
+		meta.Version = v
+		meta.Updated = time.Now()
+	}
 }
 
 // buildVersionedKeyID creates a versioned key identifier.
@@ -1073,23 +1120,33 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 	if err != nil {
 		return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Encrypt", err)
 	}
+	kb.refreshVersion(ctx, keyID, meta)
+
+	// GetKeyMetadata returns the shared cached pointer, which RotateKey
+	// mutates under kb.mu. Copy the version and algorithm once under the
+	// read lock so the key chosen and the version serialized into the blob
+	// always agree.
+	kb.mu.RLock()
+	version := meta.Version
+	algorithm := meta.Algorithm
+	kb.mu.RUnlock()
 
 	// Determine which key to use based on version
 	// Version 1 uses the base key (backward compatible)
 	// Version 2+ uses versioned keys (keyID:v2, keyID:v3, etc.)
 	var actualKeyID string
-	if meta.Version == 1 {
+	if version == 1 {
 		actualKeyID = keyID
 	} else {
-		actualKeyID = kb.buildVersionedKeyID(keyID, meta.Version)
-		if err := kb.checkOwnedXKMSKeyVersion(ctx, keyID, meta.Version, meta.Algorithm); err != nil {
+		actualKeyID = kb.buildVersionedKeyID(keyID, version)
+		if err := kb.checkOwnedXKMSKeyVersion(ctx, keyID, version, algorithm); err != nil {
 			return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Encrypt", err)
 		}
 	}
 
 	// Build the full key ID with algorithm info for go-xkms
 	// Format: "backend:type:algo:keyname"
-	kid := kb.buildFullKeyID(actualKeyID, meta.Algorithm)
+	kid := kb.buildFullKeyID(actualKeyID, algorithm)
 
 	// Use go-xkms encrypt
 	opts := &kctypes.EncryptOptions{
@@ -1105,7 +1162,7 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 	if encrypted.Metadata == nil {
 		encrypted.Metadata = make(map[string][]byte)
 	}
-	encrypted.Metadata[keyVersionMetadataKey] = []byte(fmt.Sprintf("%d", meta.Version))
+	encrypted.Metadata[keyVersionMetadataKey] = []byte(fmt.Sprintf("%d", version))
 
 	// Serialize encrypted data for storage
 	return kb.serializeEncryptedData(encrypted)
@@ -1135,16 +1192,7 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 	}
 
 	// Read key version from encrypted data metadata
-	// If not present (legacy data), assume version 1
-	version := 1
-	if encrypted.Metadata != nil {
-		if versionBytes, ok := encrypted.Metadata[keyVersionMetadataKey]; ok {
-			if _, err := fmt.Sscanf(string(versionBytes), "%d", &version); err != nil {
-				// If we can't parse the version, fall back to version 1
-				version = 1
-			}
-		}
-	}
+	version := encryptedKeyVersion(encrypted)
 
 	// Determine which key to use based on version
 	// Version 1 uses the base key (backward compatible)
@@ -1540,6 +1588,30 @@ func (kb *XKMSBackend) deserializeEncryptedData(data []byte) (*kctypes.Encrypted
 		return nil, err
 	}
 	return &encrypted, nil
+}
+
+// encryptedKeyVersion reads the key version from the ciphertext's metadata.
+// If not present (legacy data) or unparsable, it assumes version 1.
+func encryptedKeyVersion(encrypted *kctypes.EncryptedData) int {
+	version := 1
+	if encrypted.Metadata != nil {
+		if versionBytes, ok := encrypted.Metadata[keyVersionMetadataKey]; ok {
+			if _, err := fmt.Sscanf(string(versionBytes), "%d", &version); err != nil {
+				// If we can't parse the version, fall back to version 1
+				version = 1
+			}
+		}
+	}
+	return version
+}
+
+// CiphertextKeyVersion returns the key version an XKMSBackend ciphertext was sealed under, the version Decrypt uses. ok is false when ciphertext is not an XKMSBackend blob.
+func CiphertextKeyVersion(ciphertext []byte) (version int, ok bool) {
+	var encrypted kctypes.EncryptedData
+	if err := json.Unmarshal(ciphertext, &encrypted); err != nil {
+		return 0, false
+	}
+	return encryptedKeyVersion(&encrypted), true
 }
 
 // Ensure XKMSBackend implements Backend.

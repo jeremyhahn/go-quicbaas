@@ -164,22 +164,22 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 	}
 
 	// A job run by a reserved handler (a platform handler, or a KMS grace
-	// job) is written only by the service that owns the handler: its handler and payload are not
-	// user-editable, and no job is turned into one.
+	// job) is written only by the service that owns the handler: its handler
+	// and payload are not user-editable, and no job is turned into one.
 	if err := schedulerRefuseReservedHandler("UpdateJob", req.Handler); err != nil {
 		return nil, err
 	}
-	if req.Handler != "" || len(req.Payload) > 0 {
-		current, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
-		if err != nil {
-			return nil, err
-		}
-		if err := schedulerTenantEnforceAccess(tenantID, current.TargetTenantID, "UpdateJob"); err != nil {
-			return nil, err
-		}
-		if err := schedulerRefuseReservedHandler("UpdateJob", current.Handler); err != nil {
-			return nil, err
-		}
+	// Every update loads the current job: a reserved job is not
+	// reschedulable either (moving its ExecuteAt would run it early).
+	current, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if err := schedulerTenantEnforceAccess(tenantID, current.TargetTenantID, "UpdateJob"); err != nil {
+		return nil, err
+	}
+	if err := schedulerRefuseReservedHandler("UpdateJob", current.Handler); err != nil {
+		return nil, err
 	}
 
 	// Convert request to scheduler.JobUpdateParams
@@ -318,6 +318,12 @@ func (a *SchedulerAdapter) TriggerJob(ctx context.Context, req *TriggerScheduler
 
 	// Enforce tenant access on the returned job
 	if err := schedulerTenantEnforceAccess(tenantID, job.TargetTenantID, "TriggerJob"); err != nil {
+		return nil, err
+	}
+
+	// A job run by an internal handler (a KMS grace job) runs only when its
+	// owner scheduled it: scheduler permissions cannot run it early.
+	if err := schedulerRefuseReservedHandler("TriggerJob", job.Handler); err != nil {
 		return nil, err
 	}
 

@@ -16,7 +16,6 @@ package quicbaas
 import (
 	"context"
 	"errors"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -816,38 +815,6 @@ func TestGetJobsDueForExecution_IncludesTenantJobs(t *testing.T) {
 	if len(dueJobs) != 1 || dueJobs[0].Name != "system-due" {
 		t.Fatalf("after delete, due jobs = %d, want only system-due", len(dueJobs))
 	}
-}
-
-// sortedScanKV is a mockKVStore whose Scan visits keys in ascending order,
-// as the real store's sorted index does.
-type sortedScanKV struct {
-	*mockKVStore
-}
-
-func (s *sortedScanKV) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
-	if s.scanErr != nil {
-		return s.scanErr
-	}
-	s.mu.RLock()
-	keys := make([]string, 0, len(s.data))
-	values := make(map[string][]byte, len(s.data))
-	for k, v := range s.data {
-		if strings.HasPrefix(k, prefix) {
-			keys = append(keys, k)
-			values[k] = append([]byte(nil), v...)
-		}
-	}
-	s.mu.RUnlock()
-	sort.Strings(keys)
-	for _, k := range keys {
-		if err := fn(k, values[k]); err != nil {
-			if err == ErrLimitReached {
-				return nil
-			}
-			return err
-		}
-	}
-	return nil
 }
 
 // TestGetJobsDueForExecution_RunnableJobBehindPinnedBatch checks that due

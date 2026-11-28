@@ -2117,6 +2117,38 @@ func TestSchedulerServer_CreateJob_TenantCallerUnspecifiedOwnerIsTenantOwned(t *
 	require.Error(t, err)
 }
 
+// A metadata-only UpdateJob (no execute_at) keeps a one-shot job's deadline:
+// an omitted execute_at is not the 1970 epoch, which would run the job (a KMS
+// grace job) at once.
+func TestSchedulerServer_UpdateJob_MetadataOnlyKeepsExecuteAt(t *testing.T) {
+	client, _, _ := startLegacySchedulerListener(t, "tenant-a")
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer good")
+
+	executeAt := time.Now().Add(time.Hour).Unix()
+	created, err := client.CreateJob(ctx, &pb.CreateJobRequest{
+		Name: "grace", Type: pb.JobType_JOB_TYPE_ONE_SHOT, Handler: "h",
+		ExecuteAt: executeAt,
+	})
+	require.NoError(t, err)
+	jobID := created.GetJob().GetId()
+
+	updated, err := client.UpdateJob(ctx, &pb.UpdateJobRequest{
+		JobId: jobID, Name: "renamed", Labels: map[string]string{"k": "v"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "renamed", updated.GetJob().GetName())
+	assert.Equal(t, executeAt, updated.GetJob().GetExecuteAt(), "execute_at is unchanged")
+
+	got, err := client.GetJob(ctx, &pb.GetJobRequest{JobId: jobID})
+	require.NoError(t, err)
+	assert.Equal(t, executeAt, got.GetJob().GetExecuteAt(), "the stored deadline is unchanged")
+}
+
+func TestProtoUpdateExecuteAt(t *testing.T) {
+	assert.True(t, protoUpdateExecuteAt(0).IsZero(), "an omitted execute_at is the zero time")
+	assert.Equal(t, int64(1700000000), protoUpdateExecuteAt(1700000000).Unix())
+}
+
 // =============================================================================
 // Additional Edge Case Tests
 // =============================================================================

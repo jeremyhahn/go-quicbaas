@@ -147,7 +147,7 @@ func (s *SchedulerServer) UpdateJob(ctx context.Context, req *pb.UpdateJobReques
 		Name:        req.Name,
 		Description: req.Description,
 		Schedule:    req.Schedule,
-		ExecuteAt:   time.Unix(req.ExecuteAt, 0),
+		ExecuteAt:   protoUpdateExecuteAt(req.ExecuteAt),
 		Handler:     req.Handler,
 		Payload:     req.Payload,
 		Priority:    req.Priority,
@@ -424,6 +424,17 @@ func (s *SchedulerServer) GetSchedulerStatus(ctx context.Context, _ *pb.GetSched
 // =============================================================================
 // Type Conversion Helpers - Proto to Service
 // =============================================================================
+
+// protoUpdateExecuteAt converts an update's execute_at, in Unix seconds, to
+// the service's time. An omitted execute_at (zero) is the zero time, which the
+// scheduler reads as "unchanged": converting it with time.Unix would move the
+// job to 1970 and run a one-shot job (a KMS grace job) at once.
+func protoUpdateExecuteAt(sec int64) time.Time {
+	if sec == 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
+}
 
 // protoOwnerTypeToService converts pb.OwnerType to service.SchedulerOwnerType.
 // An unspecified owner type maps to "" (no owner type), so the scheduler
