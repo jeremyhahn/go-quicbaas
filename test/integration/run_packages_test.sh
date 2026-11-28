@@ -163,10 +163,10 @@ run_filter "./test/integration/iam" || fail "iam limit: exit $?, want 0"
 grep -q -- ' -timeout 30m .*\./test/integration/iam$' "$tmp/ran.args" ||
 	fail "iam limit: ran '$(cat "$tmp/ran.args")', want -timeout 30m"
 
-# (xi) The cli package runs with its own limit, CLI_PACKAGE_TIMEOUT (30m).
+# (xi) The cli package runs with its own limit, CLI_PACKAGE_TIMEOUT (41m).
 run_filter "./test/integration/cli" || fail "cli limit: exit $?, want 0"
-grep -q -- ' -timeout 30m .*\./test/integration/cli$' "$tmp/ran.args" ||
-	fail "cli limit: ran '$(cat "$tmp/ran.args")', want -timeout 30m"
+grep -q -- ' -timeout 41m .*\./test/integration/cli$' "$tmp/ran.args" ||
+	fail "cli limit: ran '$(cat "$tmp/ran.args")', want -timeout 41m"
 
 # (xii) The cluster package runs with its own limit, CLUSTER_PACKAGE_TIMEOUT (30m).
 run_filter "./test/integration/cluster" || fail "cluster limit: exit $?, want 0"

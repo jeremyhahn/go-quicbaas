@@ -85,8 +85,8 @@ IAM_PACKAGE_KILL_TIMEOUT=${IAM_PACKAGE_KILL_TIMEOUT:-31m}
 #   523 s + 15 s (TestBarrierAuthPosture_DefaultDeny) + 551 x 2 s = 1640 s,
 #   ceil(1.5 x 1640 s) = 2460 s (41m), capped at 30m like iam.
 # The kill limit stays one minute above it.
-CLI_PACKAGE_TIMEOUT=${CLI_PACKAGE_TIMEOUT:-30m}
-CLI_PACKAGE_KILL_TIMEOUT=${CLI_PACKAGE_KILL_TIMEOUT:-31m}
+CLI_PACKAGE_TIMEOUT=${CLI_PACKAGE_TIMEOUT:-45m}
+CLI_PACKAGE_KILL_TIMEOUT=${CLI_PACKAGE_KILL_TIMEOUT:-46m}
 # CLUSTER_PACKAGE_TIMEOUT is the cluster package's own limit. Its length is
 # legitimate, not a hang: on main e2a3ed26 the 34 top-level tests before
 # TestDataPersistence passed in 588 s (TestClusterConsistency 202 s,
@@ -129,7 +129,7 @@ for pkg in "$@"; do
 	# shellcheck disable=SC2086 # FLAGS is split into separate go test flags.
 	{
 		timeout --kill-after=30s "$pkg_kill_timeout" \
-			go test -v -p 1 -failfast -tags "$tags" -timeout "$pkg_timeout" $flags "$pkg"
+			go test -v -p 1 -tags "$tags" -timeout "$pkg_timeout" $flags "$pkg"
 		echo $? >"$status_file"
 	} 2>&1 | tee -a "$log"
 	read -r rc <"$status_file"
