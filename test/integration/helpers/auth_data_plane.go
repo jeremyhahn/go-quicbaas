@@ -109,14 +109,9 @@ func enrollDataPlanePrincipal(ctx context.Context, baseURL string) (*enrolledPri
 		return nil, &PrincipalAuthError{Principal: dataPlanePrincipalName, Step: "create role", TenantID: tenantID, Cause: err}
 	}
 
-	userID, certPEM, keyPEM, err := enrollTenantPIVUser(ctx, baseURL, tenantID, systemBearer)
+	_, certPEM, keyPEM, err := enrollTenantPIVUser(ctx, baseURL, tenantID, roleID, systemBearer)
 	if err != nil {
 		return nil, &PrincipalAuthError{Principal: dataPlanePrincipalName, Step: "enroll PIV user", TenantID: tenantID, Cause: err}
-	}
-
-	binding := map[string]interface{}{"role_id": roleID}
-	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/roles", systemBearer, binding); err != nil {
-		return nil, &PrincipalAuthError{Principal: dataPlanePrincipalName, Step: "bind role to user " + userID, TenantID: tenantID, Cause: err}
 	}
 
 	return &enrolledPrincipal{tenantID: tenantID, certPEM: certPEM, keyPEM: keyPEM}, nil

@@ -61,6 +61,7 @@ func intRange(from, to int) []int {
 }
 
 func TestOffsetWindow_ReturnsExactWindow(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name          string
 		total         int
@@ -80,6 +81,7 @@ func TestOffsetWindow_ReturnsExactWindow(t *testing.T) {
 		{name: "limit zero keeps the backend's first page", total: 150, offset: 40, limit: 0, want: intRange(0, 100), wantPages: []int{1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			src := newPagedSource(tc.total)
 			got, err := OffsetWindow(tc.offset, tc.limit, src.fetch)
 			require.NoError(t, err)
@@ -90,6 +92,7 @@ func TestOffsetWindow_ReturnsExactWindow(t *testing.T) {
 }
 
 func TestOffsetWindow_DoesNotWriteIntoThePage(t *testing.T) {
+	t.Parallel()
 	src := newPagedSource(30)
 	got, err := OffsetWindow(5, 10, src.fetch)
 	require.NoError(t, err)
@@ -98,6 +101,7 @@ func TestOffsetWindow_DoesNotWriteIntoThePage(t *testing.T) {
 }
 
 func TestOffsetWindow_ReturnsFetchError(t *testing.T) {
+	t.Parallel()
 	errList := errors.New("list failed")
 	for _, tc := range []struct {
 		name     string
@@ -107,6 +111,7 @@ func TestOffsetWindow_ReturnsFetchError(t *testing.T) {
 		{name: "second page", failPage: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			src := newPagedSource(40)
 			src.failPage, src.err = tc.failPage, errList
 			got, err := OffsetWindow(5, 10, src.fetch)

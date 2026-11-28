@@ -27,8 +27,10 @@ import (
 // The export generator writes JSON only, so RequestExport refuses any other
 // format rather than recording a request it cannot honour (#1724).
 func TestGDPRManager_RequestExport_RefusesNonJSONFormats(t *testing.T) {
+	t.Parallel()
 	for _, format := range []DataExportFormat{DataExportFormatCSV, DataExportFormatXML, "yaml"} {
 		t.Run(string(format), func(t *testing.T) {
+			t.Parallel()
 			manager, _ := createTestGDPRManager(t)
 
 			request, err := manager.RequestExport(context.Background(), "tenant1", 1724, 1724, format, nil, nil)
@@ -52,8 +54,10 @@ func TestGDPRManager_RequestExport_RefusesNonJSONFormats(t *testing.T) {
 }
 
 func TestGDPRManager_RequestExport_AcceptsJSONAndDefaultsEmptyToJSON(t *testing.T) {
+	t.Parallel()
 	for _, format := range []DataExportFormat{DataExportFormatJSON, ""} {
 		t.Run("format="+string(format), func(t *testing.T) {
+			t.Parallel()
 			manager, _ := createTestGDPRManager(t)
 
 			request, err := manager.RequestExport(context.Background(), "tenant1", 1725, 1725, format, nil, nil)
@@ -65,6 +69,7 @@ func TestGDPRManager_RequestExport_AcceptsJSONAndDefaultsEmptyToJSON(t *testing.
 }
 
 func TestUnsupportedDataExportFormatError_Error(t *testing.T) {
+	t.Parallel()
 	err := &UnsupportedDataExportFormatError{Format: DataExportFormatCSV}
 	assert.Equal(t, `unsupported data export format "csv": only json is supported`, err.Error())
 }

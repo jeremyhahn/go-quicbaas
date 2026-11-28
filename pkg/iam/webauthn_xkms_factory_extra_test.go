@@ -50,6 +50,7 @@ func newTestWebAuthnFactory(t *testing.T, settings TenantWebAuthnSettingsProvide
 
 // Factory accessor returns the wrapped factory instance.
 func TestXKMSWebAuthnManager_FactoryAccessor(t *testing.T) {
+	t.Parallel()
 	f := newTestWebAuthnFactory(t, nil)
 	m, err := NewXKMSWebAuthnManager(f)
 	if err != nil {
@@ -62,6 +63,7 @@ func TestXKMSWebAuthnManager_FactoryAccessor(t *testing.T) {
 
 // resolveConfig: no settings provider yields the global config unchanged.
 func TestWebAuthnFactory_ResolveConfig_NoSettings(t *testing.T) {
+	t.Parallel()
 	f := newTestWebAuthnFactory(t, nil)
 	cfg, err := f.resolveConfig(context.Background(), "acme")
 	if err != nil {
@@ -75,6 +77,7 @@ func TestWebAuthnFactory_ResolveConfig_NoSettings(t *testing.T) {
 // resolveConfig: a nil override inherits the global config; a populated override
 // replaces the per-field values; a provider error propagates.
 func TestWebAuthnFactory_ResolveConfig_WithSettings(t *testing.T) {
+	t.Parallel()
 	// Nil override -> global config.
 	f := newTestWebAuthnFactory(t, stubWebAuthnSettings{override: nil})
 	cfg, err := f.resolveConfig(context.Background(), "acme")
@@ -106,6 +109,7 @@ func TestWebAuthnFactory_ResolveConfig_WithSettings(t *testing.T) {
 // Reset, ResetTenant, and OnTenantSettingsChanged evict cached services. We seed
 // the cache directly (a nil service entry is sufficient to observe eviction).
 func TestWebAuthnFactory_CacheEviction(t *testing.T) {
+	t.Parallel()
 	f := newTestWebAuthnFactory(t, nil)
 
 	count := func() int {
@@ -164,6 +168,7 @@ func TestWebAuthnFactory_CacheEviction(t *testing.T) {
 
 // TenantManagerWebAuthnSettings adapter resolves overrides and handles nils.
 func TestTenantManagerWebAuthnSettings_Adapter(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Nil adapter / nil manager returns (nil, nil).

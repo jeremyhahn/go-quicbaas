@@ -222,6 +222,22 @@ type ServiceAccountStore interface {
 	// PutServiceAccount persists a service account.
 	PutServiceAccount(ctx context.Context, account *ServiceAccount) error
 
+	// InsertServiceAccount stores a new account, refusing it with
+	// *ServiceAccountExistsError when a live account in the tenant already
+	// has its name, or *DeviceCertAlreadyBoundError when another account
+	// holds its device certificate. Implementations MUST make the checks
+	// and the write one step against their other writers (#46): checked
+	// apart, two concurrent creates both pass and both land.
+	InsertServiceAccount(ctx context.Context, account *ServiceAccount) error
+
+	// UpdateServiceAccount applies mutate to a copy of the stored account
+	// and stores the copy, atomically against the other writers, returning
+	// the stored copy. A mutate error is returned and nothing is stored.
+	// A device certificate held by another account is refused with
+	// *DeviceCertAlreadyBoundError. Records already handed out are never
+	// edited in place (#43): readers holding one see it unchanged.
+	UpdateServiceAccount(ctx context.Context, accountID string, mutate func(*ServiceAccount) error) (*ServiceAccount, error)
+
 	// GetServiceAccount retrieves a service account by ID.
 	GetServiceAccount(ctx context.Context, accountID string) (*ServiceAccount, error)
 
@@ -383,7 +399,12 @@ func (s *OrchestratorAuthService) CreateServiceAccount(
 		Revoked:     false,
 	}
 
-	if err := s.store.PutServiceAccount(ctx, account); err != nil {
+	// The checks above fail fast before the key derivation; the store
+	// repeats them under its write lock, which is what makes them hold
+	// against a concurrent create (#46). It keeps its own copy, so the
+	// caller's record is never one the store hands out to readers.
+	stored := *account
+	if err := s.store.InsertServiceAccount(ctx, &stored); err != nil {
 		return nil, nil, err
 	}
 
@@ -407,15 +428,17 @@ func (s *OrchestratorAuthService) RotateCredentials(ctx context.Context, account
 		return nil, &ServiceAccountRequiredError{Field: "account_id"}
 	}
 
-	account, err := s.store.GetServiceAccount(ctx, accountID)
+	current, err := s.store.GetServiceAccount(ctx, accountID)
 	if err != nil {
 		return nil, err
 	}
-
-	if account.Revoked {
+	if current.Revoked {
 		return nil, &ServiceAccountNotFoundError{AccountID: accountID}
 	}
 
+	// The key derivation runs before the store's write lock is taken; the
+	// revoked check is repeated under it, so a revocation landing meanwhile
+	// is never undone by the rotation (#43).
 	newSecret, err := generateRandomHex(32)
 	if err != nil {
 		return nil, &ServiceAccountRequiredError{Field: "secret generation failed"}
@@ -426,9 +449,14 @@ func (s *OrchestratorAuthService) RotateCredentials(ctx context.Context, account
 		return nil, err
 	}
 
-	account.SecretHash = secretHash
-
-	if err := s.store.PutServiceAccount(ctx, account); err != nil {
+	account, err := s.store.UpdateServiceAccount(ctx, accountID, func(a *ServiceAccount) error {
+		if a.Revoked {
+			return &ServiceAccountNotFoundError{AccountID: accountID}
+		}
+		a.SecretHash = secretHash
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
@@ -450,14 +478,11 @@ func (s *OrchestratorAuthService) RevokeServiceAccount(ctx context.Context, acco
 		return &ServiceAccountRequiredError{Field: "account_id"}
 	}
 
-	account, err := s.store.GetServiceAccount(ctx, accountID)
+	account, err := s.store.UpdateServiceAccount(ctx, accountID, func(a *ServiceAccount) error {
+		a.Revoked = true
+		return nil
+	})
 	if err != nil {
-		return err
-	}
-
-	account.Revoked = true
-
-	if err := s.store.PutServiceAccount(ctx, account); err != nil {
 		return err
 	}
 
@@ -488,14 +513,12 @@ func (s *OrchestratorAuthService) BindDeviceCertificate(ctx context.Context, acc
 		return &DeviceCertAlreadyBoundError{CertCN: certCN, AccountID: existing.ID}
 	}
 
-	account, err := s.store.GetServiceAccount(ctx, accountID)
-	if err != nil {
-		return err
-	}
-
-	account.DeviceCert = certCN
-
-	if err := s.store.PutServiceAccount(ctx, account); err != nil {
+	// The check above fails fast; the store repeats it under its write lock,
+	// so two accounts racing for one certificate cannot both bind it (#46).
+	if _, err := s.store.UpdateServiceAccount(ctx, accountID, func(a *ServiceAccount) error {
+		a.DeviceCert = certCN
+		return nil
+	}); err != nil {
 		return err
 	}
 
@@ -704,7 +727,7 @@ func hashSecret(secret string) (string, error) {
 // must never reassign it.
 var verifySecret = compareSecretHash
 
-// timingEqualizerDigest is a PBKDF2 digest, at the current pbkdf2Iterations,
+// productionTimingEqualizerDigest is a PBKDF2 digest, at pbkdf2Iterations,
 // of a random value that was discarded when it was generated: no caller can
 // ever present a secret that matches it. AuthenticateServiceAccount compares
 // against it whenever the account has no usable digest, so every attempt pays
@@ -716,7 +739,13 @@ var verifySecret = compareSecretHash
 // exactly one request distinguishable.
 // TestTimingEqualizerDigest_MatchesCurrentParameters fails if pbkdf2Iterations
 // moves and this is not regenerated.
-const timingEqualizerDigest = "$pbkdf2-sha256$i=600000$sSoZG5u3qQzR+p1jRLT51w$R3hFF/POmVN1Wy4U3sqkMhlR0Cxrxs8movzMOVl2pxc"
+const productionTimingEqualizerDigest = "$pbkdf2-sha256$i=600000$sSoZG5u3qQzR+p1jRLT51w$R3hFF/POmVN1Wy4U3sqkMhlR0Cxrxs8movzMOVl2pxc"
+
+// timingEqualizerDigest is the equalizer this process compares against. It is
+// productionTimingEqualizerDigest in every production binary; only pkg/iam's
+// TestMain replaces it, with a digest at the lowered secretWorkFactor, so the
+// equalizer keeps costing exactly what a real verification costs (#721).
+var timingEqualizerDigest = productionTimingEqualizerDigest
 
 // isLegacySecretHash reports whether stored is not a digest this package
 // wrote. Accounts written before the KDF landed hold the hex-encoded client
@@ -832,6 +861,88 @@ func (s *inMemoryServiceAccountStore) DeleteServiceAccount(ctx context.Context, 
 		return &ServiceAccountNotFoundError{AccountID: accountID}
 	}
 	return nil
+}
+
+// InsertServiceAccount stores a new account after checking name and device
+// certificate uniqueness under the write lock, so no concurrent writer can
+// land between the checks and the store.
+func (s *inMemoryServiceAccountStore) InsertServiceAccount(ctx context.Context, account *ServiceAccount) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if account == nil {
+		return &ServiceAccountRequiredError{Field: "account"}
+	}
+	s.writes.Lock()
+	defer s.writes.Unlock()
+
+	var conflict error
+	s.accounts.Range(func(_, value interface{}) bool {
+		existing, ok := value.(*ServiceAccount)
+		if !ok {
+			return true
+		}
+		if existing.TenantID == account.TenantID && strings.EqualFold(existing.Name, account.Name) && !existing.Revoked {
+			conflict = &ServiceAccountExistsError{TenantID: account.TenantID, Name: account.Name}
+			return false
+		}
+		if account.DeviceCert != "" && existing.DeviceCert == account.DeviceCert {
+			conflict = &DeviceCertAlreadyBoundError{CertCN: account.DeviceCert, AccountID: existing.ID}
+			return false
+		}
+		return true
+	})
+	if conflict != nil {
+		return conflict
+	}
+	s.accounts.Store(account.ID, account)
+	return nil
+}
+
+// UpdateServiceAccount runs mutate on a copy of the stored account and stores
+// the copy, all under the write lock.
+func (s *inMemoryServiceAccountStore) UpdateServiceAccount(
+	ctx context.Context,
+	accountID string,
+	mutate func(*ServiceAccount) error,
+) (*ServiceAccount, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.writes.Lock()
+	defer s.writes.Unlock()
+
+	val, ok := s.accounts.Load(accountID)
+	if !ok {
+		return nil, &ServiceAccountNotFoundError{AccountID: accountID}
+	}
+	current, ok := val.(*ServiceAccount)
+	if !ok {
+		return nil, &ServiceAccountNotFoundError{AccountID: accountID}
+	}
+
+	updated := *current
+	if err := mutate(&updated); err != nil {
+		return nil, err
+	}
+
+	if updated.DeviceCert != "" && updated.DeviceCert != current.DeviceCert {
+		var holder string
+		s.accounts.Range(func(_, value interface{}) bool {
+			other, ok := value.(*ServiceAccount)
+			if ok && other.ID != accountID && other.DeviceCert == updated.DeviceCert {
+				holder = other.ID
+				return false
+			}
+			return true
+		})
+		if holder != "" {
+			return nil, &DeviceCertAlreadyBoundError{CertCN: updated.DeviceCert, AccountID: holder}
+		}
+	}
+
+	s.accounts.Store(accountID, &updated)
+	return &updated, nil
 }
 
 // ListServiceAccountsIncludingRevoked returns every service account for a

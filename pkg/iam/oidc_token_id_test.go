@@ -62,6 +62,7 @@ func breakTokenIDEntropy(t *testing.T) error {
 // exactly like a fixture that correctly refused. This pins that each path IS
 // reachable in this fixture and DOES persist a token when the CSPRNG works.
 func TestJTI_IssuanceSucceedsWhenTheCSPRNGDoes(t *testing.T) {
+	t.Parallel()
 	provider, storage := newTokenIDProvider(t)
 	ctx := context.Background()
 

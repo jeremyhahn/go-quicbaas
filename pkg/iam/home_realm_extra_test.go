@@ -22,6 +22,7 @@ import (
 
 // NewHomeRealmDirectory rejects a nil store with HRDInvalidError.
 func TestHomeRealm_NilStore(t *testing.T) {
+	t.Parallel()
 	_, err := NewHomeRealmDirectory(nil)
 	if err == nil {
 		t.Fatal("NewHomeRealmDirectory(nil) want error")
@@ -34,6 +35,7 @@ func TestHomeRealm_NilStore(t *testing.T) {
 
 // RegisterHost validates input and UnregisterHost is owner-gated.
 func TestHomeRealm_HostRegisterUnregister(t *testing.T) {
+	t.Parallel()
 	shared := newMockKVStore()
 	dir, _ := NewHomeRealmDirectory(shared)
 	ctx := context.Background()
@@ -73,6 +75,7 @@ func TestHomeRealm_HostRegisterUnregister(t *testing.T) {
 
 // An explicit tenant hint validated against a registered host entry resolves.
 func TestHomeRealm_HintMatchesHostEntry(t *testing.T) {
+	t.Parallel()
 	shared := newMockKVStore()
 	dir, _ := NewHomeRealmDirectory(shared)
 	ctx := context.Background()
@@ -100,6 +103,7 @@ func TestHomeRealm_HintMatchesHostEntry(t *testing.T) {
 
 // HRD error messages render correctly.
 func TestHRDErrorMessages(t *testing.T) {
+	t.Parallel()
 	if msg := (&HRDInvalidError{Reason: "bad"}).Error(); !strings.Contains(msg, "bad") {
 		t.Fatalf("HRDInvalidError = %q", msg)
 	}

@@ -530,7 +530,10 @@ func TestSessionClient_RevokeOthers(t *testing.T) {
 				}
 				revokeReq, ok := req.(*revokeOthersRequest)
 				if !ok {
-					t.Error("expected revokeOthersRequest")
+					t.Fatal("expected revokeOthersRequest")
+				}
+				if revokeReq.TenantID != "tenant-1" {
+					t.Errorf("expected tenant ID tenant-1, got %s", revokeReq.TenantID)
 				}
 				if revokeReq.KeepSessionID != "session-123" {
 					t.Errorf("expected keep session ID session-123, got %s", revokeReq.KeepSessionID)
@@ -573,6 +576,27 @@ func TestSessionClient_RevokeOthers(t *testing.T) {
 		}
 		if !errors.IsInvalidInput(err) {
 			t.Errorf("expected invalid input error, got %v", err)
+		}
+	})
+
+	t.Run("empty tenant ID", func(t *testing.T) {
+		called := false
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				called = true
+				return nil, nil
+			},
+		}
+		client := NewSessionClient(mt)
+		err := client.RevokeOthers(context.Background(), "", "session-123")
+		if err == nil {
+			t.Error("expected error for empty tenant ID")
+		}
+		if !errors.IsInvalidInput(err) {
+			t.Errorf("expected invalid input error, got %v", err)
+		}
+		if called {
+			t.Error("expected no transport call for empty tenant ID")
 		}
 	})
 

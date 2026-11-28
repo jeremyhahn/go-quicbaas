@@ -34,6 +34,7 @@ func issueIntrospectionTestToken(t *testing.T, provider *OIDCProvider, opts Hard
 // introspecting resource server sees the same attestation a JWT-parsing one
 // reads from the bearer (go-quicbaas#393).
 func TestOIDCIntrospect_ReportsTheAttestationTheTokenCarries(t *testing.T) {
+	t.Parallel()
 	provider, privateKey, _, _, _ := createTestOIDCProvider(t)
 	seedLivenessUser(t, provider, "tenant-a", liveUserID, LifecycleActive)
 
@@ -66,6 +67,7 @@ func TestOIDCIntrospect_ReportsTheAttestationTheTokenCarries(t *testing.T) {
 // proven attestation is introspected without either claim: absence must read
 // as "no evidence", never as hardware.
 func TestOIDCIntrospect_OmitsAnAbsentAttestation(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	seedLivenessUser(t, provider, "tenant-a", liveUserID, LifecycleActive)
 
@@ -96,6 +98,7 @@ func TestOIDCIntrospect_OmitsAnAbsentAttestation(t *testing.T) {
 // TestOIDCIntrospect_InactiveTokenRevealsNoAttestation proves an attested
 // token that is no longer live introspects as exactly {"active":false}.
 func TestOIDCIntrospect_InactiveTokenRevealsNoAttestation(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	seedLivenessUser(t, provider, "tenant-a", liveUserID, LifecycleDisabled)
 

@@ -88,7 +88,43 @@ type Tenant struct {
 
 	// Updated is the last modification timestamp
 	Updated time.Time `json:"updated" yaml:"updated"`
+
+	// SelfRegistration, when set, records that self-service registration
+	// created this tenant and its registrant has not finished the ceremony.
+	// Only the broker writes it — CreateTenantOptions.SelfRegistration and
+	// UpdateTenantOptions.FinishSelfRegistration, which no transport maps — so
+	// it is the record a cleanup may trust to say the tenant is the
+	// registration's own. User attributes cannot serve: any caller who may
+	// update a user may set them.
+	SelfRegistration *TenantSelfRegistration `json:"self_registration,omitempty" yaml:"-"`
 }
+
+// TenantSelfRegistration is the broker's record of an unfinished
+// self-service registration on the tenant it created.
+type TenantSelfRegistration struct {
+	// Expires is when the unfinished registration is abandoned, and its
+	// tenant and account discarded.
+	Expires time.Time `json:"expires"`
+	// State is who holds the registration: "" (nobody), "finishing" (the
+	// ceremony is completing it) or "discarding" (cleanup is removing it).
+	State string `json:"state,omitempty"`
+	// Holder names the one finish or cleanup that holds State, so its own
+	// follow-up step can move the claim on.
+	Holder string `json:"holder,omitempty"`
+	// LeaseUntil is when a held State lapses, so a holder that died does not
+	// pin the registration for ever.
+	LeaseUntil time.Time `json:"lease_until,omitzero"`
+}
+
+// The states of TenantSelfRegistration.State.
+const (
+	// SelfRegistrationFinishing is held by the finish that is completing the
+	// registration.
+	SelfRegistrationFinishing = "finishing"
+	// SelfRegistrationDiscarding is held by the cleanup that is removing the
+	// unfinished registration's tenant and account.
+	SelfRegistrationDiscarding = "discarding"
+)
 
 // TenantSettings contains tenant-specific configuration options.
 type TenantSettings struct {

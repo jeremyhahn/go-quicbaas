@@ -28,6 +28,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -304,7 +305,7 @@ func TestSDKAgentCertIssuer_IssueAgentCertificate_HappyPathWithChain(t *testing.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/xkms/ca/sign", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(&xkmsSignCSRResponse{
-			CertificatePEM: leafPEMForTest(t),
+			CertificatePEM: serviceLeafPEMForTest(t, "tenant"),
 			ChainPEM:       chainPEMForTest(t),
 		})
 	})
@@ -384,6 +385,24 @@ func leafPEMForTest(t *testing.T) []byte {
 		Subject:      pkix.Name{CommonName: "leaf"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+// serviceLeafPEMForTest is leafPEMForTest with the svc-kind tenant SPIFFE SAN
+// the fleet enrollment endpoint requires, so the issuer accepts it.
+func serviceLeafPEMForTest(t *testing.T, tenant string) []byte {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "leaf"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		URIs:         []*url.URL{{Scheme: "spiffe", Host: "quicbaas.test", Path: "/tenant/" + tenant + "/svc/leaf"}},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
 	require.NoError(t, err)

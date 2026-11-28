@@ -23,6 +23,7 @@ import (
 
 // GenerateIDToken stamps the optional attestation, AMR, and ACR claims when set.
 func TestTokenService_GenerateIDToken_OptionalClaims(t *testing.T) {
+	t.Parallel()
 	service, privateKey := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -67,6 +68,7 @@ func TestTokenService_GenerateIDToken_OptionalClaims(t *testing.T) {
 
 // ValidateAuthCode is one-time-use: a second validation of the same code fails.
 func TestTokenService_ValidateAuthCode_OneTimeUse(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 	ctx := context.Background()
 

@@ -710,8 +710,9 @@ is already enrolled to a *different* user fails closed.
 A service account's client certificate is classified by the root it chains to:
 `iam.mtls.tpm_ek_roots_file` (TPM Endorsement Key roots; the token gets
 `amr: ["mtls","hwk"]` and `attest_method: "tpm"`) or `iam.mtls.xkey_roots_file`
-(xkey-issued roots; `attest_method: "xkey"`). `iam.mtls.tls_client_auth_ca_file`
-is the CA pool for `tls_client_auth` clients (RFC 8705 §2.1). TPM evidence
+(xkey-issued roots; `attest_method: "xkey"`). `tls_client_auth` clients
+(RFC 8705 §2.1) chain to `security.tls_ca_file`, the same anchor set the TLS
+handshake verifies against. TPM evidence
 itself is go-xkms's: [TPM 2.0 — Architecture](../../../go-xkms/docs/tpm2/architecture.md).
 
 ### id_token Claims
@@ -804,12 +805,10 @@ iam:
     mode: enforce                 # enforce | log_only
     allowlist_file: /etc/quicbaas/aaguid-allowlist.json
   piv_login:
-    enabled: false
-    ca_file: ""
+    enabled: false                # certs chain to security.tls_ca_file
     attestation_ca_file: ""       # vendor PIV attestation root
     allow_unattested: false
-  mtls:
-    tls_client_auth_ca_file: ""
+  mtls:                           # tls_client_auth trusts security.tls_ca_file
     tpm_ek_roots_file: ""
     xkey_roots_file: ""
 ```
@@ -825,9 +824,18 @@ The WebAuthn ceremony policy keys (`assurance`, `resident_key_requirement`,
 > `Origin` header). In the stock dev setup (`server.host: 127.0.0.1`, REST port
 > 18080) this yields `rp_id: localhost` and `rp_origins: [https://localhost:18080]`
 > — loopback IPs are canonicalised to `localhost` because a WebAuthn RP ID must
-> be a domain, not an IP literal. If `server.host` is an explicit routable IP
-> literal and no explicit `rp_id` is set, WebAuthn initialisation fails closed
-> with a clear validation error. Explicit `rp_id` / `rp_origins` always win.
+> be a domain, not an IP literal.
+>
+> **A node reached by IP address needs an explicit `rp_id`.** If `server.host`
+> is a routable IP literal (a LAN address such as `192.168.1.50`, or an IPv6
+> address other than `::` / `::1`) and `iam.webauthn.rp_id` is not set,
+> configuration validation refuses the configuration at load, before any
+> listener starts, with an error on `iam.webauthn.rp_id`. A browser rejects
+> an IP address as an RP ID, so the derived default could only fail at
+> login. Set `rp_id` to the domain name clients use to reach the node, and
+> `rp_origins` to its origin (for example `rp_id: pilot.example.lan`,
+> `rp_origins: ["https://pilot.example.lan:18080"]`), or set `server.host`
+> to a hostname. Explicit `rp_id` / `rp_origins` always win.
 
 ### Troubleshooting
 

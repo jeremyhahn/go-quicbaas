@@ -63,6 +63,7 @@ func newDeletionFixture(t *testing.T) (*IdentityStore, *MemoryStorage, *User) {
 // still active leaves a window in which a ceremony can enroll against a record
 // that is about to vanish.
 func TestDeleteUser_MarksDeletingBeforeTheCredentialSweep(t *testing.T) {
+	t.Parallel()
 	store, mem, user := newDeletionFixture(t)
 	rec := &recordingCredentials{store: mem, tenantID: "acme", userID: user.ID}
 	store.webauthnCredentials = rec
@@ -85,6 +86,7 @@ func TestDeleteUser_MarksDeletingBeforeTheCredentialSweep(t *testing.T) {
 // asserts the outcome when the store is healthy and only the sweep fails, which
 // is the case the race actually cares about.
 func TestDeleteUser_FailedSweepLeavesTheAccountClosed(t *testing.T) {
+	t.Parallel()
 	store, mem, user := newDeletionFixture(t)
 	sweepErr := errors.New("credential store unavailable")
 	store.webauthnCredentials = &recordingCredentials{
@@ -115,6 +117,7 @@ func TestDeleteUser_FailedSweepLeavesTheAccountClosed(t *testing.T) {
 // record disabled and then "transitioned" it to suspended passed every test and
 // was rejected by qrdb in production. The two stores have to answer the same.
 func TestMemoryStorage_EnforcesTheTransitionTable(t *testing.T) {
+	t.Parallel()
 	mem := NewMemoryStorage()
 	ctx := context.Background()
 
@@ -148,6 +151,7 @@ func TestMemoryStorage_EnforcesTheTransitionTable(t *testing.T) {
 // exactly the window that must not exist. Disabled is non-authenticating and
 // reachable directly, so that is where they land.
 func TestImportUsers_SuspendedAndLockedLandOnDisabled(t *testing.T) {
+	t.Parallel()
 	bm, _, mem := newImportEnabledFixture(t)
 	ctx := context.Background()
 
@@ -190,6 +194,7 @@ func (m *markFailingStorage) MarkUserDeleting(context.Context, string, uint64) e
 // intact, and missing its passkey. So a claim that cannot be written aborts the
 // deletion instead.
 func TestDeleteUser_FailsClosedWhenTheClaimCannotBeWritten(t *testing.T) {
+	t.Parallel()
 	mem := NewMemoryStorage()
 	markErr := errors.New("store unavailable")
 	store := NewIdentityStore(IdentityStoreOptions{
@@ -251,6 +256,7 @@ func (r *rereadFailingStorage) GetUser(ctx context.Context, tenantID string, use
 // Aborting is safe and resumable: the account is already terminal, so nothing
 // can make it authenticate again, and a retry starts from a fresh snapshot.
 func TestDeleteUser_AbortsWhenThePostClaimRereadFails(t *testing.T) {
+	t.Parallel()
 	mem := NewMemoryStorage()
 	rereadErr := errors.New("store unavailable")
 	backing := &rereadFailingStorage{UserStorage: mem, err: rereadErr}
@@ -292,6 +298,7 @@ func TestDeleteUser_AbortsWhenThePostClaimRereadFails(t *testing.T) {
 // "do not mention it" are different requests. A length check collapses them, and
 // the collapse is one-directional: the clear is the one that disappears.
 func TestUpdateUser_AuthMethodsPresenceDistinguishesClearFromSilence(t *testing.T) {
+	t.Parallel()
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{
 		UserStorage: mem, RoleStorage: mem,
@@ -347,6 +354,7 @@ func TestUpdateUser_AuthMethodsPresenceDistinguishesClearFromSilence(t *testing.
 // statement about the account alone, and each can be undone by naming another
 // one. `deleting` is neither.
 func TestUpdateUser_AssignableLifecycleStates(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// `assignable` is about NAMING the state, which is what the guard decides.
@@ -366,6 +374,7 @@ func TestUpdateUser_AssignableLifecycleStates(t *testing.T) {
 		{LifecycleDeleting, false},
 	} {
 		t.Run(string(tc.state), func(t *testing.T) {
+			t.Parallel()
 			store := newTestIdentityStore()
 			created, err := store.CreateUser(ctx, "t1", CreateUserOptions{
 				Email:     "state@example.com",
@@ -416,6 +425,7 @@ func TestUpdateUser_AssignableLifecycleStates(t *testing.T) {
 // terminal record refuses a full-record write. If the guard had been put where
 // the workflow passes, this would fail.
 func TestDeleteUser_StillClaimsTheRecordItself(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := newTestIdentityStore()
 

@@ -19,6 +19,7 @@ import (
 
 // TestValidateResourceIndicator tests RFC 8707 resource indicator validation.
 func TestValidateResourceIndicator(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		resource string
@@ -129,6 +130,7 @@ func TestValidateResourceIndicator(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := ValidateResourceIndicator(tt.resource, tt.config)
 			if tt.wantErr {
 				if err == nil {
@@ -149,6 +151,7 @@ func TestValidateResourceIndicator(t *testing.T) {
 
 // TestBuildAudience tests audience construction per RFC 8707.
 func TestBuildAudience(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		clientID string
@@ -183,6 +186,7 @@ func TestBuildAudience(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := BuildAudience(tt.clientID, tt.resource)
 			if len(got) != len(tt.want) {
 				t.Errorf("BuildAudience() len = %d, want %d", len(got), len(tt.want))
@@ -199,6 +203,7 @@ func TestBuildAudience(t *testing.T) {
 
 // TestValidateAudience tests audience validation per RFC 8707.
 func TestValidateAudience(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name             string
 		audience         []string
@@ -251,6 +256,7 @@ func TestValidateAudience(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := ValidateAudience(tt.audience, tt.expectedResource)
 			if got != tt.want {
 				t.Errorf("ValidateAudience() = %v, want %v", got, tt.want)
@@ -261,6 +267,7 @@ func TestValidateAudience(t *testing.T) {
 
 // TestDefaultResourceIndicatorConfig tests default configuration.
 func TestDefaultResourceIndicatorConfig(t *testing.T) {
+	t.Parallel()
 	config := DefaultResourceIndicatorConfig()
 
 	if config == nil {

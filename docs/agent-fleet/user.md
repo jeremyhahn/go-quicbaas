@@ -54,8 +54,8 @@ the CLI's own host deploys with `--local` and no SSH
      --backend ollama --binary bin/quicbaas-agent --wait-online 2m
    ```
 
-   The CA signs a client certificate for the node (`OU=agents`,
-   `O=<tenant>`, ClientAuth), the CLI uploads the binary, identity and CA
+   The CA signs a client certificate for the node (`OU=<tenant>`,
+   `CN=agent-<hostname>`, a tenant-scoped SPIFFE SAN, ClientAuth), the CLI uploads the binary, identity and CA
    bundle over SFTP, and the node's unit starts and enrolls. The enrollment
    response advertises the **gRPC event-ingest URL**, which the node keeps in
    `credentials.json`; events never traverse the REST port. A `--user` unit

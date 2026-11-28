@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -43,6 +44,7 @@ type SessionServer struct {
 	iampb.UnimplementedSessionServiceServer
 	sessionService SessionService
 	callers        service.CallerAccountResolver
+	credentials    CredentialRevoker
 	bearers        SessionBearerRevoker
 	logger         *logger.Logger
 }
@@ -75,6 +77,12 @@ func (s *SessionServer) revokeCallerBearers(ctx context.Context, tenantID, keepS
 	return count, nil
 }
 
+// CredentialRevoker ends the login credentials a subject holds in a
+// tenant. The OIDC provider implements it.
+type CredentialRevoker interface {
+	RevokeSubjectCredentials(ctx context.Context, tenantID, subject string) (int, error)
+}
+
 // SessionService defines the interface for session operations.
 type SessionService interface {
 	ListSessions(ctx context.Context, tenantID string, userID uint64, limit, offset int) ([]*iam.Session, int, error)
@@ -91,6 +99,13 @@ func NewSessionServer(sessionService SessionService, callers service.CallerAccou
 		callers:        callers,
 		logger:         log.WithField("component", "session-grpc-server"),
 	}
+}
+
+// WithCredentialRevoker sets what RevokeAllSessions uses to end the caller's
+// access and refresh credentials, and returns the server.
+func (s *SessionServer) WithCredentialRevoker(r CredentialRevoker) *SessionServer {
+	s.credentials = r
+	return s
 }
 
 // sessionCaller resolves the authenticated caller to its tenant and qrdb
@@ -119,6 +134,47 @@ func (s *SessionServer) sessionCaller(ctx context.Context) (string, uint64, erro
 
 // callerUserID checks an optional user_id against the caller: it may name
 // only the caller, and an empty one means the caller.
+// callerSessionScope resolves the tenant and user a caller-scoped session verb
+// (ListSessions, RevokeAllSessions) acts on. An omitted tenant_id is the
+// caller's own tenant, so a client that knows only its credential can name its
+// own sessions; a named tenant must be the caller's. The user is always the
+// caller: user 0 never reaches the session service, where it would read as
+// the whole tenant (#1842).
+func (s *SessionServer) callerSessionScope(ctx context.Context, tenantID, requestedUser string) (string, uint64, error) {
+	if tenantID != "" {
+		if err := requireCallerTenant(ctx, "grpc.Session", tenantID); err != nil {
+			return "", 0, err
+		}
+	}
+	callerTenant, callerID, err := s.sessionCaller(ctx)
+	if err != nil {
+		return "", 0, err
+	}
+	if callerID == 0 {
+		return "", 0, status.Error(codes.PermissionDenied, "caller is not a user")
+	}
+	if tenantID == "" {
+		tenantID = callerTenant
+	}
+	userID, err := callerUserID(requestedUser, callerID)
+	if err != nil {
+		return "", 0, err
+	}
+	return tenantID, userID, nil
+}
+
+// ErrSessionScopeRequired is returned by a session service asked to list or
+// revoke sessions with no tenant or with user 0. Neither is a wildcard: a
+// session verb acts on one user's sessions in one tenant (#1842).
+var ErrSessionScopeRequired = errors.New("session verbs need a tenant and a user: user 0 is not the whole tenant")
+
+func requireSessionScope(tenantID string, userID uint64) error {
+	if tenantID == "" || userID == 0 {
+		return ErrSessionScopeRequired
+	}
+	return nil
+}
+
 func callerUserID(requested string, callerID uint64) (uint64, error) {
 	userID, err := parseOptionalUserID("user_id", requested)
 	if err != nil {
@@ -150,22 +206,12 @@ func (s *SessionServer) ownedSession(ctx context.Context, sessionID string) (*ia
 
 // ListSessions lists sessions for a tenant/user.
 func (s *SessionServer) ListSessions(ctx context.Context, req *iampb.ListSessionsRequest) (*iampb.ListSessionsResponse, error) {
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
-	if err := requireCallerTenant(ctx, "grpc.Session", req.TenantId); err != nil {
-		return nil, err
-	}
-	_, callerID, err := s.sessionCaller(ctx)
-	if err != nil {
-		return nil, err
-	}
-	userID, err := callerUserID(req.UserId, callerID)
+	tenantID, userID, err := s.callerSessionScope(ctx, req.TenantId, req.UserId)
 	if err != nil {
 		return nil, err
 	}
 
-	sessions, total, err := s.sessionService.ListSessions(ctx, req.TenantId, userID, int(req.Limit), int(req.Offset))
+	sessions, total, err := s.sessionService.ListSessions(ctx, tenantID, userID, int(req.Limit), int(req.Offset))
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to list sessions")
 		return nil, status.Errorf(codes.Internal, "failed to list sessions: %v", err)
@@ -202,11 +248,14 @@ func (s *SessionServer) RevokeSession(ctx context.Context, req *iampb.RevokeSess
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
 
-	if _, err := s.ownedSession(ctx, req.SessionId); err != nil {
+	session, err := s.ownedSession(ctx, req.SessionId)
+	if err != nil {
 		return nil, err
 	}
 
-	err := s.sessionService.RevokeSession(ctx, req.SessionId)
+	// Revoke the stored record: a token's raw sid resolves to the
+	// tenant-encoded ID the session was stored under.
+	err = s.sessionService.RevokeSession(ctx, session.ID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to revoke session")
 		return nil, status.Errorf(codes.Internal, "failed to revoke session: %v", err)
@@ -215,28 +264,31 @@ func (s *SessionServer) RevokeSession(ctx context.Context, req *iampb.RevokeSess
 	return &iampb.RevokeSessionResponse{Success: true}, nil
 }
 
-// RevokeAllSessions revokes all sessions for a user/tenant.
+// RevokeAllSessions logs the caller out everywhere: it ends the caller's
+// access and refresh credentials in the tenant, then deletes the caller's
+// session records. A login keeps no session record, so deleting the records
+// alone would leave its bearer and refresh credential usable. Without a
+// credential or bearer revoker it refuses, rather than report a logout that left
+// credentials usable, and a revocation failure leaves the records in place.
 func (s *SessionServer) RevokeAllSessions(ctx context.Context, req *iampb.RevokeAllSessionsRequest) (*iampb.RevokeAllSessionsResponse, error) {
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
-	if err := requireCallerTenant(ctx, "grpc.Session", req.TenantId); err != nil {
-		return nil, err
-	}
-	tenantID, callerID, err := s.sessionCaller(ctx)
-	if err != nil {
-		return nil, err
-	}
-	userID, err := callerUserID(req.UserId, callerID)
+	tenantID, userID, err := s.callerSessionScope(ctx, req.TenantId, req.UserId)
 	if err != nil {
 		return nil, err
 	}
 
-	count, err := s.sessionService.RevokeAllSessions(ctx, req.TenantId, userID)
-	if err != nil {
-		s.logger.WithError(err).Error("Failed to revoke all sessions")
-		return nil, status.Errorf(codes.Internal, "failed to revoke all sessions: %v", err)
+	if s.credentials == nil && s.bearers == nil {
+		return nil, status.Error(codes.Unavailable, "credential revocation not available")
 	}
+	if s.credentials != nil {
+		// callerSessionScope already refused an unauthenticated caller, and the
+		// scope it resolved is the caller's own tenant and account.
+		subject, _ := auth.SubjectFromContext(ctx)
+		if _, err := s.credentials.RevokeSubjectCredentials(ctx, tenantID, subject.ID); err != nil {
+			s.logger.WithError(err).Error("Failed to revoke login credentials")
+			return nil, status.Error(codes.Internal, "failed to revoke login credentials")
+		}
+	}
+	count := 0
 	if s.bearers != nil {
 		bearers, err := s.revokeCallerBearers(ctx, tenantID, "")
 		if err != nil {
@@ -244,6 +296,13 @@ func (s *SessionServer) RevokeAllSessions(ctx context.Context, req *iampb.Revoke
 		}
 		count += bearers
 	}
+
+	revoked, err := s.sessionService.RevokeAllSessions(ctx, tenantID, userID)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to revoke all sessions")
+		return nil, status.Errorf(codes.Internal, "failed to revoke all sessions: %v", err)
+	}
+	count += revoked
 
 	return &iampb.RevokeAllSessionsResponse{RevokedCount: int32(count)}, nil
 }
@@ -333,6 +392,9 @@ func NewSessionServiceAdapter(sessionStorage iam.SessionStorage) *SessionService
 
 // ListSessions lists sessions for a tenant/user.
 func (a *SessionServiceAdapter) ListSessions(ctx context.Context, tenantID string, userID uint64, limit, offset int) ([]*iam.Session, int, error) {
+	if err := requireSessionScope(tenantID, userID); err != nil {
+		return nil, 0, err
+	}
 	sessions, err := a.sessionStorage.GetSessionsByUser(ctx, tenantID, userID)
 	if err != nil {
 		return nil, 0, err
@@ -363,6 +425,9 @@ func (a *SessionServiceAdapter) RevokeSession(ctx context.Context, sessionID str
 
 // RevokeAllSessions revokes all sessions for a user/tenant.
 func (a *SessionServiceAdapter) RevokeAllSessions(ctx context.Context, tenantID string, userID uint64) (int, error) {
+	if err := requireSessionScope(tenantID, userID); err != nil {
+		return 0, err
+	}
 	sessions, err := a.sessionStorage.GetSessionsByUser(ctx, tenantID, userID)
 	if err != nil {
 		return 0, err
@@ -380,7 +445,7 @@ func (a *SessionServiceAdapter) RevokeAllSessions(ctx context.Context, tenantID 
 
 // RevokeOtherSessions revokes all sessions except the specified one.
 func (a *SessionServiceAdapter) RevokeOtherSessions(ctx context.Context, tenantID, keepSessionID string) (int, error) {
-	// Get the session to keep to find the user
+	// The kept session's stored ID is canonical: the caller may name it by the token's raw sid.
 	keepSession, err := a.sessionStorage.GetSession(ctx, keepSessionID)
 	if err != nil {
 		return 0, err
@@ -393,7 +458,7 @@ func (a *SessionServiceAdapter) RevokeOtherSessions(ctx context.Context, tenantI
 
 	count := 0
 	for _, s := range sessions {
-		if s.ID != keepSessionID {
+		if s.ID != keepSession.ID {
 			if err := a.sessionStorage.DeleteSession(ctx, s.ID); err == nil {
 				count++
 			}
@@ -420,9 +485,12 @@ func NewMemorySessionService() *MemorySessionService {
 
 // ListSessions lists all sessions.
 func (m *MemorySessionService) ListSessions(ctx context.Context, tenantID string, userID uint64, limit, offset int) ([]*iam.Session, int, error) {
+	if err := requireSessionScope(tenantID, userID); err != nil {
+		return nil, 0, err
+	}
 	var result []*iam.Session
 	for _, s := range m.sessions {
-		if (tenantID == "" || s.TenantID == tenantID) && (userID == 0 || s.UserID == userID) {
+		if s.TenantID == tenantID && s.UserID == userID {
 			result = append(result, s)
 		}
 	}
@@ -456,9 +524,12 @@ func (m *MemorySessionService) RevokeSession(ctx context.Context, sessionID stri
 
 // RevokeAllSessions revokes all sessions for a tenant/user.
 func (m *MemorySessionService) RevokeAllSessions(ctx context.Context, tenantID string, userID uint64) (int, error) {
+	if err := requireSessionScope(tenantID, userID); err != nil {
+		return 0, err
+	}
 	count := 0
 	for id, s := range m.sessions {
-		if (tenantID == "" || s.TenantID == tenantID) && (userID == 0 || s.UserID == userID) {
+		if s.TenantID == tenantID && s.UserID == userID {
 			delete(m.sessions, id)
 			count++
 		}

@@ -247,12 +247,11 @@ func (m *XKMSWebAuthnManager) FinishRegistration(ctx context.Context, tenantID, 
 // opened. go-xkms binds the credential only while the account is still
 // pending, which the ordinary FinishRegistration refuses. Activating the
 // account and redeeming the invitation stay with the caller.
-func (m *XKMSWebAuthnManager) FinishInviteRegistration(ctx context.Context, tenantID, email string, credential map[string]interface{}) error {
-	_, err := m.finishRegistration(ctx, tenantID, email, credential, func(ctx context.Context, svc *xkmssdk.WebAuthnService, sessionID string, parsed *protocol.ParsedCredentialCreationData) error {
+func (m *XKMSWebAuthnManager) FinishInviteRegistration(ctx context.Context, tenantID, email string, credential map[string]interface{}) (*AttestationResult, error) {
+	return m.finishRegistration(ctx, tenantID, email, credential, func(ctx context.Context, svc *xkmssdk.WebAuthnService, sessionID string, parsed *protocol.ParsedCredentialCreationData) error {
 		_, err := svc.FinishInviteRegistration(ctx, sessionID, parsed)
 		return err
 	})
-	return err
 }
 
 // finishRegistration resolves the stashed session, verifies the attestation

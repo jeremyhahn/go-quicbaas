@@ -58,7 +58,7 @@ func TestQuicbaasWebAuthnConfigToXKMS_ForwardsCanonicalTokens(t *testing.T) {
 		t.Fatalf("documented values were refused at boot: %v", err)
 	}
 
-	forwarded := quicbaasWebAuthnConfigToXKMS(cfg, true)
+	forwarded := quicbaasWebAuthnConfigToXKMS(cfg)
 
 	for _, tc := range []struct {
 		field string
@@ -93,7 +93,7 @@ func TestQuicbaasWebAuthnConfigToXKMS_ForwardsEmptyAsEmpty(t *testing.T) {
 		t.Fatalf("an unset ceremony policy was refused: %v", err)
 	}
 
-	forwarded := quicbaasWebAuthnConfigToXKMS(cfg, true)
+	forwarded := quicbaasWebAuthnConfigToXKMS(cfg)
 	for field, got := range map[string]string{
 		"attestation_preference":   forwarded.AttestationPreference,
 		"user_verification":        forwarded.UserVerification,

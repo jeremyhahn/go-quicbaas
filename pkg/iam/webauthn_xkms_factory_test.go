@@ -30,6 +30,7 @@ var dummyQRDBClient = &qrdbsdk.Client{}
 // TestNewWebAuthnServiceFactory_RejectsMissingQRDB verifies that the
 // factory refuses construction when no qrdb client is supplied.
 func TestNewWebAuthnServiceFactory_RejectsMissingQRDB(t *testing.T) {
+	t.Parallel()
 	_, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 		Config: WebAuthnFactoryConfig{
 			RPID:          "example.com",
@@ -54,6 +55,7 @@ func TestNewWebAuthnServiceFactory_RejectsMissingQRDB(t *testing.T) {
 // TestNewWebAuthnServiceFactory_RejectsRequiredFields exercises every
 // required-field check on WebAuthnFactoryConfig.
 func TestNewWebAuthnServiceFactory_RejectsRequiredFields(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		cfg       WebAuthnFactoryConfig
@@ -77,6 +79,7 @@ func TestNewWebAuthnServiceFactory_RejectsRequiredFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 				Config:              tc.cfg,
 				QRDB:                dummyQRDBClient,
@@ -101,6 +104,7 @@ func TestNewWebAuthnServiceFactory_RejectsRequiredFields(t *testing.T) {
 // caching layer; we don't exercise ServiceFor here because that
 // requires a live qrdb embedded transport.
 func TestNewWebAuthnServiceFactory_HappyPath(t *testing.T) {
+	t.Parallel()
 	f, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 		Config: WebAuthnFactoryConfig{
 			RPID:          "example.com",
@@ -121,6 +125,7 @@ func TestNewWebAuthnServiceFactory_HappyPath(t *testing.T) {
 // TestWebAuthnServiceFactory_ServiceFor_RejectsEmptyTenantID verifies
 // the per-tenant lookup refuses an empty tenant id.
 func TestWebAuthnServiceFactory_ServiceFor_RejectsEmptyTenantID(t *testing.T) {
+	t.Parallel()
 	f, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 		Config: WebAuthnFactoryConfig{
 			RPID:          "example.com",
@@ -142,6 +147,7 @@ func TestWebAuthnServiceFactory_ServiceFor_RejectsEmptyTenantID(t *testing.T) {
 // contains the offending field name when set, and a generic fallback
 // when empty.
 func TestWebAuthnFactoryConfigError_Message(t *testing.T) {
+	t.Parallel()
 	withField := &WebAuthnFactoryConfigError{Field: "RPID"}
 	if got := withField.Error(); got == "" {
 		t.Fatalf("empty error string for field RPID")
@@ -155,6 +161,7 @@ func TestWebAuthnFactoryConfigError_Message(t *testing.T) {
 // TestNewXKMSWebAuthnManager_RequiresFactory ensures construction fails
 // without a factory.
 func TestNewXKMSWebAuthnManager_RequiresFactory(t *testing.T) {
+	t.Parallel()
 	_, err := NewXKMSWebAuthnManager(nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -177,6 +184,7 @@ func TestNewXKMSWebAuthnManager_RequiresFactory(t *testing.T) {
 // call. Asserting it on the factory is asserting it where every ceremony
 // reaches it.
 func TestWebAuthnServiceFactory_GateCarriesConfiguredPolicy(t *testing.T) {
+	t.Parallel()
 	allowlist := NewAAGUIDAllowlist([]string{"00000000000000000000000000000000"}, AAGUIDPolicyStrict)
 	f, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 		Config: WebAuthnFactoryConfig{
@@ -206,6 +214,7 @@ func TestWebAuthnServiceFactory_GateCarriesConfiguredPolicy(t *testing.T) {
 // a factory built with no assurance and no allowlist produces a gate that
 // refuses, not one that waves everything through.
 func TestWebAuthnServiceFactory_GateDefaultsToHardware(t *testing.T) {
+	t.Parallel()
 	f, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 		Config: WebAuthnFactoryConfig{
 			RPID:          "example.com",
@@ -233,6 +242,7 @@ func TestWebAuthnServiceFactory_GateDefaultsToHardware(t *testing.T) {
 // "none" conveyance would strip the attestation statement in the browser, so a
 // hardware requirement could only ever refuse.
 func TestWebAuthnServiceFactory_AttestationConveyance(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name       string
 		assurance  WebAuthnAssurance
@@ -252,6 +262,7 @@ func TestWebAuthnServiceFactory_AttestationConveyance(t *testing.T) {
 			WebAuthnAssuranceInsecureAllowSoftwareAdministrators, "none", "none"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 				Config: WebAuthnFactoryConfig{
 					RPID:          "example.com",
@@ -272,31 +283,40 @@ func TestWebAuthnServiceFactory_AttestationConveyance(t *testing.T) {
 	}
 }
 
-// TestXKMSWebAuthnConfig_CarriesPublicRegistration proves the per-tenant
-// relying party is handed the operator's self-service registration decision
-// as an explicit value in both directions. go-xkms v0.9.2-alpha reads a nil
-// AllowPublicRegistration as closed, so a projection that dropped the field
-// would silently refuse every unknown-email registration on a node that has
-// self-service switched on.
-func TestXKMSWebAuthnConfig_CarriesPublicRegistration(t *testing.T) {
-	for _, allow := range []bool{true, false} {
-		cfg := xkmsWebAuthnConfig(WebAuthnFactoryConfig{
-			RPID:                    "example.com",
-			RPDisplayName:           "Example",
-			RPOrigins:               []string{"https://example.com"},
-			AllowPublicRegistration: allow,
-		})
-		if cfg.AllowPublicRegistration == nil {
-			t.Fatalf("AllowPublicRegistration is nil for allow=%v; go-xkms would read it as closed", allow)
-		}
-		if *cfg.AllowPublicRegistration != allow {
-			t.Errorf("AllowPublicRegistration = %v, want %v", *cfg.AllowPublicRegistration, allow)
-		}
-		if cfg.PublicRegistrationAllowed() != allow {
-			t.Errorf("PublicRegistrationAllowed() = %v, want %v", cfg.PublicRegistrationAllowed(), allow)
-		}
-		if cfg.RPID != "example.com" || len(cfg.RPOrigins) != 1 {
-			t.Errorf("relying-party identity was not carried: %+v", cfg)
-		}
+// TestXKMSWebAuthnConfig_PublicRegistrationClosed proves the per-tenant
+// relying party never lets a ceremony create an account (ruling 189, #482):
+// self-service registration creates the account in the broker and the
+// ceremony only binds a credential to it. The setting is written as an
+// explicit false rather than left to go-xkms's nil default.
+func TestXKMSWebAuthnConfig_PublicRegistrationClosed(t *testing.T) {
+	t.Parallel()
+	cfg := xkmsWebAuthnConfig(WebAuthnFactoryConfig{
+		RPID:          "example.com",
+		RPDisplayName: "Example",
+		RPOrigins:     []string{"https://example.com"},
+	})
+	if cfg.AllowPublicRegistration == nil {
+		t.Fatal("AllowPublicRegistration is nil; quicbaas must write the closed setting explicitly")
+	}
+	if *cfg.AllowPublicRegistration || cfg.PublicRegistrationAllowed() {
+		t.Error("public registration is open; a ceremony must never create an account")
+	}
+	if cfg.RPID != "example.com" || len(cfg.RPOrigins) != 1 {
+		t.Errorf("relying-party identity was not carried: %+v", cfg)
+	}
+}
+
+// TestPublicRegistrationClosed_FreshValue: each call returns its own false,
+// so a caller that writes through one config's pointer cannot open another's.
+func TestPublicRegistrationClosed_FreshValue(t *testing.T) {
+	t.Parallel()
+	first := publicRegistrationClosed()
+	second := publicRegistrationClosed()
+	if first == second {
+		t.Fatal("publicRegistrationClosed returned a shared pointer")
+	}
+	*first = true
+	if *second {
+		t.Error("writing through one closed setting opened another")
 	}
 }

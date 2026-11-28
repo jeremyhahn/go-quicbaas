@@ -76,3 +76,87 @@ func TestRefuse_NonEncodableRequest(t *testing.T) {
 		t.Fatalf("Refuse() = %v, want INVALID_INPUT", err)
 	}
 }
+
+func TestRefuseUnstorable_AdmitsPlainRules(t *testing.T) {
+	plain := map[string]interface{}{
+		"name":    "p",
+		"effect":  0,
+		"enabled": true,
+		"rules": []map[string]interface{}{{
+			"name":      "read",
+			"effect":    1,
+			"priority":  10,
+			"actions":   []map[string]interface{}{{"pattern": "data:read", "negate": false}},
+			"resources": []map[string]interface{}{{"pattern": "orders://*", "type": ""}},
+		}},
+		"targets":    []string{},
+		"conditions": []map[string]interface{}{},
+	}
+	for _, request := range []map[string]interface{}{nil, {"spec_yaml": "rules: []"}, plain} {
+		if err := RefuseUnstorable("op", "gRPC", request); err != nil {
+			t.Fatalf("RefuseUnstorable(%v) = %v, want nil", request, err)
+		}
+	}
+}
+
+func TestRefuseUnstorable_RefusesWhatTheEngineCannotStore(t *testing.T) {
+	flat := []map[string]interface{}{{"attribute": "subject.role"}}
+	withRule := func(change func(r map[string]interface{})) map[string]interface{} {
+		r := map[string]interface{}{
+			"name":      "read",
+			"effect":    1,
+			"actions":   []map[string]interface{}{{"pattern": "data:read"}},
+			"resources": []map[string]interface{}{{"pattern": "orders://*"}},
+		}
+		change(r)
+		return map[string]interface{}{"name": "p", "rules": []map[string]interface{}{r}}
+	}
+	tests := []struct {
+		name    string
+		request map[string]interface{}
+		field   string
+	}{
+		{"policy conditions", map[string]interface{}{"conditions": flat}, "conditions"},
+		{"targets", map[string]interface{}{"targets": []string{"db/*"}}, "targets"},
+		{"rule subjects", withRule(func(r map[string]interface{}) {
+			r["subjects"] = []map[string]interface{}{{"type": "user", "id": "alice"}}
+		}), "rules[0].subjects"},
+		{"rule conditions", withRule(func(r map[string]interface{}) { r["conditions"] = flat }), "rules[0].conditions"},
+		{"rule description", withRule(func(r map[string]interface{}) { r["description"] = "why" }), "rules[0].description"},
+		{"action negate", withRule(func(r map[string]interface{}) {
+			r["actions"] = []map[string]interface{}{{"pattern": "data:read", "negate": true}}
+		}), "rules[0].actions[0].negate"},
+		{"resource type", withRule(func(r map[string]interface{}) {
+			r["resources"] = []map[string]interface{}{{"pattern": "orders://*", "type": "order"}}
+		}), "rules[0].resources[0].type"},
+		{"resource attributes", withRule(func(r map[string]interface{}) {
+			r["resources"] = []map[string]interface{}{{
+				"pattern":    "orders://*",
+				"attributes": map[string]interface{}{"owner": map[string]interface{}{"operator": "eq", "value": "me"}},
+			}}
+		}), "rules[0].resources[0].attributes"},
+		{"resource negate", withRule(func(r map[string]interface{}) {
+			r["resources"] = []map[string]interface{}{{"pattern": "orders://*", "negate": true}}
+		}), "rules[0].resources[0].negate"},
+		{"policy effect allow", map[string]interface{}{"effect": 1}, "effect"},
+		{"policy disabled", map[string]interface{}{"enabled": false}, "enabled"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := RefuseUnstorable("op", "gRPC", tt.request)
+			if !errors.IsInvalidInput(err) {
+				t.Fatalf("RefuseUnstorable() = %v, want INVALID_INPUT", err)
+			}
+			if !strings.Contains(err.Error(), tt.field+" cannot be sent over gRPC") {
+				t.Fatalf("RefuseUnstorable() = %q, want it to name %q", err, tt.field)
+			}
+		})
+	}
+}
+
+func TestRefuseUnstorable_NonEncodableRequest(t *testing.T) {
+	err := RefuseUnstorable("op", "gRPC", map[string]interface{}{"rules": make(chan int)})
+	if !errors.IsInvalidInput(err) {
+		t.Fatalf("RefuseUnstorable() = %v, want INVALID_INPUT", err)
+	}
+}

@@ -19,7 +19,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -28,9 +27,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // writeCertPEM writes a self-signed CA certificate to a temporary PEM file
@@ -126,10 +122,10 @@ func TestLoadCertPool_EmptyPEM(t *testing.T) {
 // TestMTLSConfigError_Error verifies the error message format.
 func TestMTLSConfigError_Error(t *testing.T) {
 	inner := &CertPoolEmptyError{Path: "/etc/ca.pem"}
-	e := &MTLSConfigError{Field: "tls_client_auth_ca_file", Cause: inner}
+	e := &MTLSConfigError{Field: "tpm_ek_roots_file", Cause: inner}
 
 	got := e.Error()
-	if got != "iam.mtls.tls_client_auth_ca_file: "+inner.Error() {
+	if got != "iam.mtls.tpm_ek_roots_file: "+inner.Error() {
 		t.Errorf("unexpected error message: %s", got)
 	}
 	if e.Unwrap() != inner {
@@ -175,181 +171,6 @@ func TestMTLSAppStorageError_Error(t *testing.T) {
 	if e.Error() == "" {
 		t.Error("expected non-empty error message")
 	}
-}
-
-// TestMTLSClientCAsError_Error verifies the error message includes the cause.
-func TestMTLSClientCAsError_Error(t *testing.T) {
-	inner := &CertPoolEmptyError{Path: "/etc/ca.pem"}
-	e := &MTLSClientCAsError{Cause: inner}
-	if e.Error() == "" {
-		t.Error("expected non-empty error message")
-	}
-	if e.Unwrap() != inner {
-		t.Error("Unwrap should return the cause")
-	}
-}
-
-// TestAppendOperatorClientCAs_NoOp verifies that a nil CA file path is a no-op.
-func TestAppendOperatorClientCAs_NoOp(t *testing.T) {
-	s := &Server{
-		config: buildMinimalTestConfig(""),
-		logger: buildTestLogger(t),
-	}
-	tlsCfg := &tls.Config{}
-	if err := s.appendOperatorClientCAs(tlsCfg); err != nil {
-		t.Fatalf("expected nil error for empty CA file, got %v", err)
-	}
-	if tlsCfg.ClientCAs != nil {
-		t.Error("expected ClientCAs to remain nil")
-	}
-}
-
-// TestAppendOperatorClientCAs_MissingFile verifies that a missing PEM file
-// returns a typed error and aborts startup.
-func TestAppendOperatorClientCAs_MissingFile(t *testing.T) {
-	s := &Server{
-		config: buildMinimalTestConfig("/nonexistent/ca.pem"),
-		logger: buildTestLogger(t),
-	}
-	err := s.appendOperatorClientCAs(&tls.Config{})
-	if err == nil {
-		t.Fatal("expected error for missing file, got nil")
-	}
-	// Must be wrapped in a QBError
-	var qbErr *qberrors.QBError
-	if !isError(err, &qbErr) {
-		t.Errorf("expected *qberrors.QBError, got %T: %v", err, err)
-	}
-}
-
-// TestAppendOperatorClientCAs_BothPoolsPresent verifies that a valid operator CA
-// is appended to a pre-existing ClientCAs pool and ClientAuth is set.
-func TestAppendOperatorClientCAs_BothPoolsPresent(t *testing.T) {
-	dir := t.TempDir()
-	operatorPath, operatorCert := writeCertPEM(t, dir, "operator-ca")
-	daemonPath, daemonCert := writeCertPEM(t, dir, "daemon-ca")
-
-	// Build a TLS config already containing the daemon CA.
-	daemonPool, err := loadCertPool(daemonPath)
-	if err != nil {
-		t.Fatalf("load daemon CA: %v", err)
-	}
-
-	tlsCfg := &tls.Config{
-		ClientCAs: daemonPool,
-	}
-
-	s := &Server{
-		config: buildMinimalTestConfig(operatorPath),
-		logger: buildTestLogger(t),
-	}
-	if err := s.appendOperatorClientCAs(tlsCfg); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if tlsCfg.ClientAuth != tls.VerifyClientCertIfGiven {
-		t.Errorf("expected VerifyClientCertIfGiven, got %v", tlsCfg.ClientAuth)
-	}
-	// Both certs should verify against the combined pool.
-	for _, cert := range []*x509.Certificate{daemonCert, operatorCert} {
-		chains, verErr := cert.Verify(x509.VerifyOptions{
-			Roots: tlsCfg.ClientCAs,
-		})
-		if verErr != nil {
-			t.Errorf("cert %q failed to verify against combined pool: %v", cert.Subject.CommonName, verErr)
-		}
-		if len(chains) == 0 {
-			t.Errorf("cert %q produced no chains", cert.Subject.CommonName)
-		}
-	}
-}
-
-// TestPIVLogin_RequiresClientCertWhenEnabled verifies that the PIV handler
-// returns 401 client_cert_required when piv_login.enabled is true but the
-// request carries no TLS peer certificate.
-func TestPIVLogin_RequiresClientCertWhenEnabled(t *testing.T) {
-	dir := t.TempDir()
-	caPath, _ := writeCertPEM(t, dir, "piv-ca")
-
-	cfg := &config.Config{}
-	cfg.IAM.PIVLogin.Enabled = true
-	cfg.IAM.PIVLogin.CAFile = caPath
-
-	tlsCfg := &tls.Config{}
-	s := &Server{config: cfg, logger: buildTestLogger(t)}
-
-	if err := s.appendPIVClientCAs(tlsCfg); err != nil {
-		t.Fatalf("appendPIVClientCAs: %v", err)
-	}
-
-	// ClientAuth must be set to VerifyClientCertIfGiven when PIV login is enabled.
-	if tlsCfg.ClientAuth != tls.VerifyClientCertIfGiven {
-		t.Errorf("expected VerifyClientCertIfGiven, got %v", tlsCfg.ClientAuth)
-	}
-}
-
-// TestAppendPIVClientCAs_EnabledWithoutCAFile verifies that when ca_file is
-// empty but enabled is true, VerifyClientCertIfGiven is still set without error.
-func TestAppendPIVClientCAs_EnabledWithoutCAFile(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.IAM.PIVLogin.Enabled = true
-	// ca_file intentionally empty
-
-	tlsCfg := &tls.Config{}
-	s := &Server{config: cfg, logger: buildTestLogger(t)}
-
-	if err := s.appendPIVClientCAs(tlsCfg); err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-	if tlsCfg.ClientAuth != tls.VerifyClientCertIfGiven {
-		t.Errorf("expected VerifyClientCertIfGiven, got %v", tlsCfg.ClientAuth)
-	}
-}
-
-// TestAppendPIVClientCAs_MissingCAFile verifies startup fails when ca_file is
-// set to a path that does not exist.
-func TestAppendPIVClientCAs_MissingCAFile(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.IAM.PIVLogin.Enabled = true
-	cfg.IAM.PIVLogin.CAFile = "/nonexistent/piv-ca.pem"
-
-	s := &Server{config: cfg, logger: buildTestLogger(t)}
-	err := s.appendPIVClientCAs(&tls.Config{})
-	if err == nil {
-		t.Fatal("expected error for missing file, got nil")
-	}
-
-	var qbErr *qberrors.QBError
-	if !isError(err, &qbErr) {
-		t.Errorf("expected *qberrors.QBError, got %T: %v", err, err)
-	}
-}
-
-// TestPIVClientCAsError_Error verifies the error message is non-empty and
-// includes the cause.
-func TestPIVClientCAsError_Error(t *testing.T) {
-	inner := &CertPoolEmptyError{Path: "/piv/ca.pem"}
-	e := &PIVClientCAsError{Cause: inner}
-	if e.Error() == "" {
-		t.Error("expected non-empty error message")
-	}
-	if e.Unwrap() != inner {
-		t.Error("Unwrap should return the cause")
-	}
-}
-
-// TestPIVLoginDisabledError_Error verifies the error message is non-empty.
-func TestPIVLoginDisabledError_Error(t *testing.T) {
-	e := &PIVLoginDisabledError{}
-	if e.Error() == "" {
-		t.Error("expected non-empty error message")
-	}
-}
-
-// buildMinimalTestConfig builds a *config.Config with only the IAM mTLS CA file set.
-func buildMinimalTestConfig(caFile string) *config.Config {
-	cfg := &config.Config{}
-	cfg.IAM.MTLS.TLSClientAuthCAFile = caFile
-	return cfg
 }
 
 // isError is a type-check helper that avoids the errors.As import.
@@ -411,68 +232,5 @@ func TestLoadCertPool_SkipsNonCertificateBlocks(t *testing.T) {
 	}
 	if pool == nil {
 		t.Fatal("expected a non-nil pool built from the valid certificate")
-	}
-}
-
-// TestAppendPIVClientCAs_NilTLSConfigIsNoOp covers the nil-tlsConfig guard:
-// appendPIVClientCAs must return nil without dereferencing a nil config.
-func TestAppendPIVClientCAs_NilTLSConfigIsNoOp(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.IAM.PIVLogin.Enabled = true
-	s := &Server{config: cfg, logger: buildTestLogger(t)}
-
-	if err := s.appendPIVClientCAs(nil); err != nil {
-		t.Fatalf("nil tls.Config must be a no-op, got: %v", err)
-	}
-}
-
-// TestAppendPIVClientCAs_EmptyPEMFile covers the AppendCertsFromPEM-failure
-// branch: a ca_file that exists but contains no usable certificate makes
-// AppendCertsFromPEM return false, yielding a typed configuration error.
-func TestAppendPIVClientCAs_EmptyPEMFile(t *testing.T) {
-	dir := t.TempDir()
-	caFile := filepath.Join(dir, "no-certs.pem")
-	if err := os.WriteFile(caFile, []byte("# not a certificate\n"), 0o600); err != nil {
-		t.Fatalf("write ca file: %v", err)
-	}
-
-	cfg := &config.Config{}
-	cfg.IAM.PIVLogin.Enabled = true
-	cfg.IAM.PIVLogin.CAFile = caFile
-	s := &Server{config: cfg, logger: buildTestLogger(t)}
-
-	err := s.appendPIVClientCAs(&tls.Config{})
-	if err == nil {
-		t.Fatal("expected an error for a PEM file with no certificates")
-	}
-	var qbErr *qberrors.QBError
-	if !isError(err, &qbErr) {
-		t.Errorf("expected *qberrors.QBError, got %T: %v", err, err)
-	}
-}
-
-// TestAppendOperatorClientCAs_EmptyPEMFile covers the AppendCertsFromPEM-failure
-// branch of appendOperatorClientCAs: a ca_file with no usable certificate makes
-// AppendCertsFromPEM return false, yielding a typed configuration error. The
-// nil ClientCAs pool is also allocated on this path (370-371).
-func TestAppendOperatorClientCAs_EmptyPEMFile(t *testing.T) {
-	dir := t.TempDir()
-	caFile := filepath.Join(dir, "no-certs.pem")
-	if err := os.WriteFile(caFile, []byte("# not a certificate\n"), 0o600); err != nil {
-		t.Fatalf("write ca file: %v", err)
-	}
-
-	cfg := &config.Config{}
-	cfg.IAM.MTLS.TLSClientAuthCAFile = caFile
-	s := &Server{config: cfg, logger: buildTestLogger(t)}
-
-	// Pass a tls.Config with a nil ClientCAs so the pool-allocation branch runs.
-	err := s.appendOperatorClientCAs(&tls.Config{})
-	if err == nil {
-		t.Fatal("expected an error for a PEM file with no certificates")
-	}
-	var qbErr *qberrors.QBError
-	if !isError(err, &qbErr) {
-		t.Errorf("expected *qberrors.QBError, got %T: %v", err, err)
 	}
 }

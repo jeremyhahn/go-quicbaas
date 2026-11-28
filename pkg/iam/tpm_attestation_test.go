@@ -23,6 +23,7 @@ import (
 // TestTPMAttestationResolver_TPMChain verifies that a cert issued by a
 // configured TPM EK CA root resolves to AttestMethodTPM.
 func TestTPMAttestationResolver_TPMChain(t *testing.T) {
+	t.Parallel()
 	caCert, caKey, ekPool := makeCA(t)
 	leaf := makeIssuedCert(t, caCert, caKey, pkix.Name{CommonName: "tpm-idevid"}, nil)
 
@@ -36,6 +37,7 @@ func TestTPMAttestationResolver_TPMChain(t *testing.T) {
 // TestTPMAttestationResolver_XKeyChain verifies that a cert issued by a
 // configured xkey CA root resolves to AttestMethodXKey.
 func TestTPMAttestationResolver_XKeyChain(t *testing.T) {
+	t.Parallel()
 	caCert, caKey, xkeyPool := makeCA(t)
 	leaf := makeIssuedCert(t, caCert, caKey, pkix.Name{CommonName: "xkey-client"}, nil)
 
@@ -49,6 +51,7 @@ func TestTPMAttestationResolver_XKeyChain(t *testing.T) {
 // TestTPMAttestationResolver_SelfSigned verifies that an admin-minted
 // self-signed cert (not rooted in any known CA) resolves to AttestMethodManual.
 func TestTPMAttestationResolver_SelfSigned(t *testing.T) {
+	t.Parallel()
 	selfSigned, _ := makeSelfSigned(t, pkix.Name{CommonName: "admin-cert"}, nil)
 
 	// Provide a real EK pool that the self-signed cert will NOT validate against.
@@ -62,6 +65,7 @@ func TestTPMAttestationResolver_SelfSigned(t *testing.T) {
 
 // TestTPMAttestationResolver_NilCert verifies graceful handling of a nil cert.
 func TestTPMAttestationResolver_NilCert(t *testing.T) {
+	t.Parallel()
 	_, _, pool := makeCA(t)
 	resolver := iam.NewTPMAttestationResolver(iam.TPMConfig{EKRoots: pool})
 	method := resolver.Resolve(nil)
@@ -73,6 +77,7 @@ func TestTPMAttestationResolver_NilCert(t *testing.T) {
 // TestTPMAttestationResolver_NoPools verifies that an unconfigured resolver
 // returns AttestMethodManual for any cert.
 func TestTPMAttestationResolver_NoPools(t *testing.T) {
+	t.Parallel()
 	cert, _ := makeSelfSigned(t, pkix.Name{CommonName: "any"}, nil)
 	resolver := iam.NewTPMAttestationResolver(iam.TPMConfig{})
 	method := resolver.Resolve(cert)
@@ -83,6 +88,7 @@ func TestTPMAttestationResolver_NoPools(t *testing.T) {
 
 // TestServiceAccountAMR_TPM verifies that TPM attestation produces ["mtls","hwk"].
 func TestServiceAccountAMR_TPM(t *testing.T) {
+	t.Parallel()
 	amr := iam.ServiceAccountAMR(iam.AttestMethodTPM)
 	if len(amr) != 2 || amr[0] != "mtls" || amr[1] != "hwk" {
 		t.Fatalf("expected [mtls hwk], got %v", amr)
@@ -91,6 +97,7 @@ func TestServiceAccountAMR_TPM(t *testing.T) {
 
 // TestServiceAccountAMR_Manual verifies that non-TPM attestation produces ["mtls"].
 func TestServiceAccountAMR_Manual(t *testing.T) {
+	t.Parallel()
 	amr := iam.ServiceAccountAMR(iam.AttestMethodManual)
 	if len(amr) != 1 || amr[0] != "mtls" {
 		t.Fatalf("expected [mtls], got %v", amr)
@@ -99,6 +106,7 @@ func TestServiceAccountAMR_Manual(t *testing.T) {
 
 // TestServiceAccountAMR_XKey verifies that xkey attestation produces ["mtls"].
 func TestServiceAccountAMR_XKey(t *testing.T) {
+	t.Parallel()
 	amr := iam.ServiceAccountAMR(iam.AttestMethodXKey)
 	if len(amr) != 1 || amr[0] != "mtls" {
 		t.Fatalf("expected [mtls], got %v", amr)

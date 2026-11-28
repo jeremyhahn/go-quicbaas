@@ -83,14 +83,14 @@ func TestSealedBoot_GRPCServesQuicBaaSHealth(t *testing.T) {
 	require.Error(t, err, "an off-allowlist QuicBaaS verb must stay refused while sealed")
 }
 
-// pinSealedBootCAFile points cfg's CA bundle path at a file in the test's
-// own temp dir before the server boots. A TLS-enabled node that issues its
-// own server certificate writes the issuing CA chain there.
+// pinSealedBootCAFile returns where a TLS-enabled node that issues its own
+// server certificate writes the issuing CA chain: the data dir's
+// certs/ca-chain.crt. The test leaves security.tls_ca_file unset, because a
+// configured tls_ca_file is the operator's trust-anchor set and must already
+// exist.
 func pinSealedBootCAFile(t *testing.T, cfg *config.Config) string {
 	t.Helper()
-	caFile := filepath.Join(t.TempDir(), "ca-chain.crt")
-	cfg.Security.TLSCAFile = caFile
-	return caFile
+	return filepath.Join(cfg.Storage.DataDir, "certs", "ca-chain.crt")
 }
 
 // sealedBootClientTLS returns a client TLS config that verifies the node's

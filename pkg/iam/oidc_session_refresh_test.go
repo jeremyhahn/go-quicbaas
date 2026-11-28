@@ -112,6 +112,7 @@ func loginSession() SessionRefreshOptions {
 // =============================================================================
 
 func TestIssueSessionRefresh_MintsResolvableCredential(t *testing.T) {
+	t.Parallel()
 	provider, storage := newSessionRefreshProvider(t, 15*time.Minute, 7*24*time.Hour)
 	ctx := context.Background()
 
@@ -151,6 +152,7 @@ func TestIssueSessionRefresh_MintsResolvableCredential(t *testing.T) {
 }
 
 func TestIssueSessionRefresh_RejectsMissingSubject(t *testing.T) {
+	t.Parallel()
 	provider, _ := newSessionRefreshProvider(t, 15*time.Minute, time.Hour)
 
 	opts := loginSession()
@@ -168,6 +170,7 @@ func TestIssueSessionRefresh_RejectsMissingSubject(t *testing.T) {
 // =============================================================================
 
 func TestRefreshSession_RenewsAndRotates(t *testing.T) {
+	t.Parallel()
 	provider, storage := newSessionRefreshProvider(t, 15*time.Minute, 7*24*time.Hour)
 	ctx := context.Background()
 
@@ -224,6 +227,7 @@ func TestRefreshSession_RenewsAndRotates(t *testing.T) {
 }
 
 func TestRefreshSession_ReplayOfRotatedCredentialIsRejected(t *testing.T) {
+	t.Parallel()
 	provider, _ := newSessionRefreshProvider(t, 15*time.Minute, time.Hour)
 	ctx := context.Background()
 
@@ -244,6 +248,7 @@ func TestRefreshSession_ReplayOfRotatedCredentialIsRejected(t *testing.T) {
 }
 
 func TestRefreshSession_RejectsBadInput(t *testing.T) {
+	t.Parallel()
 	provider, storage := newSessionRefreshProvider(t, 15*time.Minute, time.Hour)
 	ctx := context.Background()
 
@@ -288,7 +293,7 @@ func TestRefreshSession_RejectsBadInput(t *testing.T) {
 		// The principal is already seeded by newSessionRefreshProvider; seeding
 		// it again collides on the tenant-unique handle.
 		accessToken, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
-			Subject:  "user-42",
+			Subject:  "user42@example.com",
 			TenantID: "acme",
 		})
 		if err != nil {
@@ -307,6 +312,7 @@ func TestRefreshSession_RejectsBadInput(t *testing.T) {
 // =============================================================================
 
 func TestRefreshSession_DPoPBoundSessionRequiresProof(t *testing.T) {
+	t.Parallel()
 	provider, _ := newSessionRefreshProvider(t, 15*time.Minute, time.Hour)
 	ctx := context.Background()
 
@@ -344,12 +350,13 @@ func TestRefreshSession_DPoPBoundSessionRequiresProof(t *testing.T) {
 // =============================================================================
 
 func TestIssueRefreshForSessionBearer_MirrorsTheIssuedSession(t *testing.T) {
+	t.Parallel()
 	provider, storage := newSessionRefreshProvider(t, 15*time.Minute, 24*time.Hour)
 	ctx := context.Background()
-	seedCeremonyUser(t, storage, "system", "ceremony-user", []string{"operator"})
+	seedCeremonyUser(t, storage, "system", "ceremony-user@example.com", []string{"operator"})
 
 	bearer, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
-		Subject:     "ceremony-user",
+		Subject:     "ceremony-user@example.com",
 		TenantID:    "system",
 		AuthMethod:  "piv",
 		MFAVerified: true,
@@ -367,7 +374,7 @@ func TestIssueRefreshForSessionBearer_MirrorsTheIssuedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTokenByValue: %v", err)
 	}
-	if record.Subject != "ceremony-user" || record.TenantID != "system" {
+	if record.Subject != "ceremony-user@example.com" || record.TenantID != "system" {
 		t.Fatalf("refresh record principal = %s/%s", record.TenantID, record.Subject)
 	}
 	if record.Session == nil || record.Session.AuthMethod != "piv" || !record.Session.MFAVerified {
@@ -383,12 +390,13 @@ func TestIssueRefreshForSessionBearer_MirrorsTheIssuedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renewed token failed validation: %v", err)
 	}
-	if claims.Subject != "ceremony-user" || claims.AuthMethod != "piv" {
+	if claims.Subject != "ceremony-user@example.com" || claims.AuthMethod != "piv" {
 		t.Fatalf("renewed claims = %+v", claims)
 	}
 }
 
 func TestIssueRefreshForSessionBearer_RejectsBadBearer(t *testing.T) {
+	t.Parallel()
 	provider, _ := newSessionRefreshProvider(t, 15*time.Minute, time.Hour)
 	ctx := context.Background()
 
@@ -412,6 +420,7 @@ func TestIssueRefreshForSessionBearer_RejectsBadBearer(t *testing.T) {
 // =============================================================================
 
 func TestHashTokenValue(t *testing.T) {
+	t.Parallel()
 	a := HashTokenValue("secret")
 	if a == "secret" {
 		t.Fatal("hash returned the input verbatim")
@@ -439,6 +448,7 @@ func TestHashTokenValue(t *testing.T) {
 // nothing about expiry) and only then asserts the refresh credential still
 // renews the session.
 func TestRefreshSession_RenewsAfterTheAccessTokenExpired(t *testing.T) {
+	t.Parallel()
 	provider, _ := newSessionRefreshProvider(t, -1*time.Second, 7*24*time.Hour)
 	ctx := context.Background()
 

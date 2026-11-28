@@ -253,10 +253,11 @@ func (a *IAMServiceAdapter) DeleteTenant(ctx context.Context, id string) error {
 	return a.tenantManager.DeleteTenant(ctx, id)
 }
 
-// ListTenants lists all tenants with pagination.
+// ListTenants lists all tenants with pagination. The total is a continuation
+// bound: it exceeds offset plus the page length exactly when more tenants follow.
 func (a *IAMServiceAdapter) ListTenants(ctx context.Context, limit, offset int) ([]*iam.Tenant, int, error) {
 	opts := iam.ListOptions{
-		Limit:  limit,
+		Limit:  lookaheadLimit(limit),
 		Offset: offset,
 	}
 
@@ -265,7 +266,8 @@ func (a *IAMServiceAdapter) ListTenants(ctx context.Context, limit, offset int) 
 		return nil, 0, err
 	}
 
-	return tenants, len(tenants), nil
+	tenants, total := trimLookahead(tenants, limit, offset)
+	return tenants, total, nil
 }
 
 // =============================================================================
@@ -436,10 +438,12 @@ func (a *IAMServiceAdapter) DeleteUser(ctx context.Context, tenantID, userID str
 	return a.identityStore.DeleteUser(ctx, tenantID, id)
 }
 
-// ListUsers lists users with pagination and optional filters.
+// ListUsers lists users with pagination and optional filters. The total is a
+// continuation bound: it exceeds offset plus the page length exactly when more
+// users follow.
 func (a *IAMServiceAdapter) ListUsers(ctx context.Context, tenantID string, limit, offset int, filters map[string]string) ([]*iam.User, int, error) {
 	opts := iam.ListOptions{
-		Limit:  limit,
+		Limit:  lookaheadLimit(limit),
 		Offset: offset,
 		Filter: make(map[string]interface{}),
 	}
@@ -457,7 +461,8 @@ func (a *IAMServiceAdapter) ListUsers(ctx context.Context, tenantID string, limi
 		return nil, 0, err
 	}
 
-	return users, len(users), nil
+	users, total := trimLookahead(users, limit, offset)
+	return users, total, nil
 }
 
 // =============================================================================
@@ -505,10 +510,11 @@ func (a *IAMServiceAdapter) DeleteRole(ctx context.Context, tenantID, roleID str
 	return a.identityStore.DeleteRole(ctx, tenantID, roleID)
 }
 
-// ListRoles lists roles with pagination.
+// ListRoles lists roles with pagination. The total is a continuation bound: it
+// exceeds offset plus the page length exactly when more roles follow.
 func (a *IAMServiceAdapter) ListRoles(ctx context.Context, tenantID string, limit, offset int) ([]*iam.Role, int, error) {
 	opts := iam.ListOptions{
-		Limit:  limit,
+		Limit:  lookaheadLimit(limit),
 		Offset: offset,
 	}
 
@@ -517,7 +523,28 @@ func (a *IAMServiceAdapter) ListRoles(ctx context.Context, tenantID string, limi
 		return nil, 0, err
 	}
 
-	return roles, len(roles), nil
+	roles, total := trimLookahead(roles, limit, offset)
+	return roles, total, nil
+}
+
+// lookaheadLimit asks the store for one item past the page, so the caller
+// learns whether another page exists. A limit of 0 lists everything.
+func lookaheadLimit(limit int) int {
+	if limit > 0 {
+		return limit + 1
+	}
+	return limit
+}
+
+// trimLookahead cuts a lookahead result to the page and returns the total
+// the IAM list RPCs report: larger than offset plus the page length exactly
+// when more items follow, which is how a client knows to ask for the next
+// page. It is a lower bound on the item count, not an exact count.
+func trimLookahead[T any](items []T, limit, offset int) ([]T, int) {
+	if limit > 0 && len(items) > limit {
+		return items[:limit], offset + limit + 1
+	}
+	return items, offset + len(items)
 }
 
 // AssignRole assigns a role to a user.
@@ -575,10 +602,12 @@ func (a *IAMServiceAdapter) DeleteApp(ctx context.Context, tenantID, clientID st
 	return a.appManager.DeleteAppInTenant(ctx, tenantID, clientID)
 }
 
-// ListApps lists applications with pagination.
+// ListApps lists applications with pagination. The total is a continuation
+// bound: it exceeds offset plus the page length exactly when more
+// applications follow.
 func (a *IAMServiceAdapter) ListApps(ctx context.Context, tenantID string, limit, offset int) ([]*iam.Application, int, error) {
 	opts := iam.ListOptions{
-		Limit:  limit,
+		Limit:  lookaheadLimit(limit),
 		Offset: offset,
 	}
 
@@ -587,7 +616,8 @@ func (a *IAMServiceAdapter) ListApps(ctx context.Context, tenantID string, limit
 		return nil, 0, err
 	}
 
-	return apps, len(apps), nil
+	apps, total := trimLookahead(apps, limit, offset)
+	return apps, total, nil
 }
 
 // RotateAppSecret rotates an application's client secret.
@@ -641,10 +671,12 @@ func (a *IAMServiceAdapter) DeletePolicy(ctx context.Context, tenantID, policyNa
 	return a.policyEngine.DeletePolicy(ctx, tenantID, policyName)
 }
 
-// ListPolicies lists policies with pagination.
+// ListPolicies lists policies with pagination. The total is a continuation
+// bound: it exceeds offset plus the page length exactly when more policies
+// follow.
 func (a *IAMServiceAdapter) ListPolicies(ctx context.Context, tenantID string, limit, offset int) ([]*iam.Policy, int, error) {
 	opts := iam.ListOptions{
-		Limit:  limit,
+		Limit:  lookaheadLimit(limit),
 		Offset: offset,
 	}
 
@@ -653,7 +685,8 @@ func (a *IAMServiceAdapter) ListPolicies(ctx context.Context, tenantID string, l
 		return nil, 0, err
 	}
 
-	return policies, len(policies), nil
+	policies, total := trimLookahead(policies, limit, offset)
+	return policies, total, nil
 }
 
 // ValidatePolicy validates a policy YAML without creating it.

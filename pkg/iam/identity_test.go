@@ -321,6 +321,7 @@ func newTestIdentityStore() *IdentityStore {
 // Test User CRUD Operations
 
 func TestCreateUser_Success(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -346,6 +347,7 @@ func TestCreateUser_Success(t *testing.T) {
 }
 
 func TestCreateUser_InvalidEmail(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -387,6 +389,7 @@ func TestCreateUser_InvalidEmail(t *testing.T) {
 // while buying nothing — the login already knows which tenant it authenticated
 // into, so it was never disambiguating anything.
 func TestCreateUser_DuplicateEmail(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -413,6 +416,7 @@ func TestCreateUser_DuplicateEmail(t *testing.T) {
 }
 
 func TestCreateUser_QuotaExceeded(t *testing.T) {
+	t.Parallel()
 	tenantMgr := &mockIdentityTenantManager{quotaExceeded: true}
 	store := NewIdentityStore(IdentityStoreOptions{
 		UserStorage: newMockUserStorage(),
@@ -433,6 +437,7 @@ func TestCreateUser_QuotaExceeded(t *testing.T) {
 }
 
 func TestGetUser_Success(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -457,6 +462,7 @@ func TestGetUser_Success(t *testing.T) {
 }
 
 func TestGetUser_NotFound(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -467,6 +473,7 @@ func TestGetUser_NotFound(t *testing.T) {
 }
 
 func TestGetUserByEmail_Success(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -490,6 +497,7 @@ func TestGetUserByEmail_Success(t *testing.T) {
 }
 
 func TestUpdateUser_Success(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -527,6 +535,7 @@ func TestUpdateUser_Success(t *testing.T) {
 }
 
 func TestUpdateUser_DuplicateEmail(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -558,6 +567,7 @@ func TestUpdateUser_DuplicateEmail(t *testing.T) {
 }
 
 func TestDeleteUser_Success(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -582,6 +592,7 @@ func TestDeleteUser_Success(t *testing.T) {
 }
 
 func TestListUsers_Success(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -613,6 +624,7 @@ func TestListUsers_Success(t *testing.T) {
 // Test Role CRUD Operations
 
 func TestCreateRole_Success(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -639,6 +651,7 @@ func TestCreateRole_Success(t *testing.T) {
 }
 
 func TestUpdateRole_Success(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -668,6 +681,7 @@ func TestUpdateRole_Success(t *testing.T) {
 // Test Role Assignment Operations
 
 func TestAssignRole_Success(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -699,6 +713,7 @@ func TestAssignRole_Success(t *testing.T) {
 }
 
 func TestAssignRole_AlreadyAssigned(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -719,6 +734,7 @@ func TestAssignRole_AlreadyAssigned(t *testing.T) {
 }
 
 func TestRevokeRole_Success(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -744,6 +760,7 @@ func TestRevokeRole_Success(t *testing.T) {
 }
 
 func TestRevokeRole_NotAssigned(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -764,6 +781,7 @@ func TestRevokeRole_NotAssigned(t *testing.T) {
 // Test Cross-tenant Isolation
 
 func TestCrossTenantIsolation(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -800,6 +818,7 @@ func TestCrossTenantIsolation(t *testing.T) {
 // Test Context Cancellation
 
 func TestContextCancellation(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()
@@ -819,6 +838,7 @@ func TestContextCancellation(t *testing.T) {
 // Test Validation Errors
 
 func TestValidationError(t *testing.T) {
+	t.Parallel()
 	err := &ValidationError{
 		Field:   "email",
 		Message: "invalid format",
@@ -833,6 +853,7 @@ func TestValidationError(t *testing.T) {
 // Test DeleteRole_RemovesFromUsers
 
 func TestDeleteRole_RemovesFromUsers(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -863,6 +884,7 @@ func TestDeleteRole_RemovesFromUsers(t *testing.T) {
 
 // Test GetRole - 0% coverage
 func TestGetRole_Success(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -889,6 +911,7 @@ func TestGetRole_Success(t *testing.T) {
 }
 
 func TestGetRole_NotFound(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -899,6 +922,7 @@ func TestGetRole_NotFound(t *testing.T) {
 }
 
 func TestGetRole_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -917,6 +941,7 @@ func TestGetRole_InvalidTenantID(t *testing.T) {
 }
 
 func TestGetRole_InvalidRoleID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -936,6 +961,7 @@ func TestGetRole_InvalidRoleID(t *testing.T) {
 
 // Test ListRoles - 0% coverage
 func TestListRoles_Success(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -962,6 +988,7 @@ func TestListRoles_Success(t *testing.T) {
 }
 
 func TestListRoles_EmptyList(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -976,6 +1003,7 @@ func TestListRoles_EmptyList(t *testing.T) {
 }
 
 func TestListRoles_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -994,6 +1022,7 @@ func TestListRoles_InvalidTenantID(t *testing.T) {
 }
 
 func TestListRoles_TenantIsolation(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1022,6 +1051,7 @@ func TestListRoles_TenantIsolation(t *testing.T) {
 // Test validation functions - low coverage
 
 func TestValidateUsername_Valid(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		username string
@@ -1038,6 +1068,7 @@ func TestValidateUsername_Valid(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := validateUsername(tt.username)
 			if err != nil {
 				t.Errorf("Expected valid username, got error: %v", err)
@@ -1047,6 +1078,7 @@ func TestValidateUsername_Valid(t *testing.T) {
 }
 
 func TestValidateUsername_Invalid(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		username string
@@ -1061,6 +1093,7 @@ func TestValidateUsername_Invalid(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := validateUsername(tt.username)
 			if err == nil {
 				t.Errorf("Expected validation error for username: %s", tt.username)
@@ -1078,6 +1111,7 @@ func TestValidateUsername_Invalid(t *testing.T) {
 }
 
 func TestValidateTenantID_Valid(t *testing.T) {
+	t.Parallel()
 	err := validateTenantID("tenant123")
 	if err != nil {
 		t.Errorf("Expected valid tenant ID, got error: %v", err)
@@ -1085,6 +1119,7 @@ func TestValidateTenantID_Valid(t *testing.T) {
 }
 
 func TestValidateTenantID_Invalid(t *testing.T) {
+	t.Parallel()
 	err := validateTenantID("")
 	if err == nil {
 		t.Error("Expected error for empty tenant ID")
@@ -1100,6 +1135,7 @@ func TestValidateTenantID_Invalid(t *testing.T) {
 }
 
 func TestValidateUserID_Valid(t *testing.T) {
+	t.Parallel()
 	err := validateUserID(20123)
 	if err != nil {
 		t.Errorf("Expected valid user ID, got error: %v", err)
@@ -1107,6 +1143,7 @@ func TestValidateUserID_Valid(t *testing.T) {
 }
 
 func TestValidateUserID_Invalid(t *testing.T) {
+	t.Parallel()
 	err := validateUserID(0)
 	if err == nil {
 		t.Error("Expected error for zero user ID")
@@ -1122,6 +1159,7 @@ func TestValidateUserID_Invalid(t *testing.T) {
 }
 
 func TestValidateRoleID_Valid(t *testing.T) {
+	t.Parallel()
 	err := validateRoleID("role123")
 	if err != nil {
 		t.Errorf("Expected valid role ID, got error: %v", err)
@@ -1129,6 +1167,7 @@ func TestValidateRoleID_Valid(t *testing.T) {
 }
 
 func TestValidateRoleID_Invalid(t *testing.T) {
+	t.Parallel()
 	err := validateRoleID("")
 	if err == nil {
 		t.Error("Expected error for empty role ID")
@@ -1146,6 +1185,7 @@ func TestValidateRoleID_Invalid(t *testing.T) {
 // Test GetUserRoles - low coverage
 
 func TestGetUserRoles_EmptyRoles(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1165,6 +1205,7 @@ func TestGetUserRoles_EmptyRoles(t *testing.T) {
 }
 
 func TestGetUserRoles_MultipleRoles(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1192,6 +1233,7 @@ func TestGetUserRoles_MultipleRoles(t *testing.T) {
 }
 
 func TestGetUserRoles_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1207,6 +1249,7 @@ func TestGetUserRoles_InvalidTenantID(t *testing.T) {
 }
 
 func TestGetUserRoles_InvalidUserID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1222,6 +1265,7 @@ func TestGetUserRoles_InvalidUserID(t *testing.T) {
 }
 
 func TestGetUserRoles_UserNotFound(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1232,6 +1276,7 @@ func TestGetUserRoles_UserNotFound(t *testing.T) {
 }
 
 func TestGetUserRoles_SkipsDeletedRoles(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1269,6 +1314,7 @@ func TestGetUserRoles_SkipsDeletedRoles(t *testing.T) {
 // Additional edge case tests
 
 func TestCreateUser_InvalidUsername(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1303,6 +1349,7 @@ func TestCreateUser_InvalidUsername(t *testing.T) {
 }
 
 func TestCreateUser_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1323,6 +1370,7 @@ func TestCreateUser_InvalidTenantID(t *testing.T) {
 }
 
 func TestGetUser_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1338,6 +1386,7 @@ func TestGetUser_InvalidTenantID(t *testing.T) {
 }
 
 func TestGetUser_InvalidUserID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1353,6 +1402,7 @@ func TestGetUser_InvalidUserID(t *testing.T) {
 }
 
 func TestDeleteUser_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1368,6 +1418,7 @@ func TestDeleteUser_InvalidTenantID(t *testing.T) {
 }
 
 func TestDeleteUser_InvalidUserID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1383,6 +1434,7 @@ func TestDeleteUser_InvalidUserID(t *testing.T) {
 }
 
 func TestListUsers_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1398,6 +1450,7 @@ func TestListUsers_InvalidTenantID(t *testing.T) {
 }
 
 func TestUpdateUser_InvalidUsername(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1422,6 +1475,7 @@ func TestUpdateUser_InvalidUsername(t *testing.T) {
 }
 
 func TestIdentityStore_GetTenant_NilManager(t *testing.T) {
+	t.Parallel()
 	store := NewIdentityStore(IdentityStoreOptions{})
 	_, err := store.GetTenant(context.Background(), "tenant1")
 	if err == nil {
@@ -1430,6 +1484,7 @@ func TestIdentityStore_GetTenant_NilManager(t *testing.T) {
 }
 
 func TestIdentityStore_GetTenant_WithTenantManager(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 	tenantMgr := NewDefaultTenantManager(storage)
@@ -1458,6 +1513,7 @@ func TestIdentityStore_GetTenant_WithTenantManager(t *testing.T) {
 }
 
 func TestIdentityStore_GetTenant_NotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 	tenantMgr := NewDefaultTenantManager(storage)
@@ -1519,6 +1575,7 @@ func (m *mockCoverageTenantManager) UpdateEngineEntitlements(_ context.Context, 
 // ============================================================================
 
 func TestGetUserByEmail_InvalidEmail(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1550,6 +1607,7 @@ func TestGetUserByEmail_InvalidEmail(t *testing.T) {
 }
 
 func TestGetUserByEmail_NotFound(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1560,6 +1618,7 @@ func TestGetUserByEmail_NotFound(t *testing.T) {
 }
 
 func TestGetUserByEmail_EmailNormalization(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1588,6 +1647,7 @@ func TestGetUserByEmail_EmailNormalization(t *testing.T) {
 // ============================================================================
 
 func TestUpdateUser_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1606,6 +1666,7 @@ func TestUpdateUser_InvalidTenantID(t *testing.T) {
 }
 
 func TestUpdateUser_InvalidUserID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1624,6 +1685,7 @@ func TestUpdateUser_InvalidUserID(t *testing.T) {
 }
 
 func TestUpdateUser_UserNotFound(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1637,6 +1699,7 @@ func TestUpdateUser_UserNotFound(t *testing.T) {
 }
 
 func TestUpdateUser_InvalidEmail(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1660,6 +1723,7 @@ func TestUpdateUser_InvalidEmail(t *testing.T) {
 }
 
 func TestUpdateUser_SameEmailNoCheck(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1683,6 +1747,7 @@ func TestUpdateUser_SameEmailNoCheck(t *testing.T) {
 }
 
 func TestUpdateUser_OnlyAttributes(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1709,6 +1774,7 @@ func TestUpdateUser_OnlyAttributes(t *testing.T) {
 // ============================================================================
 
 func TestDeleteUser_NotFound(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1723,6 +1789,7 @@ func TestDeleteUser_NotFound(t *testing.T) {
 // ============================================================================
 
 func TestListUsers_StorageError(t *testing.T) {
+	t.Parallel()
 	// Create a mock storage that fails on list
 	failingUserStorage := &mockUserStorageWithFailure{
 		mockUserStorage: newMockUserStorage(),
@@ -1748,6 +1815,7 @@ func TestListUsers_StorageError(t *testing.T) {
 // ============================================================================
 
 func TestCreateRole_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1765,6 +1833,7 @@ func TestCreateRole_InvalidTenantID(t *testing.T) {
 }
 
 func TestCreateRole_EmptyName(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1782,6 +1851,7 @@ func TestCreateRole_EmptyName(t *testing.T) {
 }
 
 func TestCreateRole_QuotaExceeded(t *testing.T) {
+	t.Parallel()
 	tenantMgr := &mockCoverageTenantManager{quotaExceeded: true}
 	store := NewIdentityStore(IdentityStoreOptions{
 		UserStorage: newMockUserStorage(),
@@ -1799,6 +1869,7 @@ func TestCreateRole_QuotaExceeded(t *testing.T) {
 }
 
 func TestCreateRole_StorageError(t *testing.T) {
+	t.Parallel()
 	failingRoleStorage := &mockRoleStorageWithFailure{
 		mockRoleStorage: newMockRoleStorage(),
 		failOnCreate:    true,
@@ -1820,6 +1891,7 @@ func TestCreateRole_StorageError(t *testing.T) {
 }
 
 func TestCreateRole_NilPermissions(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1844,6 +1916,7 @@ func TestCreateRole_NilPermissions(t *testing.T) {
 // ============================================================================
 
 func TestUpdateRole_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1862,6 +1935,7 @@ func TestUpdateRole_InvalidTenantID(t *testing.T) {
 }
 
 func TestUpdateRole_InvalidRoleID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1880,6 +1954,7 @@ func TestUpdateRole_InvalidRoleID(t *testing.T) {
 }
 
 func TestUpdateRole_NotFound(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1893,6 +1968,7 @@ func TestUpdateRole_NotFound(t *testing.T) {
 }
 
 func TestUpdateRole_EmptyName(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1915,6 +1991,7 @@ func TestUpdateRole_EmptyName(t *testing.T) {
 }
 
 func TestUpdateRole_StorageError(t *testing.T) {
+	t.Parallel()
 	failingRoleStorage := &mockRoleStorageWithFailure{
 		mockRoleStorage: newMockRoleStorage(),
 		failOnUpdate:    false,
@@ -1947,6 +2024,7 @@ func TestUpdateRole_StorageError(t *testing.T) {
 // ============================================================================
 
 func TestDeleteRole_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1962,6 +2040,7 @@ func TestDeleteRole_InvalidTenantID(t *testing.T) {
 }
 
 func TestDeleteRole_InvalidRoleID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -1977,6 +2056,7 @@ func TestDeleteRole_InvalidRoleID(t *testing.T) {
 }
 
 func TestDeleteRole_ListUsersError(t *testing.T) {
+	t.Parallel()
 	failingUserStorage := &mockUserStorageWithFailure{
 		mockUserStorage: newMockUserStorage(),
 		failOnList:      true,
@@ -2000,6 +2080,7 @@ func TestDeleteRole_ListUsersError(t *testing.T) {
 }
 
 func TestDeleteRole_UserUpdateError(t *testing.T) {
+	t.Parallel()
 	failingUserStorage := &mockUserStorageWithFailure{
 		mockUserStorage: newMockUserStorage(),
 		failOnUpdate:    false,
@@ -2033,6 +2114,7 @@ func TestDeleteRole_UserUpdateError(t *testing.T) {
 }
 
 func TestDeleteRole_StorageError(t *testing.T) {
+	t.Parallel()
 	failingRoleStorage := &mockRoleStorageWithFailure{
 		mockRoleStorage: newMockRoleStorage(),
 		failOnDelete:    false,
@@ -2062,6 +2144,7 @@ func TestDeleteRole_StorageError(t *testing.T) {
 // ============================================================================
 
 func TestListRoles_StorageError(t *testing.T) {
+	t.Parallel()
 	failingRoleStorage := &mockRoleStorageWithFailure{
 		mockRoleStorage: newMockRoleStorage(),
 		failOnList:      true,
@@ -2085,6 +2168,7 @@ func TestListRoles_StorageError(t *testing.T) {
 // ============================================================================
 
 func TestAssignRole_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2100,6 +2184,7 @@ func TestAssignRole_InvalidTenantID(t *testing.T) {
 }
 
 func TestAssignRole_InvalidUserID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2115,6 +2200,7 @@ func TestAssignRole_InvalidUserID(t *testing.T) {
 }
 
 func TestAssignRole_InvalidRoleID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2130,6 +2216,7 @@ func TestAssignRole_InvalidRoleID(t *testing.T) {
 }
 
 func TestAssignRole_UserNotFound(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2144,6 +2231,7 @@ func TestAssignRole_UserNotFound(t *testing.T) {
 }
 
 func TestAssignRole_RoleNotFound(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2159,6 +2247,7 @@ func TestAssignRole_RoleNotFound(t *testing.T) {
 }
 
 func TestAssignRole_UpdateError(t *testing.T) {
+	t.Parallel()
 	failingUserStorage := &mockUserStorageWithFailure{
 		mockUserStorage: newMockUserStorage(),
 		failOnUpdate:    false,
@@ -2194,6 +2283,7 @@ func TestAssignRole_UpdateError(t *testing.T) {
 // ============================================================================
 
 func TestRevokeRole_InvalidTenantID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2209,6 +2299,7 @@ func TestRevokeRole_InvalidTenantID(t *testing.T) {
 }
 
 func TestRevokeRole_InvalidUserID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2224,6 +2315,7 @@ func TestRevokeRole_InvalidUserID(t *testing.T) {
 }
 
 func TestRevokeRole_InvalidRoleID(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2239,6 +2331,7 @@ func TestRevokeRole_InvalidRoleID(t *testing.T) {
 }
 
 func TestRevokeRole_UserNotFound(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2249,6 +2342,7 @@ func TestRevokeRole_UserNotFound(t *testing.T) {
 }
 
 func TestRevokeRole_UpdateError(t *testing.T) {
+	t.Parallel()
 	failingUserStorage := &mockUserStorageWithFailure{
 		mockUserStorage: newMockUserStorage(),
 		failOnUpdate:    false,
@@ -2365,6 +2459,7 @@ func (m *mockRoleStorageWithFailure) ListRoles(ctx context.Context, tenantID str
 // persisted to the created user and surfaced in the GET response. This is the
 // direct regression gate for the bootstrap-admin-empty-ROLES-column bug.
 func TestCreateUser_WithRoles(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2404,6 +2499,7 @@ func TestCreateUser_WithRoles(t *testing.T) {
 // receives an empty (non-nil) Roles slice rather than nil, keeping JSON
 // serialisation consistent across callers.
 func TestCreateUser_WithNoRoles(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2432,6 +2528,7 @@ func TestCreateUser_WithNoRoles(t *testing.T) {
 // CreateUserOptions are validated against the tenant role store and persisted
 // on the created user.
 func TestCreateUser_WithRoles_ValidReferences(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2468,6 +2565,7 @@ func TestCreateUser_WithRoles_ValidReferences(t *testing.T) {
 // reference fails fast with a typed not-found error and NO user record is
 // written (a retry must not fail with already-exists).
 func TestCreateUser_WithRoles_UnknownRoleFailsWithoutCreate(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
@@ -2493,6 +2591,7 @@ func TestCreateUser_WithRoles_UnknownRoleFailsWithoutCreate(t *testing.T) {
 // checked before the tenant quota, mirroring the gRPC/Unix adapter ordering
 // (roles first, then quota) so all transports fail identically.
 func TestCreateUser_WithRoles_ValidatedBeforeQuota(t *testing.T) {
+	t.Parallel()
 	store := NewIdentityStore(IdentityStoreOptions{
 		UserStorage: newMockUserStorage(),
 		RoleStorage: newMockRoleStorage(),

@@ -70,9 +70,14 @@ func roleAssignCreateRequest(body string) *http.Request {
 // precondition of an authorized caller: server's node authorizer grants
 // roles:assign, and req carries an authenticated tenant1 identity.
 func withRoleAssignCaller(server *Server, req *http.Request) *http.Request {
+	return withRoleAssignCallerIn(server, req, "tenant1")
+}
+
+// withRoleAssignCallerIn is withRoleAssignCaller for a caller in tenantID.
+func withRoleAssignCallerIn(server *Server, req *http.Request, tenantID string) *http.Request {
 	server.SetBarrierScopeAuthorizer(&roleAssignAuthorizer{grantRolesAssign: true})
 	return req.WithContext(qrdbsdk.WithIdentity(req.Context(),
-		&qrdbsdk.Identity{Subject: "creator", TenantID: "tenant1"}))
+		&qrdbsdk.Identity{Subject: "creator", TenantID: tenantID}))
 }
 
 func TestIAMHandler_CreateUserWithRolesRequiresRolesAssign(t *testing.T) {
@@ -136,9 +141,10 @@ func TestIAMHandler_CreateUserWithRolesRequiresRolesAssign(t *testing.T) {
 
 		handler.CreateUser(w, roleAssignCreateRequest(`{"email": "plain@example.com", "username": "plain"}`))
 
-		require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+		// A role is mandatory, so the create is refused before roles:assign.
+		require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
 		_, err := memStorage.GetUserByEmail(context.Background(), "tenant1", "plain@example.com")
-		require.NoError(t, err)
+		require.Error(t, err, "a create naming no roles must write no user")
 		for _, d := range authz.made() {
 			assert.False(t, d.resource == "roles" && d.action == "assign",
 				"a create naming no roles must not ask roles:assign")

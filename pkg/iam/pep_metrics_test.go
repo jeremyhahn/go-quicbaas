@@ -19,6 +19,7 @@ import (
 )
 
 func TestNewPEPMetrics(t *testing.T) {
+	t.Parallel()
 	metrics := NewPEPMetrics()
 
 	if metrics == nil {
@@ -35,6 +36,7 @@ func TestNewPEPMetrics(t *testing.T) {
 }
 
 func TestPEPMetrics_RecordCheck(t *testing.T) {
+	t.Parallel()
 	metrics := NewPEPMetrics()
 
 	// Record allowed check
@@ -71,6 +73,7 @@ func TestPEPMetrics_RecordCheck(t *testing.T) {
 }
 
 func TestPEPMetrics_RecordCacheHit(t *testing.T) {
+	t.Parallel()
 	metrics := NewPEPMetrics()
 
 	metrics.RecordCacheHit()
@@ -92,6 +95,7 @@ func TestPEPMetrics_RecordCacheHit(t *testing.T) {
 }
 
 func TestPEPMetrics_RecordCacheMiss(t *testing.T) {
+	t.Parallel()
 	metrics := NewPEPMetrics()
 
 	metrics.RecordCacheMiss()
@@ -113,6 +117,7 @@ func TestPEPMetrics_RecordCacheMiss(t *testing.T) {
 }
 
 func TestPEPMetrics_CacheHitRate(t *testing.T) {
+	t.Parallel()
 	metrics := NewPEPMetrics()
 
 	// Record 7 hits and 3 misses (70% hit rate)
@@ -136,6 +141,7 @@ func TestPEPMetrics_CacheHitRate(t *testing.T) {
 }
 
 func TestPEPMetrics_RecordPolicyUpdate(t *testing.T) {
+	t.Parallel()
 	metrics := NewPEPMetrics()
 
 	metrics.RecordPolicyUpdate()
@@ -157,6 +163,7 @@ func TestPEPMetrics_RecordPolicyUpdate(t *testing.T) {
 }
 
 func TestPEPMetrics_RecordSync(t *testing.T) {
+	t.Parallel()
 	metrics := NewPEPMetrics()
 
 	// Record successful sync
@@ -181,6 +188,7 @@ func TestPEPMetrics_RecordSync(t *testing.T) {
 }
 
 func TestPEPMetrics_AverageLatency(t *testing.T) {
+	t.Parallel()
 	metrics := NewPEPMetrics()
 
 	// Record checks with known latencies
@@ -201,6 +209,7 @@ func TestPEPMetrics_AverageLatency(t *testing.T) {
 }
 
 func TestPEPMetrics_Percentiles(t *testing.T) {
+	t.Parallel()
 	metrics := NewPEPMetrics()
 
 	// Record checks with varied latencies
@@ -240,6 +249,7 @@ func TestPEPMetrics_Percentiles(t *testing.T) {
 }
 
 func TestPEPMetrics_Reset(t *testing.T) {
+	t.Parallel()
 	metrics := NewPEPMetrics()
 
 	// Record some metrics
@@ -280,6 +290,7 @@ func TestPEPMetrics_Reset(t *testing.T) {
 }
 
 func TestLatencyHistogram_AddPercentile(t *testing.T) {
+	t.Parallel()
 	histogram := NewLatencyHistogram(100)
 
 	// Add some values
@@ -314,6 +325,7 @@ func TestLatencyHistogram_AddPercentile(t *testing.T) {
 }
 
 func TestLatencyHistogram_Size(t *testing.T) {
+	t.Parallel()
 	histogram := NewLatencyHistogram(10)
 
 	if histogram.Size() != 0 {
@@ -331,6 +343,7 @@ func TestLatencyHistogram_Size(t *testing.T) {
 }
 
 func TestLatencyHistogram_MaxSamples(t *testing.T) {
+	t.Parallel()
 	maxSamples := 10
 	histogram := NewLatencyHistogram(maxSamples)
 
@@ -352,6 +365,7 @@ func TestLatencyHistogram_MaxSamples(t *testing.T) {
 }
 
 func TestLatencyHistogram_Clear(t *testing.T) {
+	t.Parallel()
 	histogram := NewLatencyHistogram(100)
 
 	// Add values

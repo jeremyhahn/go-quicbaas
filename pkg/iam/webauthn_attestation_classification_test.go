@@ -59,6 +59,7 @@ func wantForbidden(t *testing.T, err error) {
 // TestAttestationGateRefusals_AreClassifiedForbidden covers all three ways the
 // gate turns an enrollment away.
 func TestAttestationGateRefusals_AreClassifiedForbidden(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
 	otherAAGUID := []byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
 		0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00}
@@ -109,6 +110,7 @@ func TestAttestationGateRefusals_AreClassifiedForbidden(t *testing.T) {
 // rather than the pattern, and pinning it here keeps the family from drifting
 // apart again.
 func TestAttestationGateRefusals_AAGUIDDenialIsAlreadyForbidden(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
 	otherAAGUID := []byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
 		0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00}
@@ -127,6 +129,7 @@ func TestAttestationGateRefusals_AAGUIDDenialIsAlreadyForbidden(t *testing.T) {
 // returns a result and no error at all, so nothing downstream can read a
 // success as a forbidden decision.
 func TestAttestationGateRefusals_AdmittedEnrollmentIsNotAnError(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
 
 	result, err := gate.Evaluate(verifiedChainContext(yubiKey5AAGUID), "t1", "admin@example.com",

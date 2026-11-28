@@ -67,6 +67,7 @@ func seedTenantUsers(t *testing.T, store UserStorage, tenantID string, n int) []
 // the tenant through the wired user store, including across multiple ListUsers
 // pages (the population exceeds the internal page size).
 func TestDeleteTenant_DeprovisionsUsers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemoryStorage()
 
@@ -115,6 +116,7 @@ func TestDeleteTenant_DeprovisionsUsers(t *testing.T) {
 // during deprovision aborts the tenant delete with a wrapped storage error,
 // and that the tenant metadata is NOT removed (fail-closed).
 func TestDeleteTenant_UserDeprovisionFailureAborts(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mem := NewMemoryStorage()
 
@@ -159,6 +161,7 @@ func TestDeleteTenant_UserDeprovisionFailureAborts(t *testing.T) {
 // TestSetUserStorage_Accessor proves the setter/accessor round-trips the wired
 // user store.
 func TestSetUserStorage_Accessor(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryStorage()
 	mgr := NewDefaultTenantManager(store)
 
@@ -174,6 +177,7 @@ func TestSetUserStorage_Accessor(t *testing.T) {
 // TestDeleteTenant_NilUserStorage proves DeleteTenant still works when no user
 // store is wired (the deprovision step is a no-op), preserving legacy behavior.
 func TestDeleteTenant_NilUserStorage(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemoryStorage()
 	mgr := NewDefaultTenantManager(store)

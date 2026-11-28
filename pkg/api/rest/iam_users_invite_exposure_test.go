@@ -62,8 +62,9 @@ func TestCreateUser_StillExposesInviteTokenOnce(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/",
-		strings.NewReader(`{"email":"bob@acme.com","username":"bob","name":"Bob"}`))
+		strings.NewReader(`{"email":"bob@acme.com","username":"bob","name":"Bob","roles":["role-member"]}`))
 	req = req.WithContext(callerRouteContext(req.Context(), rctx))
+	req = withRoleAssignCallerIn(handler.server, req, "acme")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -117,6 +118,9 @@ func setupUserReadHandler(t *testing.T) (*IAMHandler, *iam.MemoryStorage, func()
 		Name:      "alice",
 		Lifecycle: iam.LifecyclePending,
 	}))
+
+	// A create must name at least one role (#75); the fixture's tenant has one.
+	require.NoError(t, mem.CreateRole(context.Background(), &iam.Role{ID: "role-member", TenantID: "acme", Name: "member"}))
 
 	identity := iam.NewIdentityStore(iam.IdentityStoreOptions{
 		UserStorage: mem,
@@ -209,6 +213,7 @@ func createPendingUser(t *testing.T, handler *IAMHandler, body string) map[strin
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/", strings.NewReader(body))
 	req = req.WithContext(callerRouteContext(req.Context(), rctx))
+	req = withRoleAssignCallerIn(handler.server, req, "acme")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -240,7 +245,7 @@ func TestCreateUser_OmittedAuthMethodsAreNotWidenedByTheInviteWrite(t *testing.T
 	defer cleanup()
 
 	got := createPendingUser(t, handler,
-		`{"email":"carol@acme.com","username":"carol","name":"Carol"}`)
+		`{"email":"carol@acme.com","username":"carol","name":"Carol","roles":["role-member"]}`)
 
 	id, _ := got["id"].(string)
 	require.NotEmpty(t, id, "create response carried no user id: %v", got)
@@ -270,7 +275,7 @@ func TestCreateUser_SuppliedAuthMethodsSurviveTheInviteWrite(t *testing.T) {
 	defer cleanup()
 
 	got := createPendingUser(t, handler,
-		`{"email":"dave@acme.com","username":"dave","name":"Dave","auth_methods":["piv"]}`)
+		`{"email":"dave@acme.com","username":"dave","name":"Dave","auth_methods":["piv"],"roles":["role-member"]}`)
 
 	id, _ := got["id"].(string)
 	require.NotEmpty(t, id)

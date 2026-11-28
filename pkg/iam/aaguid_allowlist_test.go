@@ -57,6 +57,7 @@ func hexToBytes(t *testing.T, hex string) []byte {
 // TestAAGUIDAllowlist_LogOnly_DoesNotRejectUnknown verifies that in permissive mode,
 // an unknown AAGUID does not cause an error.
 func TestAAGUIDAllowlist_LogOnly_DoesNotRejectUnknown(t *testing.T) {
+	t.Parallel()
 	allowlist := NewAAGUIDAllowlist([]string{knownAAGUID}, AAGUIDPolicyPermissive)
 
 	unknownBytes := hexToBytes(t, "aaaaaaaabbbbccccddddeeeeeeeeeeee")
@@ -68,6 +69,7 @@ func TestAAGUIDAllowlist_LogOnly_DoesNotRejectUnknown(t *testing.T) {
 // TestAAGUIDAllowlist_Enforce_RejectsUnknown verifies that in strict mode,
 // an unknown AAGUID is rejected with the typed error.
 func TestAAGUIDAllowlist_Enforce_RejectsUnknown(t *testing.T) {
+	t.Parallel()
 	allowlist := NewAAGUIDAllowlist([]string{knownAAGUID}, AAGUIDPolicyStrict)
 
 	unknownBytes := hexToBytes(t, "aaaaaaaabbbbccccddddeeeeeeeeeeee")
@@ -87,6 +89,7 @@ func TestAAGUIDAllowlist_Enforce_RejectsUnknown(t *testing.T) {
 // TestAAGUIDAllowlist_Enforce_AllowsKnown verifies that in strict mode,
 // a known AAGUID is accepted.
 func TestAAGUIDAllowlist_Enforce_AllowsKnown(t *testing.T) {
+	t.Parallel()
 	allowlist := NewAAGUIDAllowlist([]string{knownAAGUID}, AAGUIDPolicyStrict)
 
 	knownBytes := hexToBytes(t, hexAAGUID)
@@ -98,6 +101,7 @@ func TestAAGUIDAllowlist_Enforce_AllowsKnown(t *testing.T) {
 // TestAAGUIDAllowlist_EmptyListPermissive verifies that an empty allowlist in
 // permissive mode allows all AAGUIDs.
 func TestAAGUIDAllowlist_EmptyListPermissive(t *testing.T) {
+	t.Parallel()
 	allowlist := NewAAGUIDAllowlist(nil, AAGUIDPolicyPermissive)
 
 	anyBytes := hexToBytes(t, "aaaaaaaabbbbccccddddeeeeeeeeeeee")
@@ -109,6 +113,7 @@ func TestAAGUIDAllowlist_EmptyListPermissive(t *testing.T) {
 // TestAAGUIDAllowlist_EmptyListStrict verifies that an empty allowlist in
 // strict mode rejects all AAGUIDs (no authenticators are permitted).
 func TestAAGUIDAllowlist_EmptyListStrict(t *testing.T) {
+	t.Parallel()
 	allowlist := NewAAGUIDAllowlist(nil, AAGUIDPolicyStrict)
 
 	anyBytes := hexToBytes(t, "aaaaaaaabbbbccccddddeeeeeeeeeeee")
@@ -121,6 +126,7 @@ func TestAAGUIDAllowlist_EmptyListStrict(t *testing.T) {
 // TestAAGUIDAllowlist_UUIDFormatNormalization verifies that hyphenated UUID-format
 // AAGUIDs are accepted and normalized correctly.
 func TestAAGUIDAllowlist_UUIDFormatNormalization(t *testing.T) {
+	t.Parallel()
 	allowlist := NewAAGUIDAllowlist([]string{knownAAGUID}, AAGUIDPolicyStrict)
 
 	knownBytes := hexToBytes(t, hexAAGUID)
@@ -134,6 +140,7 @@ func TestAAGUIDAllowlist_UUIDFormatNormalization(t *testing.T) {
 
 // TestAAGUIDAllowlist_Contains verifies the Contains helper.
 func TestAAGUIDAllowlist_Contains(t *testing.T) {
+	t.Parallel()
 	allowlist := NewAAGUIDAllowlist([]string{knownAAGUID}, AAGUIDPolicyStrict)
 
 	knownBytes := hexToBytes(t, hexAAGUID)
@@ -149,6 +156,7 @@ func TestAAGUIDAllowlist_Contains(t *testing.T) {
 
 // TestAAGUIDAllowlist_Policy verifies the Policy accessor.
 func TestAAGUIDAllowlist_Policy(t *testing.T) {
+	t.Parallel()
 	permissive := NewAAGUIDAllowlist(nil, AAGUIDPolicyPermissive)
 	if permissive.Policy() != AAGUIDPolicyPermissive {
 		t.Errorf("expected AAGUIDPolicyPermissive, got %v", permissive.Policy())
@@ -168,6 +176,7 @@ func TestAAGUIDAllowlist_Policy(t *testing.T) {
 // to be iota, so an AAGUIDPolicy nobody set accepted every authenticator — the
 // safe configuration was the one an operator had to remember to ask for.
 func TestAAGUIDPolicy_ZeroValueIsStrict(t *testing.T) {
+	t.Parallel()
 	var policy AAGUIDPolicy
 	if policy != AAGUIDPolicyStrict {
 		t.Fatalf("the zero-value AAGUIDPolicy is %v, want AAGUIDPolicyStrict", policy)
@@ -183,6 +192,7 @@ func TestAAGUIDPolicy_ZeroValueIsStrict(t *testing.T) {
 // TestAAGUIDPolicy_String keeps log lines and errors naming the policy rather
 // than printing an integer.
 func TestAAGUIDPolicy_String(t *testing.T) {
+	t.Parallel()
 	for policy, want := range map[AAGUIDPolicy]string{
 		AAGUIDPolicyStrict:     "strict",
 		AAGUIDPolicyPermissive: "permissive",
@@ -202,6 +212,7 @@ func TestAAGUIDPolicy_String(t *testing.T) {
 // an unconfigured deployment strictly worse than a permissive one — no gate at
 // all, and the absence invisible.
 func TestAAGUIDAllowlist_NilDenies(t *testing.T) {
+	t.Parallel()
 	var list *AAGUIDAllowlist
 
 	err := list.Check([]byte{0xaa, 0xbb, 0xcc, 0xdd})
@@ -221,6 +232,7 @@ func TestAAGUIDAllowlist_NilDenies(t *testing.T) {
 // panic on a nil receiver, and that Policy reports the behaviour Check actually
 // implements rather than the permissive one an integer zero value suggests.
 func TestAAGUIDAllowlist_NilAccessorsAreSafe(t *testing.T) {
+	t.Parallel()
 	var list *AAGUIDAllowlist
 
 	if list.Len() != 0 {
@@ -240,6 +252,7 @@ func TestAAGUIDAllowlist_NilAccessorsAreSafe(t *testing.T) {
 // happens to be zero. Admitting it would make the allowlist pass exactly the
 // authenticators it exists to refuse.
 func TestAAGUIDAllowlist_StrictRefusesEmptyAAGUID(t *testing.T) {
+	t.Parallel()
 	list := NewAAGUIDAllowlist([]string{"aabbccdd"}, AAGUIDPolicyStrict)
 
 	for _, aaguid := range [][]byte{nil, {}} {

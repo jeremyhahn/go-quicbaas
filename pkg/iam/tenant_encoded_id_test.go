@@ -18,6 +18,7 @@ import "testing"
 // (d) The tenant-encoded id format round-trips: encode then decode recovers the
 // owning tenant and the full id used as the storage-key suffix.
 func TestTenantEncodedID_RoundTrip(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		tenantID string
@@ -29,6 +30,7 @@ func TestTenantEncodedID_RoundTrip(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			id := encodeTenantID(tc.tenantID, tc.raw)
 			gotTenant, gotFull := decodeTenantID(id)
 			if gotTenant != tc.tenantID {
@@ -44,6 +46,7 @@ func TestTenantEncodedID_RoundTrip(t *testing.T) {
 // An empty tenant yields the raw id unchanged, which decodes to the system
 // tenant (single-tenant / system callers).
 func TestTenantEncodedID_EmptyTenant(t *testing.T) {
+	t.Parallel()
 	id := encodeTenantID("", "raw-id")
 	if id != "raw-id" {
 		t.Fatalf("encodeTenantID(\"\", raw) = %q, want %q", id, "raw-id")
@@ -60,6 +63,7 @@ func TestTenantEncodedID_EmptyTenant(t *testing.T) {
 // A legacy id with no separator is treated as belonging to the system tenant
 // (read-tolerant) and is returned unchanged so it remains lookup-able.
 func TestTenantEncodedID_LegacyNoSeparator(t *testing.T) {
+	t.Parallel()
 	tenant, full := decodeTenantID("legacy-uuid-no-dot")
 	if tenant != systemTenantID {
 		t.Fatalf("legacy tenant = %q, want %q", tenant, systemTenantID)
@@ -72,6 +76,7 @@ func TestTenantEncodedID_LegacyNoSeparator(t *testing.T) {
 // ensureTenantEncoded is idempotent: re-encoding an already-encoded id does not
 // accumulate prefixes (e.g. attempt-count re-saves).
 func TestEnsureTenantEncoded_Idempotent(t *testing.T) {
+	t.Parallel()
 	once := ensureTenantEncoded("acme", "raw")
 	twice := ensureTenantEncoded("acme", once)
 	if once != twice {

@@ -62,6 +62,7 @@ func newTenantScopeTestManager(t *testing.T) *AdminManager {
 // matched every tenant, so the firstboot super_admin passed tenant-scoped
 // checks (impersonation included) for any tenant on the platform.
 func TestAdminManager_CheckPermission_EmptyTenantIDs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	manager, _ := createTestAdminManager(t)
 
@@ -124,6 +125,7 @@ func TestAdminManager_CheckPermission_EmptyTenantIDs(t *testing.T) {
 // explicitly naming the target tenant; and no session is ever minted for
 // a target the identity resolver cannot place in the target tenant.
 func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	manager := newTenantScopeTestManager(t)
 
@@ -215,6 +217,7 @@ func (failingTargetResolver) GetUser(ctx context.Context, tenantID string, userI
 // not be performed" (a sealed store, cancellation, storage fault). Either
 // way, no session is minted.
 func TestAdminManager_StartImpersonation_ResolverErrorIsNotNotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	manager, err := NewAdminManager(AdminManagerOptions{
 		AdminStorage:         NewMemoryAdminStorage(),
@@ -246,6 +249,7 @@ func TestAdminManager_StartImpersonation_ResolverErrorIsNotNotFound(t *testing.T
 // cannot happen, so the path fails closed rather than minting a session
 // for an unverified principal (#357).
 func TestAdminManager_StartImpersonation_ResolverRequired(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	manager, err := NewAdminManager(AdminManagerOptions{
 		AdminStorage:         NewMemoryAdminStorage(),
@@ -278,6 +282,7 @@ func TestAdminManager_StartImpersonation_ResolverRequired(t *testing.T) {
 // assignment appears under an unfiltered or system-tenant listing, never
 // under a customer tenant's (#357).
 func TestListAssignments_TenantFilter_EmptyTenantIDs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	stores := map[string]AdminStorage{
@@ -287,6 +292,7 @@ func TestListAssignments_TenantFilter_EmptyTenantIDs(t *testing.T) {
 
 	for name, store := range stores {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{
 				ID: "sys-scope", UserID: 30010, AdminRole: AdminRoleSuperAdmin,
 				TenantIDs: nil, Active: true,

@@ -43,7 +43,9 @@ type IAMWebAuthnConfig struct {
 	// browser additionally requires a registrable domain matching the page
 	// origin, and rejects an IP literal outright, so an IP RP ID serves only
 	// non-browser authenticators. Optional: when empty the issuer hostname is
-	// used.
+	// used. It is required when server.host is a routable IP literal: the
+	// derived default would be an IP address, so configuration validation
+	// refuses an empty rp_id there (validateWebAuthnRPIDSource).
 	RPID string `mapstructure:"rp_id"`
 
 	// RPDisplayName is the human-readable name shown by the authenticator

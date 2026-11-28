@@ -24,6 +24,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -260,8 +261,8 @@ func newFleetEnrollTestServer(t *testing.T, eventIngestURL string) *Server {
 }
 
 // agentRegisterTestPeerCert mints a self-signed certificate carrying
-// the OU=agents stamp + ClientAuth EKU + Organization=tenant the
-// register handler validates. Self-signed is fine here — the handler
+// the OU=agents stamp + ClientAuth EKU + Organization=tenant + the
+// tenant-scoped svc SPIFFE SAN the register handler validates. Self-signed is fine here — the handler
 // authenticates by inspecting the parsed cert directly, not by
 // verifying the chain.
 func agentRegisterTestPeerCert(t *testing.T, tenantID, cn string) *x509.Certificate {
@@ -271,9 +272,10 @@ func agentRegisterTestPeerCert(t *testing.T, tenantID, cn string) *x509.Certific
 		Subject: pkix.Name{
 			CommonName:         cn,
 			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{fleetRegistrarOU},
+			OrganizationalUnit: []string{tenantID},
 		},
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		URIs:        []*url.URL{fleetNodeSPIFFEURI(t, tenantID, cn)},
 	}
 	return tmpl
 }

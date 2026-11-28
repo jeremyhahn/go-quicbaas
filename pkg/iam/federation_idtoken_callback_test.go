@@ -215,6 +215,7 @@ func (h *callbackHarness) begin(t *testing.T) (stateToken, nonce string) {
 }
 
 func TestHandleCallback_ForgedIDTokenRejected(t *testing.T) {
+	t.Parallel()
 	h := newCallbackHarness(t, []GroupRoleMapping{{Group: "Acme Administrators", RoleID: "role-admin"}}, nil)
 	stateToken, nonce := h.begin(t)
 
@@ -235,6 +236,7 @@ func TestHandleCallback_ForgedIDTokenRejected(t *testing.T) {
 }
 
 func TestHandleCallback_NonceMismatchRejected(t *testing.T) {
+	t.Parallel()
 	h := newCallbackHarness(t, nil, []string{"role-default"})
 	stateToken, _ := h.begin(t)
 
@@ -250,6 +252,7 @@ func TestHandleCallback_NonceMismatchRejected(t *testing.T) {
 }
 
 func TestHandleCallback_ValidTokenJITWithMappedRoles(t *testing.T) {
+	t.Parallel()
 	h := newCallbackHarness(t, []GroupRoleMapping{
 		{Group: "Acme Administrators", RoleID: "role-admin"},
 		{Group: "Acme Auditors", RoleID: "role-auditor"},
@@ -278,6 +281,7 @@ func TestHandleCallback_ValidTokenJITWithMappedRoles(t *testing.T) {
 }
 
 func TestHandleCallback_FailClosedNoGroupMatch(t *testing.T) {
+	t.Parallel()
 	h := newCallbackHarness(t, []GroupRoleMapping{
 		{Group: "Acme Administrators", RoleID: "role-admin"},
 	}, []string{"role-default"})
@@ -300,6 +304,7 @@ func TestHandleCallback_FailClosedNoGroupMatch(t *testing.T) {
 }
 
 func TestHandleCallback_DefaultRolesFallback(t *testing.T) {
+	t.Parallel()
 	h := newCallbackHarness(t, nil, []string{"role-default"})
 	stateToken, nonce := h.begin(t)
 
@@ -321,6 +326,7 @@ func TestHandleCallback_DefaultRolesFallback(t *testing.T) {
 }
 
 func TestHandleCallback_ReSyncRolesOnRepeatLogin(t *testing.T) {
+	t.Parallel()
 	mappings := []GroupRoleMapping{
 		{Group: "Acme Administrators", RoleID: "role-admin"},
 		{Group: "Acme Auditors", RoleID: "role-auditor"},

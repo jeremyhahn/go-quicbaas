@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"math/big"
+	"strings"
 	"sync"
 	"testing"
 
@@ -73,6 +74,12 @@ type CAService struct {
 	// pretending the CA signed something it did not.
 	corruptCertificatePEM bool
 
+	// spiffeTrustDomain and spiffeKind, when set, stand for a provider that
+	// issues tenant SPIFFE SANs of that kind. When unset, leaves carry no
+	// SPIFFE SAN, as the pinned remote path gives a fleet node today.
+	spiffeTrustDomain string
+	spiffeKind        string
+
 	// signCSRCalls counts the CSRs this service was asked to sign, so a test
 	// can assert the caller took the CSR path rather than the keypair path.
 	signCSRCalls int
@@ -119,6 +126,16 @@ func (s *CAService) SetCorruptCertificatePEM(on bool) {
 	s.corruptCertificatePEM = on
 }
 
+// SetSPIFFE makes SignCSR add a tenant SPIFFE SAN of the given kind under
+// trustDomain to every leaf signed for a tenant. An empty trustDomain turns
+// it off.
+func (s *CAService) SetSPIFFE(trustDomain, kind string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.spiffeTrustDomain = trustDomain
+	s.spiffeKind = kind
+}
+
 // SignCSRCalls reports how many CSRs this service was asked to sign.
 func (s *CAService) SignCSRCalls() int {
 	s.mu.Lock()
@@ -160,6 +177,9 @@ func NewCAServiceOver(t *testing.T, ca xkmssdk.TrustedCA) *CAService {
 // certificate against the authority that signed it.
 func (s *CAService) TrustedCA() xkmssdk.TrustedCA { return s.ca }
 
+// fleetNodeCertProfile mirrors service.FleetNodeCertProfile.
+const fleetNodeCertProfile = "fleet-node"
+
 // SignCSR signs the supplied PKCS#10 CSR with the real CA, under the client
 // profile when one is named.
 func (s *CAService) SignCSR(ctx context.Context, req *xkmstransport.SignCSRRequest) (*xkmstransport.SignCSRResponse, error) {
@@ -167,16 +187,29 @@ func (s *CAService) SignCSR(ctx context.Context, req *xkmstransport.SignCSRReque
 	s.signCSRCalls++
 	s.lastSignCSR = req
 	signErr, corrupt, suppressChain := s.signCSRErr, s.corruptCertificatePEM, s.suppressChain
+	trustDomain, kind := s.spiffeTrustDomain, s.spiffeKind
 	s.mu.Unlock()
 	if signErr != nil {
 		return nil, signErr
 	}
 
-	cert, err := s.ca.SignCSR(ctx, req.CSRPEM, &xkmssdk.TrustedCASignOptions{
+	opts := &xkmssdk.TrustedCASignOptions{
 		Profile:      req.Profile,
 		ValidityDays: req.ValidityDays,
 		TenantID:     req.TenantID,
-	})
+	}
+	// A QuicBaaS provider translates the fleet node profile before go-xkms
+	// sees it (service.SignProfileUsage; this package cannot import
+	// pkg/service, whose tests import it).
+	if strings.EqualFold(strings.TrimSpace(req.Profile), fleetNodeCertProfile) {
+		opts.Profile = ""
+		opts.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	}
+	if trustDomain != "" && req.TenantID != "" {
+		opts.SPIFFETrustDomain = trustDomain
+		opts.SPIFFEKind = kind
+	}
+	cert, err := s.ca.SignCSR(ctx, req.CSRPEM, opts)
 	if err != nil {
 		return nil, err
 	}

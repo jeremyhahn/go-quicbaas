@@ -145,36 +145,40 @@ func (bm *BatchManager) ImportUsers(ctx context.Context, tenantID string, users 
 	// Create worker pool
 	wp := newWorkerPool(ctx, parallelism)
 	wp.start()
-	defer wp.stop()
 
 	var mu sync.Mutex
-	var wg sync.WaitGroup
 
-	// Process users in batches
-	for i := 0; i < len(users); i += batchSize {
-		end := i + batchSize
-		if end > len(users) {
-			end = len(users)
-		}
-		batch := users[i:end]
-
-		for j, user := range batch {
-			idx := i + j
-			u := user // Capture for closure
-
-			wg.Add(1)
-			submitted := wp.submit(workerJob{
-				index:    idx,
-				itemType: "user",
-				itemID:   strconv.FormatUint(u.ID, 10),
-				fn: func(jobCtx context.Context) error {
-					defer wg.Done()
-					return bm.importUser(jobCtx, tenantID, u, opts)
-				},
-			})
-
-			if !submitted {
-				wg.Done()
+	// Submit from its own goroutine so results drain while jobs are still
+	// being queued: submitting everything first deadlocks once the import
+	// outgrows the pool's job and result buffers (#108). The pool stops only
+	// after the submitter has returned, so no send races close(jobChan),
+	// and no goroutine outlives the call.
+	submitted := make(chan struct{})
+	defer func() {
+		wp.cancel()
+		<-submitted
+		wp.stop()
+	}()
+	go func() {
+		defer close(submitted)
+		for i := 0; i < len(users); i += batchSize {
+			end := i + batchSize
+			if end > len(users) {
+				end = len(users)
+			}
+			for j, u := range users[i:end] {
+				idx := i + j
+				if wp.submit(workerJob{
+					index:    idx,
+					itemType: "user",
+					itemID:   strconv.FormatUint(u.ID, 10),
+					fn: func(jobCtx context.Context) error {
+						return bm.importUser(jobCtx, tenantID, u, opts)
+					},
+				}) {
+					continue
+				}
+				// The pool only refuses once the import is canceled.
 				mu.Lock()
 				result.Errors = append(result.Errors, BatchError{
 					Index: idx,
@@ -186,12 +190,9 @@ func (bm *BatchManager) ImportUsers(ctx context.Context, tenantID string, users 
 				mu.Unlock()
 			}
 		}
-	}
+	}()
 
 	// Collect results
-	go func() {
-		wg.Wait()
-	}()
 
 	// Process results from worker pool
 	resultCount := 0
@@ -385,36 +386,35 @@ func (bm *BatchManager) ImportRoles(ctx context.Context, tenantID string, roles 
 	// Create worker pool
 	wp := newWorkerPool(ctx, parallelism)
 	wp.start()
-	defer wp.stop()
 
 	var mu sync.Mutex
-	var wg sync.WaitGroup
 
-	// Process roles in batches
-	for i := 0; i < len(roles); i += batchSize {
-		end := i + batchSize
-		if end > len(roles) {
-			end = len(roles)
-		}
-		batch := roles[i:end]
-
-		for j, role := range batch {
-			idx := i + j
-			r := role // Capture for closure
-
-			wg.Add(1)
-			submitted := wp.submit(workerJob{
-				index:    idx,
-				itemType: "role",
-				itemID:   r.ID,
-				fn: func(jobCtx context.Context) error {
-					defer wg.Done()
-					return bm.importRole(jobCtx, tenantID, r, opts)
-				},
-			})
-
-			if !submitted {
-				wg.Done()
+	// Submit concurrently with draining results; see ImportUsers (#108).
+	submitted := make(chan struct{})
+	defer func() {
+		wp.cancel()
+		<-submitted
+		wp.stop()
+	}()
+	go func() {
+		defer close(submitted)
+		for i := 0; i < len(roles); i += batchSize {
+			end := i + batchSize
+			if end > len(roles) {
+				end = len(roles)
+			}
+			for j, r := range roles[i:end] {
+				idx := i + j
+				if wp.submit(workerJob{
+					index:    idx,
+					itemType: "role",
+					itemID:   r.ID,
+					fn: func(jobCtx context.Context) error {
+						return bm.importRole(jobCtx, tenantID, r, opts)
+					},
+				}) {
+					continue
+				}
 				mu.Lock()
 				result.Errors = append(result.Errors, BatchError{
 					Index: idx,
@@ -426,12 +426,9 @@ func (bm *BatchManager) ImportRoles(ctx context.Context, tenantID string, roles 
 				mu.Unlock()
 			}
 		}
-	}
+	}()
 
 	// Collect results
-	go func() {
-		wg.Wait()
-	}()
 
 	// Process results from worker pool
 	resultCount := 0
@@ -556,36 +553,35 @@ func (bm *BatchManager) ImportPolicies(ctx context.Context, tenantID string, pol
 	// Create worker pool
 	wp := newWorkerPool(ctx, parallelism)
 	wp.start()
-	defer wp.stop()
 
 	var mu sync.Mutex
-	var wg sync.WaitGroup
 
-	// Process policies in batches
-	for i := 0; i < len(policies); i += batchSize {
-		end := i + batchSize
-		if end > len(policies) {
-			end = len(policies)
-		}
-		batch := policies[i:end]
-
-		for j, policy := range batch {
-			idx := i + j
-			p := policy // Capture for closure
-
-			wg.Add(1)
-			submitted := wp.submit(workerJob{
-				index:    idx,
-				itemType: "policy",
-				itemID:   p.Name,
-				fn: func(jobCtx context.Context) error {
-					defer wg.Done()
-					return bm.importPolicy(jobCtx, tenantID, p, opts)
-				},
-			})
-
-			if !submitted {
-				wg.Done()
+	// Submit concurrently with draining results; see ImportUsers (#108).
+	submitted := make(chan struct{})
+	defer func() {
+		wp.cancel()
+		<-submitted
+		wp.stop()
+	}()
+	go func() {
+		defer close(submitted)
+		for i := 0; i < len(policies); i += batchSize {
+			end := i + batchSize
+			if end > len(policies) {
+				end = len(policies)
+			}
+			for j, p := range policies[i:end] {
+				idx := i + j
+				if wp.submit(workerJob{
+					index:    idx,
+					itemType: "policy",
+					itemID:   p.Name,
+					fn: func(jobCtx context.Context) error {
+						return bm.importPolicy(jobCtx, tenantID, p, opts)
+					},
+				}) {
+					continue
+				}
 				mu.Lock()
 				result.Errors = append(result.Errors, BatchError{
 					Index: idx,
@@ -597,12 +593,9 @@ func (bm *BatchManager) ImportPolicies(ctx context.Context, tenantID string, pol
 				mu.Unlock()
 			}
 		}
-	}
+	}()
 
 	// Collect results
-	go func() {
-		wg.Wait()
-	}()
 
 	// Process results from worker pool
 	resultCount := 0

@@ -103,7 +103,7 @@ func (s *PolicySyncer) SyncNow(ctx context.Context) error {
 
 	// Fetch policies from IAM server
 	// Use wildcard pattern to fetch all policies
-	policies, err := s.client.FetchPolicies(s.tenantID, []string{"**"})
+	policies, err := s.client.FetchPolicies(ctx, s.tenantID, []string{"**"})
 	if err != nil {
 		s.syncErrors.Add(1)
 		return NewPolicySyncError(s.tenantID, err)
@@ -140,6 +140,11 @@ func (s *PolicySyncer) syncLoop(ctx context.Context) {
 			return
 
 		case <-ctx.Done():
+			// The loop has ended, so the syncer is no longer running (#49):
+			// IsRunning reports the loop, not whether Stop was called. The
+			// flag is cleared before returning, so a Start that sees it
+			// false always starts a fresh loop.
+			s.running.Store(false)
 			return
 
 		case <-ticker.C:

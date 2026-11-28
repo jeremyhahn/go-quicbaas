@@ -149,76 +149,64 @@ func writeTestPIVRootPEM(t *testing.T, cert *x509.Certificate) string {
 	return path
 }
 
-// TestAppendOperatorPIVLoginRoots_AppendsConfiguredCA proves the operator's
-// iam.piv_login.ca_file roots are appended to the verifier trust pool so PIV
-// factor logins verify operator-PKI certificates — the same posture as the
-// REST PIV login path.
-func TestAppendOperatorPIVLoginRoots_AppendsConfiguredCA(t *testing.T) {
-	s := newTestServer(t)
-	s.config = &config.Config{}
-	operatorRoot, _ := newTestPIVRoot(t)
-	s.config.IAM.PIVLogin.Enabled = true
-	s.config.IAM.PIVLogin.CAFile = writeTestPIVRootPEM(t, operatorRoot)
-
-	pool := x509.NewCertPool()
-	s.appendOperatorPIVLoginRoots(pool)
-
-	if pool.Equal(x509.NewCertPool()) {
-		t.Fatal("operator PIV root must be appended to the trust pool")
+// loadTestTLSCAFile points security.tls_ca_file at root and loads the shared
+// client trust-anchor set, as initializeCA does at boot.
+func loadTestTLSCAFile(t *testing.T, s *Server, root *x509.Certificate) {
+	t.Helper()
+	s.config.Security.TLSCAFile = writeTestPIVRootPEM(t, root)
+	if err := s.loadOperatorClientTrustAnchors(); err != nil {
+		t.Fatalf("loadOperatorClientTrustAnchors: %v", err)
 	}
 }
 
-// TestAppendOperatorPIVLoginRoots_NoOpWhenDisabledOrUnset proves the pool is
-// untouched when PIV login is disabled or no ca_file is configured.
-func TestAppendOperatorPIVLoginRoots_NoOpWhenDisabledOrUnset(t *testing.T) {
+// TestBindPIVLoginVerifier_TrustsTLSCAFile proves the PIV login verifier
+// trusts security.tls_ca_file: a certificate chaining to it verifies against
+// the bound roots, and one from an unlisted CA does not.
+func TestBindPIVLoginVerifier_TrustsTLSCAFile(t *testing.T) {
 	s := newTestServer(t)
 	s.config = &config.Config{}
-	operatorRoot, _ := newTestPIVRoot(t)
-	caFile := writeTestPIVRootPEM(t, operatorRoot)
+	v := pivVerifierFromServer(t, s)
 
-	// Disabled with a configured file.
-	s.config.IAM.PIVLogin.Enabled = false
-	s.config.IAM.PIVLogin.CAFile = caFile
+	daemonRoot, _ := newTestPIVRoot(t)
 	pool := x509.NewCertPool()
-	s.appendOperatorPIVLoginRoots(pool)
-	if !pool.Equal(x509.NewCertPool()) {
-		t.Fatal("disabled PIV login must not modify the trust pool")
-	}
+	pool.AddCert(daemonRoot)
+	s.xkmsCA = &pivBindFakeCA{pool: pool}
 
-	// Enabled without a file.
+	operatorRoot, _ := newTestPIVRoot(t)
+	unlistedRoot, _ := newTestPIVRoot(t)
 	s.config.IAM.PIVLogin.Enabled = true
-	s.config.IAM.PIVLogin.CAFile = ""
-	s.appendOperatorPIVLoginRoots(pool)
-	if !pool.Equal(x509.NewCertPool()) {
-		t.Fatal("empty ca_file must not modify the trust pool")
+	loadTestTLSCAFile(t, s, operatorRoot)
+
+	s.bindPIVLoginVerifier(v)
+
+	opts := x509.VerifyOptions{Roots: pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
+	if _, err := operatorRoot.Verify(opts); err != nil {
+		t.Fatalf("a certificate from security.tls_ca_file must verify against the PIV roots: %v", err)
+	}
+	if _, err := unlistedRoot.Verify(opts); err == nil {
+		t.Fatal("a certificate from an unlisted CA must not verify against the PIV roots")
 	}
 }
 
-// TestAppendOperatorPIVLoginRoots_BadFileLeavesPoolUnchanged proves an
-// unreadable or non-PEM ca_file is skipped defensively (daemon roots remain
-// in effect; startup validation is the enforcement point).
-func TestAppendOperatorPIVLoginRoots_BadFileLeavesPoolUnchanged(t *testing.T) {
+// TestBindPIVLoginVerifier_DisabledIgnoresTLSCAFile proves the PIV roots are
+// left at the daemon CA when PIV login is disabled.
+func TestBindPIVLoginVerifier_DisabledIgnoresTLSCAFile(t *testing.T) {
 	s := newTestServer(t)
 	s.config = &config.Config{}
-	s.config.IAM.PIVLogin.Enabled = true
+	v := pivVerifierFromServer(t, s)
 
-	// Missing file.
-	s.config.IAM.PIVLogin.CAFile = filepath.Join(t.TempDir(), "missing.crt")
+	daemonRoot, _ := newTestPIVRoot(t)
 	pool := x509.NewCertPool()
-	s.appendOperatorPIVLoginRoots(pool)
-	if !pool.Equal(x509.NewCertPool()) {
-		t.Fatal("missing ca_file must not modify the trust pool")
-	}
+	pool.AddCert(daemonRoot)
+	s.xkmsCA = &pivBindFakeCA{pool: pool}
 
-	// Garbage PEM.
-	garbage := filepath.Join(t.TempDir(), "garbage.crt")
-	if err := os.WriteFile(garbage, []byte("not a pem"), 0o600); err != nil {
-		t.Fatalf("write garbage: %v", err)
-	}
-	s.config.IAM.PIVLogin.CAFile = garbage
-	s.appendOperatorPIVLoginRoots(pool)
-	if !pool.Equal(x509.NewCertPool()) {
-		t.Fatal("non-PEM ca_file must not modify the trust pool")
+	operatorRoot, _ := newTestPIVRoot(t)
+	loadTestTLSCAFile(t, s, operatorRoot)
+
+	before := pool.Clone()
+	s.bindPIVLoginVerifier(v)
+	if !pool.Equal(before) {
+		t.Fatal("disabled PIV login must not add security.tls_ca_file to the PIV roots")
 	}
 }
 
@@ -238,7 +226,7 @@ func TestBindPIVLoginVerifier_IncludesOperatorRoots(t *testing.T) {
 
 	operatorRoot, _ := newTestPIVRoot(t)
 	s.config.IAM.PIVLogin.Enabled = true
-	s.config.IAM.PIVLogin.CAFile = writeTestPIVRootPEM(t, operatorRoot)
+	loadTestTLSCAFile(t, s, operatorRoot)
 
 	before := pool.Clone()
 	s.bindPIVLoginVerifier(v)

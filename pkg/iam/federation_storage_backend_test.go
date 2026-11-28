@@ -54,6 +54,7 @@ func testState(tenantID, nonce, providerID string) *LoginState {
 
 // (a) Provider lands in the barrier tenant's store, not the shared store.
 func TestBackendProviderStorage_BarrierIsolation(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	tenantStore := kv.barrierTenant("acme")
 	store := NewBackendProviderStorage(kv)
@@ -81,6 +82,7 @@ func TestBackendProviderStorage_BarrierIsolation(t *testing.T) {
 
 // (c) Provider sealed fail-closed.
 func TestBackendProviderStorage_SealedFailsClosed(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.sealTenant("acme")
@@ -98,6 +100,7 @@ func TestBackendProviderStorage_SealedFailsClosed(t *testing.T) {
 // (b) Link by-ID lookup parses tenant from encoded id; external/user indexes
 // route by context tenant.
 func TestBackendFederationStorage_LinkRouting(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendFederationStorage(kv)
@@ -140,6 +143,7 @@ func TestBackendFederationStorage_LinkRouting(t *testing.T) {
 
 // State token by-token lookup parses tenant from encoded token.
 func TestBackendStateStorage_TokenRouting(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendStateStorage(kv, nil)
@@ -172,6 +176,7 @@ func TestBackendStateStorage_TokenRouting(t *testing.T) {
 
 // State sealed fail-closed.
 func TestBackendStateStorage_SealedFailsClosed(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.sealTenant("acme")
@@ -188,6 +193,7 @@ func TestBackendStateStorage_SealedFailsClosed(t *testing.T) {
 
 // CleanupExpired sweeps states per tenant via the lister.
 func TestBackendStateStorage_CleanupExpiredPerTenant(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendStateStorage(kv, staticTenantLister{ids: []string{"acme"}})

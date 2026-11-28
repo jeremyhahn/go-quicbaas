@@ -238,6 +238,7 @@ func setupImpersonationFixture(t *testing.T, cluster, admin *testCluster) impers
 	err = cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), map[string]interface{}{
 		"email":    generateUniqueEmail(),
 		"username": generateUniqueUsername(),
+		"roles":    fixtureRoles(tenantID),
 		"name":     "Impersonation Target",
 	}, &user)
 	require.NoError(t, err, "create the impersonation target user")

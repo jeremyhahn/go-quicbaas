@@ -69,6 +69,7 @@ func (m *settingsTenantManager) UpdateEngineEntitlements(_ context.Context, _ st
 // not-configured / not-found case falls back to the global RP (nil, nil),
 // preserving today's behavior.
 func TestWebAuthnSettingsFor_NotConfiguredTenant(t *testing.T) {
+	t.Parallel()
 	adapter := NewTenantManagerWebAuthnSettings(&settingsTenantManager{
 		err: NewTenantNotFoundError("missing-tenant"),
 	})
@@ -86,6 +87,7 @@ func TestWebAuthnSettingsFor_NotConfiguredTenant(t *testing.T) {
 // fails closed with a typed WebAuthnSettingsReadError rather than silently
 // falling back to the global RP (isolation leak).
 func TestWebAuthnSettingsFor_StoreReadError(t *testing.T) {
+	t.Parallel()
 	cause := &dberrors.QBError{
 		Code: dberrors.ErrStorage,
 		Op:   "iam.tenant.get",
@@ -115,6 +117,7 @@ func TestWebAuthnSettingsFor_StoreReadError(t *testing.T) {
 // TestWebAuthnSettingsFor_PerTenantOverride verifies a configured per-tenant
 // override is still returned unchanged.
 func TestWebAuthnSettingsFor_PerTenantOverride(t *testing.T) {
+	t.Parallel()
 	override := &TenantWebAuthnConfig{
 		RPID:          "tenant.example.com",
 		RPDisplayName: "Tenant Example",
@@ -138,6 +141,7 @@ func TestWebAuthnSettingsFor_PerTenantOverride(t *testing.T) {
 // TestWebAuthnSettingsFor_NilAdapter verifies the nil-safe path yields the
 // global fallback.
 func TestWebAuthnSettingsFor_NilAdapter(t *testing.T) {
+	t.Parallel()
 	var adapter *TenantManagerWebAuthnSettings
 	got, err := adapter.WebAuthnSettingsFor(context.Background(), "tenant-a")
 	if err != nil || got != nil {
@@ -154,6 +158,7 @@ func TestWebAuthnSettingsFor_NilAdapter(t *testing.T) {
 // TestWebAuthnSettingsReadError_Message verifies the typed error renders a
 // useful message with and without a cause.
 func TestWebAuthnSettingsReadError_Message(t *testing.T) {
+	t.Parallel()
 	withCause := &WebAuthnSettingsReadError{TenantID: "t1", Cause: errors.New("boom")}
 	if withCause.Error() == "" {
 		t.Fatal("expected non-empty message")

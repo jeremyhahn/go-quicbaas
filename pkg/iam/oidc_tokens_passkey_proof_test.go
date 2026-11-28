@@ -38,6 +38,7 @@ import (
 // wildcard, so RequireScope("orchestrator:status") succeeds (the chain the
 // GET /api/v1/orchestrator/health endpoint runs => HTTP 200).
 func TestPasskeyLogin_AdminTokenAuthorizesOrchestrator(t *testing.T) {
+	t.Parallel()
 	const (
 		issuer       = "https://broker.example.com"
 		adminUserID  = 1234567890123456789

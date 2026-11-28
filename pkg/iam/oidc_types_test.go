@@ -21,6 +21,7 @@ import (
 
 // Test UnixTime UnmarshalJSON and MarshalJSON
 func TestUnixTime_MarshalJSON(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2024, 1, 15, 12, 30, 45, 0, time.UTC)
 	ut := NewUnixTime(now)
 
@@ -42,6 +43,7 @@ func TestUnixTime_MarshalJSON(t *testing.T) {
 }
 
 func TestUnixTime_UnmarshalJSON_Timestamp(t *testing.T) {
+	t.Parallel()
 	// Test unmarshaling from Unix timestamp (number)
 	timestamp := int64(1705319445) // 2024-01-15 12:30:45 UTC
 	jsonData := []byte(`1705319445`)
@@ -57,6 +59,7 @@ func TestUnixTime_UnmarshalJSON_Timestamp(t *testing.T) {
 }
 
 func TestUnixTime_UnmarshalJSON_RFC3339(t *testing.T) {
+	t.Parallel()
 	// Test unmarshaling from RFC3339 string
 	timeStr := "2024-01-15T12:30:45Z"
 	jsonData := []byte(`"` + timeStr + `"`)
@@ -73,6 +76,7 @@ func TestUnixTime_UnmarshalJSON_RFC3339(t *testing.T) {
 }
 
 func TestUnixTime_UnmarshalJSON_InvalidString(t *testing.T) {
+	t.Parallel()
 	// Test with invalid RFC3339 string
 	jsonData := []byte(`"not-a-valid-time"`)
 
@@ -84,6 +88,7 @@ func TestUnixTime_UnmarshalJSON_InvalidString(t *testing.T) {
 }
 
 func TestUnixTime_UnmarshalJSON_InvalidFormat(t *testing.T) {
+	t.Parallel()
 	// Test with invalid JSON format (not number or string)
 	jsonData := []byte(`true`)
 
@@ -95,6 +100,7 @@ func TestUnixTime_UnmarshalJSON_InvalidFormat(t *testing.T) {
 }
 
 func TestUnixTime_UnmarshalJSON_Zero(t *testing.T) {
+	t.Parallel()
 	// Test with zero timestamp
 	jsonData := []byte(`0`)
 
@@ -109,6 +115,7 @@ func TestUnixTime_UnmarshalJSON_Zero(t *testing.T) {
 }
 
 func TestUnixTime_RoundTrip(t *testing.T) {
+	t.Parallel()
 	// Test marshaling and unmarshaling produces the same value
 	now := time.Date(2024, 3, 15, 10, 20, 30, 0, time.UTC)
 	original := NewUnixTime(now)
@@ -132,6 +139,7 @@ func TestUnixTime_RoundTrip(t *testing.T) {
 }
 
 func TestAuthCodeData_IsExpired(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		expiresAt time.Time
@@ -156,6 +164,7 @@ func TestAuthCodeData_IsExpired(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			authCode := &AuthCodeData{
 				ExpiresAt: tt.expiresAt,
 			}
@@ -167,6 +176,7 @@ func TestAuthCodeData_IsExpired(t *testing.T) {
 }
 
 func TestAuthCodeData_ValidatePKCE(t *testing.T) {
+	t.Parallel()
 	validChallenge := "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 	validVerifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 
@@ -236,6 +246,7 @@ func TestAuthCodeData_ValidatePKCE(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			authCode := &AuthCodeData{
 				CodeChallenge:       tt.codeChallenge,
 				CodeChallengeMethod: tt.codeChallengeMethod,
@@ -253,6 +264,7 @@ func TestAuthCodeData_ValidatePKCE(t *testing.T) {
 
 // Test that plain method is consistently rejected in ValidatePKCE
 func TestAuthCodeData_ValidatePKCE_PlainMethodRejected(t *testing.T) {
+	t.Parallel()
 	authCode := &AuthCodeData{
 		CodeChallenge:       "test-challenge",
 		CodeChallengeMethod: CodeChallengeMethodPlain,
@@ -280,6 +292,7 @@ func TestAuthCodeData_ValidatePKCE_PlainMethodRejected(t *testing.T) {
 }
 
 func TestOAuthError_Error(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name             string
 		errorCode        string
@@ -302,6 +315,7 @@ func TestOAuthError_Error(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			e := &OAuthError{
 				ErrorCode:        tt.errorCode,
 				ErrorDescription: tt.errorDescription,
@@ -314,6 +328,7 @@ func TestOAuthError_Error(t *testing.T) {
 }
 
 func TestNewOAuthError(t *testing.T) {
+	t.Parallel()
 	code := ErrOAuthInvalidGrant
 	description := "Authorization code expired"
 
@@ -328,6 +343,7 @@ func TestNewOAuthError(t *testing.T) {
 }
 
 func TestOAuthError_WithState(t *testing.T) {
+	t.Parallel()
 	state := "test-state-123"
 	err := NewOAuthError(ErrOAuthAccessDenied, "User denied access").WithState(state)
 
@@ -337,6 +353,7 @@ func TestOAuthError_WithState(t *testing.T) {
 }
 
 func TestOAuthError_WithURI(t *testing.T) {
+	t.Parallel()
 	uri := "https://docs.example.com/errors#access_denied"
 	err := NewOAuthError(ErrOAuthAccessDenied, "User denied access").WithURI(uri)
 
@@ -346,6 +363,7 @@ func TestOAuthError_WithURI(t *testing.T) {
 }
 
 func TestValidationError_Error(t *testing.T) {
+	t.Parallel()
 	err := &ValidationError{
 		Field:   "email",
 		Message: "email is required",
@@ -359,6 +377,7 @@ func TestValidationError_Error(t *testing.T) {
 
 // Test Claims marshaling/unmarshaling
 func TestClaims_MarshalUnmarshal(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	original := &Claims{
 		Issuer:    "https://test.example.com",
@@ -403,6 +422,7 @@ func TestClaims_MarshalUnmarshal(t *testing.T) {
 
 // Test IDTokenClaims marshaling/unmarshaling
 func TestIDTokenClaims_MarshalUnmarshal(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	original := &IDTokenClaims{
 		Issuer:        "https://test.example.com",
@@ -448,6 +468,7 @@ func TestIDTokenClaims_MarshalUnmarshal(t *testing.T) {
 
 // Test NewUnixTime
 func TestNewUnixTime(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2024, 6, 15, 14, 30, 0, 0, time.UTC)
 	ut := NewUnixTime(now)
 
@@ -458,6 +479,7 @@ func TestNewUnixTime(t *testing.T) {
 
 // Test UnixTime edge cases
 func TestUnixTime_EdgeCases(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		jsonData string
@@ -492,6 +514,7 @@ func TestUnixTime_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var ut UnixTime
 			err := json.Unmarshal([]byte(tt.jsonData), &ut)
 			if (err != nil) != tt.wantErr {

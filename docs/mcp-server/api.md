@@ -105,10 +105,10 @@ curl -X POST http://127.0.0.1:8888/mcp \
   "id": 1,
   "method": "tools/call",
   "params": {
-    "name": "quicbaas_put",
+    "name": "quicbaas_kv_put",
     "arguments": {
-      "entityType": "user",
-      "id": 123,
+      "entity_type": "user",
+      "id": "123",
       "data": "eyJuYW1lIjoiSm9obiJ9"
     }
   }
@@ -122,9 +122,10 @@ curl -X POST http://127.0.0.1:8888/mcp \
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "id": 123,
-    "version": 1,
-    "timestamp": 1700000000
+    "id": "123",
+    "version": "1",
+    "timestamp": 1700000000,
+    "leader_id": "1"
   }
 }
 ```
@@ -158,9 +159,9 @@ curl -X POST http://127.0.0.1:8888/mcp \
 
 ### KV Operations
 
-- `quicbaas_put` - Store a key-value pair
-- `quicbaas_get` - Retrieve a value
-- `quicbaas_delete` - Delete a key
+- `quicbaas_kv_put` - Store an entity through the KV service
+- `quicbaas_kv_get` - Read an entity; a missing entity answers `"found": false`
+- `quicbaas_kv_delete` - Delete an entity
 - `quicbaas_list` - List entities with pagination
 
 ### Batch Operations
@@ -292,15 +293,33 @@ Request:
   "id": 2,
   "method": "tools/call",
   "params": {
-    "name": "quicbaas_put",
+    "name": "quicbaas_kv_put",
     "arguments": {
-      "entityType": "user",
-      "id": 100,
+      "entity_type": "user",
+      "id": "100",
+      "shard_id": "0",
+      "consistency": "2",
       "data": "eyJuYW1lIjoiSm9obiBEb2UiLCJlbWFpbCI6ImpvaG5AZXhhbXBsZS5jb20ifQ=="
     }
   }
 }
 ```
+
+The KV tools (`quicbaas_kv_put`, `quicbaas_kv_get`, `quicbaas_kv_delete`)
+call the same KV service as REST and gRPC, so the service builds the
+canonical key from the caller's tenant. Arguments:
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `entity_type` | string | yes | Entity type |
+| `id` | decimal string | yes | Entity ID (uint64) |
+| `shard_id` | decimal string | no | Target shard; `0` (default) lets the service route |
+| `consistency` | decimal string | no | `0` default, `1` eventual, `2` linearizable, `3` strong |
+| `timeout_ms` | decimal string | get only | Read timeout in milliseconds; `0` (default) uses the service default |
+| `data` | base64 string | put only | Entity bytes, standard base64 |
+
+Every uint64 in arguments and answers (`id`, `shard_id`, `version`,
+`leader_id`) is a decimal string: a JSON number loses precision above 2^53.
 
 Response:
 ```json
@@ -308,10 +327,10 @@ Response:
   "jsonrpc": "2.0",
   "id": 2,
   "result": {
-    "id": 100,
-    "version": 1,
+    "id": "100",
+    "version": "1",
     "timestamp": 1700000000,
-    "leaderID": 1
+    "leader_id": "1"
   }
 }
 ```
@@ -325,10 +344,10 @@ Request:
   "id": 3,
   "method": "tools/call",
   "params": {
-    "name": "quicbaas_get",
+    "name": "quicbaas_kv_get",
     "arguments": {
-      "entityType": "user",
-      "id": 100
+      "entity_type": "user",
+      "id": "100"
     }
   }
 }
@@ -340,14 +359,18 @@ Response:
   "jsonrpc": "2.0",
   "id": 3,
   "result": {
-    "id": 100,
+    "id": "100",
+    "found": true,
     "data": "eyJuYW1lIjoiSm9obiBEb2UiLCJlbWFpbCI6ImpvaG5AZXhhbXBsZS5jb20ifQ==",
-    "version": 1,
-    "timestamp": 1700000000,
-    "found": true
+    "version": "1",
+    "timestamp": 1700000000
   }
 }
 ```
+
+A missing entity answers `"found": false` with no `data`; any other service
+failure is a tool error, never a miss. `quicbaas_kv_delete` takes the same
+arguments as `quicbaas_kv_get` and answers `{"deleted": true, "timestamp": ...}`.
 
 ### Read Cluster Status Resource
 
@@ -452,7 +475,7 @@ Claude can interact with QuicBaaS through MCP:
 
 **Claude's Process:**
 1. Encodes user data as base64 JSON
-2. Calls `quicbaas_put` tool
+2. Calls `quicbaas_kv_put` tool
 3. Returns confirmation
 
 **User:** "What's the cluster status?"
@@ -469,7 +492,7 @@ Claude can interact with QuicBaaS through MCP:
 **Storing user data:**
 ```
 User: Store a user named Alice with email alice@example.com
-Claude: [Calls quicbaas_put]
+Claude: [Calls quicbaas_kv_put]
 Claude: I've stored the user data successfully.
 ```
 
@@ -566,10 +589,10 @@ def mcp_call(method, params=None):
 
 # Store data
 result = mcp_call("tools/call", {
-    "name": "quicbaas_put",
+    "name": "quicbaas_kv_put",
     "arguments": {
-        "entityType": "user",
-        "id": 100,
+        "entity_type": "user",
+        "id": "100",
         "data": "eyJuYW1lIjoiSm9obiJ9"
     }
 })

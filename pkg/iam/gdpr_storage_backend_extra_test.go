@@ -22,6 +22,7 @@ import (
 
 // GetConsent resolves the per-purpose index; DeleteConsent clears all indexes.
 func TestBackendConsentStorage_GetAndDelete(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendConsentStorage(kv, nil)
@@ -64,6 +65,7 @@ func TestBackendConsentStorage_GetAndDelete(t *testing.T) {
 
 // ListExportRequests filters by user/status and paginates.
 func TestBackendDataExportStorage_ListFilterPaginate(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendDataExportStorage(kv, nil)
@@ -104,6 +106,7 @@ func TestBackendDataExportStorage_ListFilterPaginate(t *testing.T) {
 
 // UpdateDeletionRequest overwrites; ListDeletionRequests filters and paginates.
 func TestBackendDeletionStorage_UpdateAndList(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendDeletionStorage(kv, nil)

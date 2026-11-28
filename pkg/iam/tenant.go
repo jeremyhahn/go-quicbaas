@@ -178,6 +178,98 @@ type DefaultTenantManager struct {
 	createdObservers []TenantCreatedObserver
 }
 
+// SelfRegistrationClaim asks for a tenant's unfinished registration.
+type SelfRegistrationClaim struct {
+	State  string        // SelfRegistrationFinishing or SelfRegistrationDiscarding
+	Holder string        // unique per finish or cleanup attempt
+	Lease  time.Duration // how long the claim holds without renewal
+	Now    time.Time     // the claim's clock; zero means time.Now()
+}
+
+// SelfRegistrationClaimer takes a durable, conditional claim on a tenant's
+// unfinished self-registration, so finish and cleanup, on any node, never
+// both act on it.
+type SelfRegistrationClaimer interface {
+	ClaimSelfRegistration(ctx context.Context, tenantID string, claim SelfRegistrationClaim) (*Tenant, error)
+}
+
+// selfRegistrationClaimStorage is the storage half of SelfRegistrationClaimer:
+// a store that can take the claim atomically.
+type selfRegistrationClaimStorage interface {
+	ClaimSelfRegistration(ctx context.Context, tenantID string, claim SelfRegistrationClaim) (*Tenant, error)
+}
+
+// The reasons a SelfRegistrationClaimError gives.
+const (
+	// SelfRegistrationClaimFinished: the tenant holds no unfinished
+	// registration (it completed, or the tenant is gone).
+	SelfRegistrationClaimFinished = "finished"
+	// SelfRegistrationClaimHeld: another holder's lease is live.
+	SelfRegistrationClaimHeld = "held"
+	// SelfRegistrationClaimUnsupported: the store cannot do a conditional
+	// write, so it cannot arbitrate the claim.
+	SelfRegistrationClaimUnsupported = "unsupported"
+)
+
+// SelfRegistrationClaimError reports a claim that was not taken.
+type SelfRegistrationClaimError struct {
+	TenantID string
+	// Reason is SelfRegistrationClaimFinished, SelfRegistrationClaimHeld or
+	// SelfRegistrationClaimUnsupported.
+	Reason string
+	// HeldBy is the state the live claim holds ("finishing" or
+	// "discarding") when Reason is held; empty when the claim lost repeated
+	// swaps and the holder is not known.
+	HeldBy string
+	// LeaseUntil is when the live claim lapses, when Reason is held.
+	LeaseUntil time.Time
+}
+
+// Error implements the error interface.
+func (e *SelfRegistrationClaimError) Error() string {
+	msg := fmt.Sprintf("iam: self-registration claim on tenant %q refused: %s", e.TenantID, e.Reason)
+	if e.Reason == SelfRegistrationClaimHeld && e.HeldBy != "" {
+		msg += " (state " + e.HeldBy + " until " + e.LeaseUntil.UTC().Format(time.RFC3339) + ")"
+	}
+	return msg
+}
+
+var _ SelfRegistrationClaimer = (*DefaultTenantManager)(nil)
+
+// ClaimSelfRegistration takes the claim through the storage, failing closed
+// with an "unsupported" error when the storage cannot take it atomically.
+func (m *DefaultTenantManager) ClaimSelfRegistration(ctx context.Context, tenantID string, claim SelfRegistrationClaim) (*Tenant, error) {
+	claimer, ok := m.storage.(selfRegistrationClaimStorage)
+	if !ok {
+		return nil, &SelfRegistrationClaimError{TenantID: tenantID, Reason: SelfRegistrationClaimUnsupported}
+	}
+	return claimer.ClaimSelfRegistration(ctx, tenantID, claim)
+}
+
+// decideSelfRegistrationClaim is the one rule both storages apply to the
+// record they read: it returns the tenant with the claim written in, or the
+// reason the claim is refused. It does not modify t.
+func decideSelfRegistrationClaim(t *Tenant, claim SelfRegistrationClaim) (*Tenant, error) {
+	if t.SelfRegistration == nil {
+		return nil, &SelfRegistrationClaimError{TenantID: t.ID, Reason: SelfRegistrationClaimFinished}
+	}
+	now := claim.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cur := t.SelfRegistration
+	if cur.State != "" && cur.Holder != claim.Holder && cur.LeaseUntil.After(now) {
+		return nil, &SelfRegistrationClaimError{TenantID: t.ID, Reason: SelfRegistrationClaimHeld, HeldBy: cur.State, LeaseUntil: cur.LeaseUntil}
+	}
+	next := *t
+	reg := *cur
+	reg.State = claim.State
+	reg.Holder = claim.Holder
+	reg.LeaseUntil = now.Add(claim.Lease).UTC()
+	next.SelfRegistration = &reg
+	return &next, nil
+}
+
 // AddSettingsObserver registers an observer notified after each successful
 // UpdateTenant. Call during server init before the manager is used
 // concurrently.
@@ -257,12 +349,13 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 	// Create tenant object
 	now := time.Now()
 	tenant := &Tenant{
-		ID:       tenantID,
-		Name:     opts.Name,
-		Settings: settings,
-		Quotas:   quotas,
-		Created:  now,
-		Updated:  now,
+		ID:               tenantID,
+		Name:             opts.Name,
+		Settings:         settings,
+		Quotas:           quotas,
+		Created:          now,
+		Updated:          now,
+		SelfRegistration: opts.SelfRegistration,
 	}
 
 	// Engine-side provisioning: create the tenant in the qrdb engine FIRST
@@ -433,6 +526,10 @@ func (m *DefaultTenantManager) UpdateTenant(ctx context.Context, id string, opts
 
 	if opts.Quotas != nil {
 		tenant.Quotas = *opts.Quotas
+	}
+
+	if opts.FinishSelfRegistration {
+		tenant.SelfRegistration = nil
 	}
 
 	tenant.Updated = time.Now()

@@ -54,6 +54,7 @@ func assertUserIDFieldRoundTrips[T any](t *testing.T, value T, key string, get f
 }
 
 func TestUserIDFields_JSONCarryTheIDAsADecimalString(t *testing.T) {
+	t.Parallel()
 	id := aboveFloat64Range
 
 	t.Run("AdminAssignment.UserID", func(t *testing.T) {

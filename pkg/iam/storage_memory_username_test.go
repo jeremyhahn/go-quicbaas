@@ -32,6 +32,7 @@ import (
 
 // TestMemoryStorage_CreateUser_RefusesADuplicateHandle pins the create rule.
 func TestMemoryStorage_CreateUser_RefusesADuplicateHandle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mem := NewMemoryStorage()
 
@@ -62,6 +63,7 @@ func TestMemoryStorage_CreateUser_RefusesADuplicateHandle(t *testing.T) {
 // TestMemoryStorage_CreateUser_HandleIsUniquePerTenant pins the scope: the same
 // handle in another tenant is a different person and must be allowed.
 func TestMemoryStorage_CreateUser_HandleIsUniquePerTenant(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mem := NewMemoryStorage()
 
@@ -81,6 +83,7 @@ func TestMemoryStorage_CreateUser_HandleIsUniquePerTenant(t *testing.T) {
 // does not invent a constraint the model does not have: a record carrying no
 // handle is not addressable by username, so two of them cannot collide.
 func TestMemoryStorage_CreateUser_AllowsRecordsWithNoHandle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mem := NewMemoryStorage()
 
@@ -96,6 +99,7 @@ func TestMemoryStorage_CreateUser_AllowsRecordsWithNoHandle(t *testing.T) {
 // update rule, which is the half a create-only check would leave open: two
 // accounts created legally could still be made to collide afterwards.
 func TestMemoryStorage_UpdateUser_RefusesTakingAnotherAccountsHandle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mem := NewMemoryStorage()
 
@@ -134,6 +138,7 @@ func TestMemoryStorage_UpdateUser_RefusesTakingAnotherAccountsHandle(t *testing.
 // already holds — which every update that does not touch the handle does — must
 // not collide with itself.
 func TestMemoryStorage_UpdateUser_KeepingItsOwnHandleIsNotACollision(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mem := NewMemoryStorage()
 

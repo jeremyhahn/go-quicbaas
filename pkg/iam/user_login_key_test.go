@@ -26,6 +26,7 @@ import (
 // TestRequireLoginKey pins which records can authenticate: one with an email
 // login key, or one bound to a certificate. Anything else is refused.
 func TestRequireLoginKey(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		user    *User
@@ -43,6 +44,7 @@ func TestRequireLoginKey(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			err := RequireLoginKey(tc.user)
 			if !tc.refused {
 				if err != nil {
@@ -64,6 +66,7 @@ func TestRequireLoginKey(t *testing.T) {
 // TestMemoryStorage_CreateUser_RefusesAPrincipalWithoutLoginKey proves the
 // refusal happens at creation and writes nothing.
 func TestMemoryStorage_CreateUser_RefusesAPrincipalWithoutLoginKey(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mem := NewMemoryStorage()
 

@@ -69,6 +69,7 @@ func (m *mockDEKProvisioner) isProvisioned(tenantID string) bool {
 // =============================================================================
 
 func TestCreateTenant_ProvisionsDEK(t *testing.T) {
+	t.Parallel()
 	storage := newMockTenantStorage()
 	dekProv := newMockDEKProvisioner()
 
@@ -91,6 +92,7 @@ func TestCreateTenant_ProvisionsDEK(t *testing.T) {
 }
 
 func TestCreateTenant_DEKProvisioningFailure_RollsBack(t *testing.T) {
+	t.Parallel()
 	storage := newMockTenantStorage()
 	dekProv := newMockDEKProvisioner()
 	dekProv.provisionErr = &DEKProvisionError{Message: "KMS unavailable"}
@@ -115,6 +117,7 @@ func TestCreateTenant_DEKProvisioningFailure_RollsBack(t *testing.T) {
 }
 
 func TestCreateTenant_NoDEKProvisioner_Succeeds(t *testing.T) {
+	t.Parallel()
 	storage := newMockTenantStorage()
 	mgr := NewDefaultTenantManager(storage)
 	// No DEK provisioner set
@@ -135,6 +138,7 @@ func TestCreateTenant_NoDEKProvisioner_Succeeds(t *testing.T) {
 // =============================================================================
 
 func TestDeleteTenant_DeprovisionsDEK(t *testing.T) {
+	t.Parallel()
 	storage := newMockTenantStorage()
 	dekProv := newMockDEKProvisioner()
 
@@ -161,6 +165,7 @@ func TestDeleteTenant_DeprovisionsDEK(t *testing.T) {
 }
 
 func TestDeleteTenant_DEKDeprovisioningFailure(t *testing.T) {
+	t.Parallel()
 	storage := newMockTenantStorage()
 	dekProv := newMockDEKProvisioner()
 
@@ -191,6 +196,7 @@ func TestDeleteTenant_DEKDeprovisioningFailure(t *testing.T) {
 }
 
 func TestDeleteTenant_NoDEKProvisioner_Succeeds(t *testing.T) {
+	t.Parallel()
 	storage := newMockTenantStorage()
 	mgr := NewDefaultTenantManager(storage)
 	// No DEK provisioner set
@@ -214,6 +220,7 @@ func TestDeleteTenant_NoDEKProvisioner_Succeeds(t *testing.T) {
 // =============================================================================
 
 func TestSetDEKProvisioner(t *testing.T) {
+	t.Parallel()
 	mgr := NewDefaultTenantManager(newMockTenantStorage())
 	assert.Nil(t, mgr.DEKProvisioner(), "should be nil before setting")
 
@@ -223,6 +230,7 @@ func TestSetDEKProvisioner(t *testing.T) {
 }
 
 func TestSetDEKProvisioner_Nil(t *testing.T) {
+	t.Parallel()
 	mgr := NewDefaultTenantManager(newMockTenantStorage())
 	mgr.SetDEKProvisioner(nil)
 	assert.Nil(t, mgr.DEKProvisioner(), "should be nil after setting nil")
@@ -233,6 +241,7 @@ func TestSetDEKProvisioner_Nil(t *testing.T) {
 // =============================================================================
 
 func TestCreateTenant_DEKFailure_RollsBackDatabaseProvisioner(t *testing.T) {
+	t.Parallel()
 	storage := newMockTenantStorage()
 	dekProv := newMockDEKProvisioner()
 	dekProv.provisionErr = &DEKProvisionError{Message: "DEK generation failed"}

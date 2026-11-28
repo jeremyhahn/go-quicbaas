@@ -27,6 +27,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -565,8 +566,41 @@ func (h *IAMHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 	RespondNoContent(w, r)
 }
 
+// revokeCallerCredentials ends the access and refresh credentials the
+// caller's bearer subject holds in its tenant, through the OIDC provider
+// that stored them. It writes the error response and returns false when
+// the provider is unavailable (503) or a credential could not be revoked
+// (500): a logout that left a credential usable must not report success.
+func (h *IAMHandler) revokeCallerCredentials(w http.ResponseWriter, r *http.Request, subject interfaces.Subject) bool {
+	oidcProvider, ok := h.server.service.(interface {
+		GetOIDCProvider(ctx context.Context) (*iam.OIDCProvider, error)
+	})
+	if !ok {
+		RespondIAMError(w, r, http.StatusServiceUnavailable,
+			NewIAMAPIError(ErrTemporarilyUnavailable, "credential revocation not available"))
+		return false
+	}
+	provider, err := oidcProvider.GetOIDCProvider(r.Context())
+	if err != nil || provider == nil {
+		RespondIAMError(w, r, http.StatusServiceUnavailable,
+			NewIAMAPIError(ErrTemporarilyUnavailable, "credential revocation not available"))
+		return false
+	}
+	if _, err := provider.RevokeSubjectCredentials(r.Context(), subject.TenantID, subject.ID); err != nil {
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "failed to revoke login credentials"))
+		return false
+	}
+	return true
+}
+
 // RevokeAllSessions handles DELETE /api/v1/iam/sessions - Revoke all of the
 // authenticated caller's sessions (logout everywhere).
+//
+// Without an except session it first ends the caller's access and refresh
+// credentials in its tenant, then deletes the caller's session records. It
+// refuses (503) when it cannot revoke credentials, and a revocation failure
+// (500) leaves the session records in place.
 func (h *IAMHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -630,6 +664,9 @@ func (h *IAMHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		if !h.revokeCallerCredentials(w, r, subject) {
+			return
+		}
 		err = mgr.RevokeAllForUser(ctx, callerID, subject.TenantID)
 		if err != nil {
 			h.server.handleServiceError(w, r, err)

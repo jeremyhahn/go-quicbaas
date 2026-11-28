@@ -126,6 +126,7 @@ func rawCredentialID(seed byte) []byte {
 // and deleting them all must leave the account empty. A divergence between the
 // two spellings is exactly the failure the issue reported.
 func TestDeleteCredential_RoundTripsEveryListedID(t *testing.T) {
+	t.Parallel()
 	mgr, wt := newCredentialAdminManager(t)
 	ctx := context.Background()
 
@@ -151,6 +152,7 @@ func TestDeleteCredential_RoundTripsEveryListedID(t *testing.T) {
 // decode was written for: an id pasted from a tool that pads base64url names
 // the same credential as the canonical unpadded listing does.
 func TestDeleteCredential_AcceptsPaddedSpellingOfAListedID(t *testing.T) {
+	t.Parallel()
 	mgr, wt := newCredentialAdminManager(t)
 
 	// 31 bytes so the canonical encoding needs padding to round out.
@@ -174,6 +176,7 @@ func TestDeleteCredential_AcceptsPaddedSpellingOfAListedID(t *testing.T) {
 // id that is well-formed and owned by nobody must be a
 // WebAuthnCredentialNotFoundError naming the account, not a store failure.
 func TestDeleteCredential_UnknownIDIsTypedNotFound(t *testing.T) {
+	t.Parallel()
 	mgr, wt := newCredentialAdminManager(t)
 	saveCredential(t, wt, rawCredentialID(0x10))
 
@@ -198,6 +201,7 @@ func TestDeleteCredential_UnknownIDIsTypedNotFound(t *testing.T) {
 // a value that is not base64url at all is a 400-class id error, distinct from
 // not-found, so an operator can tell a typo from a missing credential.
 func TestDeleteCredential_MalformedIDIsTypedIDError(t *testing.T) {
+	t.Parallel()
 	mgr, wt := newCredentialAdminManager(t)
 	saveCredential(t, wt, rawCredentialID(0x10))
 
@@ -219,6 +223,7 @@ func TestDeleteCredential_MalformedIDIsTypedIDError(t *testing.T) {
 // indistinguishable from "that credential is already gone". The 24-character
 // fragment below is the exact shape the issue reported.
 func TestDeleteCredential_TruncatedIDNamesTheFullID(t *testing.T) {
+	t.Parallel()
 	mgr, wt := newCredentialAdminManager(t)
 	rawID := rawCredentialID(0x10)
 	saveCredential(t, wt, rawID)
@@ -256,6 +261,7 @@ func TestDeleteCredential_TruncatedIDNamesTheFullID(t *testing.T) {
 // registered credential names every candidate, because naming one would send
 // the operator to an arbitrary credential.
 func TestDeleteCredential_TruncatedIDPrefixingSeveralCredentialsReportsThemAll(t *testing.T) {
+	t.Parallel()
 	mgr, wt := newCredentialAdminManager(t)
 
 	// Two credentials sharing their first four bytes; the fragment below
@@ -293,6 +299,7 @@ func TestDeleteCredential_TruncatedIDPrefixingSeveralCredentialsReportsThemAll(t
 // TestDeleteCredentials_BulkRemovesEverything pins the bulk verb the operator
 // falls back on, so the per-id fix cannot quietly change it.
 func TestDeleteCredentials_BulkRemovesEverything(t *testing.T) {
+	t.Parallel()
 	mgr, wt := newCredentialAdminManager(t)
 	for _, seed := range []byte{0x10, 0x40} {
 		saveCredential(t, wt, rawCredentialID(seed))
@@ -315,6 +322,7 @@ func TestDeleteCredentials_BulkRemovesEverything(t *testing.T) {
 // recovery contract: an account that never registered a passkey reports zero
 // removals rather than failing, so the cascade callers need no special case.
 func TestDeleteCredentials_UnregisteredAccountIsNotAnError(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newCredentialAdminManager(t)
 
 	deleted, err := mgr.DeleteCredentials(
@@ -331,6 +339,7 @@ func TestDeleteCredentials_UnregisteredAccountIsNotAnError(t *testing.T) {
 // the operator surface is allowed to disclose: enough to recognise a key, and
 // never the credential public key.
 func TestListCredentials_ProjectsAuthenticatorContextWithoutKeyMaterial(t *testing.T) {
+	t.Parallel()
 	mgr, wt := newCredentialAdminManager(t)
 	rawID := rawCredentialID(0x10)
 	saveCredential(t, wt, rawID)
@@ -359,6 +368,7 @@ func TestListCredentials_ProjectsAuthenticatorContextWithoutKeyMaterial(t *testi
 // half of the same contract: never registered and nothing left are the same
 // operator-visible state.
 func TestListCredentials_UnregisteredAccountIsEmptyNotAnError(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newCredentialAdminManager(t)
 
 	creds, err := mgr.ListCredentials(
@@ -375,6 +385,7 @@ func TestListCredentials_UnregisteredAccountIsEmptyNotAnError(t *testing.T) {
 // owner resolution: the credential store is keyed by email, so an empty one
 // must fail rather than operate on an empty key.
 func TestCredentialVerbs_RejectEmptyEmail(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newCredentialAdminManager(t)
 	ctx := context.Background()
 
@@ -395,6 +406,7 @@ func TestCredentialVerbs_RejectEmptyEmail(t *testing.T) {
 // rendering, including the nil receiver every typed error in this package
 // tolerates.
 func TestWebAuthnCredentialTruncatedIDError_Message(t *testing.T) {
+	t.Parallel()
 	var nilErr *WebAuthnCredentialTruncatedIDError
 	if msg := nilErr.Error(); msg == "" {
 		t.Error("nil receiver produced an empty message")

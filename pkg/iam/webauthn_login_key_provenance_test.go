@@ -185,6 +185,7 @@ func assertionJSON(t *testing.T, auth *xkmswebauthn.MockAuthenticator, challenge
 // rejection test below could pass because the harness is broken rather than
 // because the invariant holds.
 func TestWebAuthnLogin_EnrolledKeyAuthenticates(t *testing.T) {
+	t.Parallel()
 	h := newProvenanceHarness(t)
 	challenge, sessionID := h.challenge(t)
 
@@ -209,6 +210,7 @@ func TestWebAuthnLogin_EnrolledKeyAuthenticates(t *testing.T) {
 // matching COSE public key in the request metadata. The only thing they do not
 // have is the enrolled key. That must be enough to refuse them.
 func TestWebAuthnLogin_ClientSuppliedCOSEKeyCannotAuthenticate(t *testing.T) {
+	t.Parallel()
 	h := newProvenanceHarness(t)
 
 	attacker, err := xkmswebauthn.NewMockAuthenticator(provenanceRPID,
@@ -245,6 +247,7 @@ func TestWebAuthnLogin_ClientSuppliedCOSEKeyCannotAuthenticate(t *testing.T) {
 // without it. Both runs are rejected, and the enrolled key still succeeds with
 // a bogus key present — so the field has no effect in either direction.
 func TestWebAuthnLogin_COSEKeyMetadataChangesNothing(t *testing.T) {
+	t.Parallel()
 	attackerRejectedWithout := func(t *testing.T) {
 		h := newProvenanceHarness(t)
 		attacker, err := xkmswebauthn.NewMockAuthenticator(provenanceRPID,
@@ -289,6 +292,7 @@ func TestWebAuthnLogin_COSEKeyMetadataChangesNothing(t *testing.T) {
 // verifier's own identity check: an assertion for some other credential cannot
 // be presented against this factor even if it verifies on its own terms.
 func TestWebAuthnLogin_CredentialIDMustMatchTheEnrolledFactor(t *testing.T) {
+	t.Parallel()
 	h := newProvenanceHarness(t)
 	challenge, sessionID := h.challenge(t)
 

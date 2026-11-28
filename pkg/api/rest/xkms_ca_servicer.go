@@ -193,12 +193,18 @@ func (a *xkmsCAServicer) applyKeypairSPIFFE(certReq *xkmssdk.TrustedCACertificat
 // operation, folding in the operator-configured SPIFFE trust domain, the
 // request tenant, and the SPIFFE workload kind derived from the certificate
 // profile. When the trust domain or tenant is empty the CA omits the SPIFFE
-// SAN (single-domain / pre-broker mode).
+// SAN (single-domain / pre-broker mode). The fleet-node profile is translated
+// by service.SignProfileUsage into a clientAuth certificate under no xkms
+// profile, keeping kind svc.
 func (a *xkmsCAServicer) signOptionsWithSPIFFE(profile string, validityDays int, tenantID string) *xkmssdk.TrustedCASignOptions {
+	xkmsProfile, extKeyUsage := service.SignProfileUsage(profile)
 	opts := &xkmssdk.TrustedCASignOptions{
-		Profile:      profile,
+		Profile:      xkmsProfile,
 		ValidityDays: validityDays,
 		TenantID:     tenantID,
+	}
+	if extKeyUsage != nil {
+		opts.ExtKeyUsage = extKeyUsage
 	}
 	if a.spiffeTrustDomain != "" && tenantID != "" {
 		opts.SPIFFETrustDomain = a.spiffeTrustDomain

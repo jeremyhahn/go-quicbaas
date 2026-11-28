@@ -100,7 +100,6 @@ iam:
   spiffe_trust_domain: quicbaas.integration
   piv_login:
     enabled: true
-    ca_file: /etc/quicbaas/certs/ca.crt
     # The integration fixtures authenticate with ordinary PKI client
     # certificates: there is no smartcard, so no slot attestation exists to
     # verify. This is the explicit acknowledgement of that — PIV login proceeds

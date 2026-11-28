@@ -97,6 +97,7 @@ func assertNothingPersisted(t *testing.T, creds xkmswebauthn.CredentialStore, fa
 }
 
 func TestWriteThroughSave_RefusesAccountAlreadyDeleting(t *testing.T) {
+	t.Parallel()
 	users := xkmswebauthn.NewMemoryUserStore()
 	seedUserInState(t, users, 42, LifecycleDeleting)
 	wt, creds, factors := newDeletingFixture(t, users)
@@ -118,6 +119,7 @@ func TestWriteThroughSave_RefusesAccountAlreadyDeleting(t *testing.T) {
 }
 
 func TestWriteThroughSave_RollsBackWhenDeletionStartsMidRegistration(t *testing.T) {
+	t.Parallel()
 	users := xkmswebauthn.NewMemoryUserStore()
 	seedUserInState(t, users, 42, LifecycleActive)
 	wt, creds, factors := newDeletingFixture(t, users)
@@ -137,6 +139,7 @@ func TestWriteThroughSave_RollsBackWhenDeletionStartsMidRegistration(t *testing.
 }
 
 func TestWriteThroughSave_RollsBackWhenAccountRemovedMidRegistration(t *testing.T) {
+	t.Parallel()
 	users := xkmswebauthn.NewMemoryUserStore()
 	seedUserInState(t, users, 42, LifecycleActive)
 	wt, creds, factors := newDeletingFixture(t, users)
@@ -157,6 +160,7 @@ func TestWriteThroughSave_RollsBackWhenAccountRemovedMidRegistration(t *testing.
 }
 
 func TestWriteThroughSave_PendingAccountStillRegisters(t *testing.T) {
+	t.Parallel()
 	// Invite activation enrolls the first passkey of a PENDING account; only
 	// deletion is refused here.
 	users := xkmswebauthn.NewMemoryUserStore()
@@ -176,6 +180,7 @@ func TestWriteThroughSave_PendingAccountStillRegisters(t *testing.T) {
 }
 
 func TestWriteThroughSave_UnreadableAccountFailsClosed(t *testing.T) {
+	t.Parallel()
 	readErr := errors.New("user store unavailable")
 	users := &unreadableUserStore{UserStore: xkmswebauthn.NewMemoryUserStore(), err: readErr}
 	wt, creds, factors := newDeletingFixture(t, users)
@@ -194,6 +199,7 @@ func TestWriteThroughSave_UnreadableAccountFailsClosed(t *testing.T) {
 }
 
 func TestWriteThroughSave_UnreadableAccountAfterWriteRollsBackNewCredential(t *testing.T) {
+	t.Parallel()
 	readErr := errors.New("user store unavailable")
 	inner := xkmswebauthn.NewMemoryUserStore()
 	seedUserInState(t, inner, 42, LifecycleActive)
@@ -212,6 +218,7 @@ func TestWriteThroughSave_UnreadableAccountAfterWriteRollsBackNewCredential(t *t
 }
 
 func TestWebAuthnRegistrantErrors_Messages(t *testing.T) {
+	t.Parallel()
 	deleting := (&WebAuthnRegistrantDeletingError{CredentialID: "abc", UserID: 7, Compensated: true}).Error()
 	if deleting != "iam.webauthn.registration: refused, the account is being deleted (user 7) (credential abc); the credential was rolled back" {
 		t.Errorf("deleting message = %q", deleting)

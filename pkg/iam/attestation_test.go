@@ -35,6 +35,7 @@ func testHardwareAttestation(aaguid string) *AttestationResult {
 
 // TestAttestLevel_IsHardware checks the single predicate every policy keys on.
 func TestAttestLevel_IsHardware(t *testing.T) {
+	t.Parallel()
 	if !AttestLevelHardware.IsHardware() {
 		t.Error("AttestLevelHardware.IsHardware() = false")
 	}
@@ -49,6 +50,7 @@ func TestAttestLevel_IsHardware(t *testing.T) {
 // an unanswered question, and treating it as a default would reintroduce the
 // ambiguity this type removes.
 func TestAttestLevel_Valid(t *testing.T) {
+	t.Parallel()
 	for _, level := range []AttestLevel{AttestLevelNone, AttestLevelSoftware, AttestLevelHardware} {
 		if !level.Valid() {
 			t.Errorf("%q.Valid() = false, want true", level)
@@ -65,6 +67,7 @@ func TestAttestLevel_Valid(t *testing.T) {
 // on: an absent proof must never satisfy a hardware requirement, and reading a
 // nil result must not panic.
 func TestAttestationResult_NilIsNotHardware(t *testing.T) {
+	t.Parallel()
 	var result *AttestationResult
 
 	if result.IsHardware() {
@@ -86,6 +89,7 @@ func TestAttestationResult_NilIsNotHardware(t *testing.T) {
 
 // TestAttestationResult_Accessors covers the populated case.
 func TestAttestationResult_Accessors(t *testing.T) {
+	t.Parallel()
 	result := testHardwareAttestation("cb69481e")
 
 	if !result.IsHardware() {
@@ -109,6 +113,7 @@ func TestAttestationResult_Accessors(t *testing.T) {
 // wrong AND what the operator should do about it — the "operator-facing
 // reason" #381 asks for.
 func TestAttestationRequiredError_Message(t *testing.T) {
+	t.Parallel()
 	none := (&AttestationRequiredError{
 		Operation: "webauthn enrollment",
 		Required:  AttestLevelHardware,
@@ -139,6 +144,7 @@ func TestAttestationRequiredError_Message(t *testing.T) {
 
 // TestAttestationUnprovenError_Message covers the wiring-defect error.
 func TestAttestationUnprovenError_Message(t *testing.T) {
+	t.Parallel()
 	msg := (&AttestationUnprovenError{Operation: "piv login"}).Error()
 	if !strings.Contains(msg, "piv login") || !strings.Contains(msg, "never asserted by the caller") {
 		t.Errorf("unexpected message: %s", msg)
@@ -156,6 +162,7 @@ func TestAttestationUnprovenError_Message(t *testing.T) {
 // TestAttestLevelOrNone maps an absent result onto a nameable level so refusal
 // messages never print an empty string.
 func TestAttestLevelOrNone(t *testing.T) {
+	t.Parallel()
 	if got := attestLevelOrNone(nil); got != AttestLevelNone {
 		t.Errorf("attestLevelOrNone(nil) = %q, want %q", got, AttestLevelNone)
 	}
@@ -169,6 +176,7 @@ func TestAttestLevelOrNone(t *testing.T) {
 
 // TestAttestLevel_String keeps the level printable for logs and claims.
 func TestAttestLevel_String(t *testing.T) {
+	t.Parallel()
 	for level, want := range map[AttestLevel]string{
 		AttestLevelHardware: "hardware",
 		AttestLevelSoftware: "software",
@@ -193,8 +201,10 @@ func TestAttestLevel_String(t *testing.T) {
 // Those surfaces proved nothing, so a value they supplied would be a forged
 // claim wearing the field name login policy trusts.
 func TestValidateAuthFactorMetadata_RefusesAttestationFields(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{AuthFactorMetadataAttestLevel, AuthFactorMetadataAttestAAGUID} {
 		t.Run(field, func(t *testing.T) {
+			t.Parallel()
 			err := ValidateAuthFactorMetadata(map[string]string{field: "hardware"})
 			if err == nil {
 				t.Fatalf("a caller-supplied %s was accepted", field)
@@ -216,12 +226,14 @@ func TestValidateAuthFactorMetadata_RefusesAttestationFields(t *testing.T) {
 // TestValidateAuthFactorMetadata_AllowsOrdinaryMetadata keeps the refusal
 // narrow.
 func TestValidateAuthFactorMetadata_AllowsOrdinaryMetadata(t *testing.T) {
+	t.Parallel()
 	for name, metadata := range map[string]map[string]string{
 		"nil":      nil,
 		"empty":    {},
 		"ordinary": {"tenant_id": "acme", "aaguid": "cb69481e", "transports": "usb"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			if err := ValidateAuthFactorMetadata(metadata); err != nil {
 				t.Fatalf("ordinary metadata was refused: %v", err)
 			}
@@ -242,6 +254,7 @@ func TestValidateAuthFactorMetadata_AllowsOrdinaryMetadata(t *testing.T) {
 // AttestationRecorder records: the proven level and model when there is one,
 // and qrdb's Unattested — never a guess — when there is not.
 func TestVerifiedAttestationFor(t *testing.T) {
+	t.Parallel()
 	if got := VerifiedAttestationFor(nil, "aabb"); got != qrdbsdk.Unattested() {
 		t.Errorf("nil result = %+v, want Unattested", got)
 	}
@@ -268,6 +281,7 @@ func TestVerifiedAttestationFor(t *testing.T) {
 // qrdb's prefix rule: any attest_* key, in any case, is refused, and a key that
 // merely starts with "attestation" is not.
 func TestValidateAuthFactorMetadata_ReservedPrefix(t *testing.T) {
+	t.Parallel()
 	for _, key := range []string{"attest_level", "ATTEST_LEVEL", "attest_aaguid", "attest_future_field", "Attest_X"} {
 		err := ValidateAuthFactorMetadata(map[string]string{key: "hardware"})
 		var reserved *AuthFactorAttestationMetadataError

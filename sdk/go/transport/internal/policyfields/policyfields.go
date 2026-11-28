@@ -48,6 +48,74 @@ func Refuse(op, transport string, request map[string]interface{}) error {
 		"; describe the policy in spec_yaml instead")
 }
 
+// RefuseUnstorable returns an INVALID_INPUT error naming the first field of
+// a policy create or update request that the policy engine cannot store, or
+// nil. Unlike Refuse it admits plain structured rules: a rule's name,
+// effect, priority and its action and resource patterns. It refuses
+// policy-level conditions and targets, a rule's subjects, conditions and
+// description, matcher negate, resource type and resource attributes, and a
+// policy-level effect other than deny or enabled other than true.
+func RefuseUnstorable(op, transport string, request map[string]interface{}) error {
+	fields, err := normalize(request)
+	if err != nil {
+		return errors.Wrap(err, errors.CodeInvalidInput, op, "policy request is not JSON-encodable")
+	}
+	field := unstorableField(fields)
+	if field == "" {
+		return nil
+	}
+	if field == "effect" || field == "enabled" {
+		return errors.NewInvalidInput(op, field+" cannot be sent over "+transport+
+			"; stored policies are enabled and deny by default")
+	}
+	return errors.NewInvalidInput(op, field+" cannot be sent over "+transport+
+		"; the policy engine cannot store it")
+}
+
+// unstorableField returns the path of the first field the engine cannot
+// store, or "".
+func unstorableField(fields map[string]interface{}) string {
+	if field := conditionsField("conditions", fields["conditions"]); field != "" {
+		return field
+	}
+	if len(list(fields["targets"])) > 0 {
+		return "targets"
+	}
+	for i, raw := range list(fields["rules"]) {
+		rule, _ := raw.(map[string]interface{})
+		path := "rules[" + strconv.Itoa(i) + "]"
+		if len(list(rule["subjects"])) > 0 {
+			return path + ".subjects"
+		}
+		if field := conditionsField(path+".conditions", rule["conditions"]); field != "" {
+			return field
+		}
+		if description, _ := rule["description"].(string); description != "" {
+			return path + ".description"
+		}
+		for j, a := range list(rule["actions"]) {
+			action, _ := a.(map[string]interface{})
+			if action["negate"] == true {
+				return path + ".actions[" + strconv.Itoa(j) + "].negate"
+			}
+		}
+		for j, r := range list(rule["resources"]) {
+			resource, _ := r.(map[string]interface{})
+			at := path + ".resources[" + strconv.Itoa(j) + "]"
+			if typ, _ := resource["type"].(string); typ != "" {
+				return at + ".type"
+			}
+			if attributes, _ := resource["attributes"].(map[string]interface{}); len(attributes) > 0 {
+				return at + ".attributes"
+			}
+			if resource["negate"] == true {
+				return at + ".negate"
+			}
+		}
+	}
+	return policyLevelField(fields)
+}
+
 // normalize round-trips request through JSON so typed SDK values held in the
 // map (for example []iam.Rule) are read as generic slices and maps.
 func normalize(request map[string]interface{}) (map[string]interface{}, error) {

@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -225,6 +226,21 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A user with no roles authenticates into an authorization vacuum: every
+	// request it makes is denied, and nothing says why. REST refuses it
+	// before anything is written rather than accept it silently (#75); a
+	// blank name is no role either. The shared field checks run first so a
+	// malformed request is still refused for what is malformed about it.
+	if err := iam.ValidateCreateUserOptions(tenantID, opts); err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+	if !hasNamedRole(req.Roles) {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "at least one role is required"))
+		return
+	}
+
 	// The user, its invite and the rollback of a create that cannot complete
 	// all live in the service layer, shared with every other transport. The
 	// token is minted by go-qrdb and returned exactly once, here.
@@ -300,6 +316,16 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		InviteExpiresAt: invite.ExpiresAt,
 		InviteURL:       inviteURL,
 	})
+}
+
+// hasNamedRole reports whether roles names at least one role.
+func hasNamedRole(roles []string) bool {
+	for _, role := range roles {
+		if strings.TrimSpace(role) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // GetUser handles GET /api/v1/tenants/{tenant_id}/users/{user_id} - Get a specific user.

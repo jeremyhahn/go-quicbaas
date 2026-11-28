@@ -76,7 +76,7 @@ func newMockSessionServer(t *testing.T, svc SessionService) *SessionServer {
 	t.Helper()
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
 	require.NoError(t, err)
-	return NewSessionServer(svc, userIDCallerAccounts{}, log)
+	return NewSessionServer(svc, userIDCallerAccounts{}, log).WithCredentialRevoker(&recordingCredentialRevoker{})
 }
 
 // sessionOwnedBy answers GetSession with a session of the given owner, so a

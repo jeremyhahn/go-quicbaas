@@ -136,6 +136,7 @@ func (r *fakeRoleResolver) RoleClient(context.Context) (qrdbtransport.RoleClient
 var _ RoleClientResolver = (*fakeRoleResolver)(nil)
 
 func TestQRDBRoleStorage_ClientNotConfigured(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Nil resolver: every call fails closed with a configuration error.
@@ -159,6 +160,7 @@ func TestQRDBRoleStorage_ClientNotConfigured(t *testing.T) {
 }
 
 func TestQRDBRoleStorage_CreateRole(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Happy path: the broker ID is passed straight through (single ID space).
@@ -185,6 +187,7 @@ func TestQRDBRoleStorage_CreateRole(t *testing.T) {
 }
 
 func TestQRDBRoleStorage_GetRole(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Happy path: the transport role projects onto the broker model.
@@ -206,6 +209,7 @@ func TestQRDBRoleStorage_GetRole(t *testing.T) {
 }
 
 func TestQRDBRoleStorage_UpdateRole(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	fc := &fakeRoleClient{}
@@ -227,6 +231,7 @@ func TestQRDBRoleStorage_UpdateRole(t *testing.T) {
 }
 
 func TestQRDBRoleStorage_DeleteRole(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	fc := &fakeRoleClient{}
@@ -242,6 +247,7 @@ func TestQRDBRoleStorage_DeleteRole(t *testing.T) {
 }
 
 func TestQRDBRoleStorage_ListRoles(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	fc := &fakeRoleClient{listResp: &qrdbtransport.ListRolesResponse{
@@ -273,6 +279,7 @@ func TestQRDBRoleStorage_ListRoles(t *testing.T) {
 // old offset to page translation, which answered offset 3 with limit 2 with
 // page 2 whole (roles 2 and 3) instead of the window starting at role 3.
 func TestQRDBRoleStorage_ListRoles_UnalignedOffset(t *testing.T) {
+	t.Parallel()
 	role := func(i int) *qrdbtransport.Role {
 		return &qrdbtransport.Role{ID: "r" + strconv.Itoa(i), Name: "role" + strconv.Itoa(i), TenantID: "t1"}
 	}
@@ -292,6 +299,7 @@ func TestQRDBRoleStorage_ListRoles_UnalignedOffset(t *testing.T) {
 }
 
 func TestQRDBRoleStorage_ListRoles_SecondPageErrorIsMapped(t *testing.T) {
+	t.Parallel()
 	fc := &fakeRoleClient{
 		listPages: map[int][]*qrdbtransport.Role{2: {{ID: "r2"}, {ID: "r3"}}},
 		listErr:   errors.New("scan failed"),
@@ -306,16 +314,19 @@ func TestQRDBRoleStorage_ListRoles_SecondPageErrorIsMapped(t *testing.T) {
 }
 
 func TestTransportRoleToIAM_Nil(t *testing.T) {
+	t.Parallel()
 	// A nil transport role projects to a nil broker role (no panic).
 	assert.Nil(t, transportRoleToIAM(nil))
 }
 
 func TestMapQRDBRoleError_Nil(t *testing.T) {
+	t.Parallel()
 	// A nil input error is passed through as nil.
 	assert.NoError(t, mapQRDBRoleError("op", nil))
 }
 
 func TestMapQRDBRoleError_InvalidPermission(t *testing.T) {
+	t.Parallel()
 	// qrdb's invalid-permission rejection is a client-input error: it must be
 	// classified as ErrInvalidInput (-> 400 / InvalidArgument), never internal.
 	src := &qrdbrole.InvalidPermissionError{Permission: "read"}
@@ -331,6 +342,7 @@ func TestMapQRDBRoleError_InvalidPermission(t *testing.T) {
 }
 
 func TestMapQRDBRoleError_Validation(t *testing.T) {
+	t.Parallel()
 	// qrdb role request validation failures are client-input errors too.
 	src := &qrdbrole.ValidationError{Field: "name", Reason: "empty"}
 	err := mapQRDBRoleError("update", src)

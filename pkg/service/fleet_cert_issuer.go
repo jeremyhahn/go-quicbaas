@@ -62,17 +62,17 @@ type FleetNodeCertificateSubject struct {
 	// identifier, which the server consumes as the daemon's tenant claim.
 	Organization string
 
-	// OrganizationalUnit sets the X.509 OU= value. Empty falls back to
-	// "agents" — the server rejects certificates that are not stamped with
-	// this OU (defence-in-depth against operator misuse of a client cert
-	// that was minted for another purpose).
+	// OrganizationalUnit sets the X.509 OU= value. Empty falls back to the
+	// tenant identifier: the subject OU carries the tenant on every layer
+	// (#1388), and the register handler reads the tenant from it and refuses
+	// an OU that disagrees with the request or the SPIFFE SAN.
 	OrganizationalUnit string
 }
 
 // FleetNodeCertificateRequest captures the inputs to IssueFleetNodeCertificate.
 type FleetNodeCertificateRequest struct {
 	// TenantID is the tenant the daemon serves. Required. Encoded into the
-	// certificate's Organization field so the server can extract the tenant
+	// certificate's OU (and Organization) fields so the server can extract the tenant
 	// claim from the mTLS peer certificate.
 	TenantID string
 
@@ -99,12 +99,10 @@ type FleetNodeCertificateRequest struct {
 	// spiffe://<trust-domain>/tenant/<TenantID>/svc/<CommonName>.
 	//
 	// That SAN is not decoration: go-qrdb derives an mTLS identity's TENANT
-	// from it and falls back to the first Subject OU when it is absent
-	// (go-qrdb pkg/auth MTLSAuthenticator.TenantFromCert). Every fleet node
-	// certificate carries OU=fleet nodes, so a certificate issued without the SAN
-	// authenticates into a phantom tenant literally named "agents" -- no
-	// enrollment in the real tenant can ever authorize it. A caller that needs
-	// the issued identity to hold authority MUST set this.
+	// from it, and the OU (the tenant too) must agree with it (go-qrdb#777).
+	// Its kind, svc, is what marks the certificate as an agent's (ruling
+	// 62(a)). A caller that needs the issued identity to hold authority MUST
+	// set this.
 	//
 	// Empty omits the SAN, which is correct only for a certificate used purely
 	// as a TLS credential and never as an authorization principal.
@@ -169,13 +167,6 @@ type FleetNodeCertIssuer interface {
 // deploy-service UX (operators should not have to re-deploy every week).
 const DefaultFleetNodeCertValidityDays = 365
 
-// DefaultFleetNodeCertOU is the Organizational Unit stamped on fleet node certs when
-// the caller does not override it. The control plane's register handler requires
-// this OU and rejects any other value — a belt-and-braces check that the
-// certificate was minted for fleet node authentication and not repurposed from a
-// cert the same CA issued for a different role.
-const DefaultFleetNodeCertOU = "agents"
-
 // XKMSFleetNodeCertIssuer implements FleetNodeCertIssuer on top of the server-
 // embedded xkmssdk.TrustedCA. The CA is injected through the constructor so
 // unit tests can substitute a stub without touching disk.
@@ -215,9 +206,11 @@ func (i *XKMSFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context,
 		org = req.TenantID
 	}
 
+	// The subject OU carries the tenant on every layer (#1388, owner
+	// ruling f518455), and must agree with the SPIFFE SAN (go-qrdb#777).
 	ou := strings.TrimSpace(req.Subject.OrganizationalUnit)
 	if ou == "" {
-		ou = DefaultFleetNodeCertOU
+		ou = req.TenantID
 	}
 
 	validity := req.ValidityDays
@@ -394,7 +387,8 @@ func NewSDKFleetNodeCertIssuer(ca xkmstransport.CAService) (*SDKFleetNodeCertIss
 
 // IssueFleetNodeCertificate implements FleetNodeCertIssuer.IssueFleetNodeCertificate by
 // creating the fleet node's key pair at the point of custody and asking the CA
-// service to sign a CSR for it.
+// service to sign a CSR for it under the FleetNodeCertProfile profile, which
+// the server's CA adapters sign as a TLS client certificate with kind svc.
 //
 // It does NOT call CAService.IssueCertificate, and it must not: that route
 // generates inside the go-xkms keystore, where the key is a non-exportable
@@ -415,6 +409,10 @@ func NewSDKFleetNodeCertIssuer(ca xkmstransport.CAService) (*SDKFleetNodeCertIss
 // into the signing options for the request's TenantID (pkg/server
 // caServiceAdapter.signOptionsWithSPIFFE), so a client cannot name the trust
 // domain its certificate is bound under.
+//
+// The returned certificate is checked against the fleet enrollment identity
+// rule (CheckFleetNodeCertIdentity), and a provider that cannot issue a
+// svc-kind tenant SPIFFE SAN gets *FleetNodeCertKindUnavailableError.
 func (i *SDKFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, req *FleetNodeCertificateRequest) (*IssuedFleetNodeCertificate, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
@@ -431,13 +429,14 @@ func (i *SDKFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, 
 	}
 
 	// The OU is load-bearing, not decorative: the control plane's fleet node
-	// register handler accepts DefaultFleetNodeCertOU and nothing else. The
-	// IssueCertificate path this issuer used to take could not carry it at all
-	// -- xkmstransport.IssueCertificateRequest has no OU field -- so a
-	// certificate obtained that way was unusable even when it was issued.
+	// register handler reads the tenant from it. The IssueCertificate path
+	// this issuer used to take could not carry it at all --
+	// xkmstransport.IssueCertificateRequest has no OU field.
+	// The subject OU carries the tenant on every layer (#1388, owner
+	// ruling f518455), and must agree with the SPIFFE SAN (go-qrdb#777).
 	ou := strings.TrimSpace(req.Subject.OrganizationalUnit)
 	if ou == "" {
-		ou = DefaultFleetNodeCertOU
+		ou = req.TenantID
 	}
 
 	validity := req.ValidityDays
@@ -478,7 +477,7 @@ func (i *SDKFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, 
 
 	resp, err := i.ca.SignCSR(ctx, &xkmstransport.SignCSRRequest{
 		CSRPEM:       csrPEM,
-		Profile:      "client",
+		Profile:      FleetNodeCertProfile,
 		ValidityDays: validity,
 		TenantID:     req.TenantID,
 	})
@@ -521,6 +520,10 @@ func (i *SDKFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, 
 	if parseErr != nil {
 		keyBuf.Destroy()
 		return nil, &FleetNodeCertIssueError{Op: "parse issued certificate", Cause: parseErr}
+	}
+	if err := CheckFleetNodeCertIdentity(parsed, req.TenantID); err != nil {
+		keyBuf.Destroy()
+		return nil, err
 	}
 
 	return &IssuedFleetNodeCertificate{
@@ -616,6 +619,52 @@ func (e *FleetNodeCertIssueError) Error() string {
 // Unwrap exposes the underlying cause for errors.Is / errors.As.
 func (e *FleetNodeCertIssueError) Unwrap() error {
 	return e.Cause
+}
+
+// FleetNodeCertKindUnavailableError reports that the certificate provider
+// issued a fleet node certificate the fleet enrollment endpoint would refuse:
+// its tenant SPIFFE SAN is missing, names another tenant, or names a kind
+// other than svc. A provider that does not honour the fleet-node profile, or
+// issues another kind, is refused before anything is installed rather than
+// install a daemon that can never enroll.
+type FleetNodeCertKindUnavailableError struct {
+	// TenantID is the tenant the node was being deployed into.
+	TenantID string
+	// CertificateTenant and Kind are what the issued SAN named; empty when
+	// it had none.
+	CertificateTenant string
+	Kind              string
+	// Cause is the SAN parse error, when there was one.
+	Cause error
+}
+
+func (e *FleetNodeCertKindUnavailableError) Error() string {
+	msg := fmt.Sprintf("agent cert issuer: the certificate provider cannot issue a fleet node certificate for tenant %q: issued SPIFFE tenant %q kind %q, want kind %q",
+		e.TenantID, e.CertificateTenant, e.Kind, qrdbsdk.SpiffeKindService)
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+func (e *FleetNodeCertKindUnavailableError) Unwrap() error {
+	return e.Cause
+}
+
+// CheckFleetNodeCertIdentity applies the fleet enrollment endpoint's identity
+// rule to an issued leaf: a tenant SPIFFE SAN for tenantID, kind svc.
+func CheckFleetNodeCertIdentity(leaf *x509.Certificate, tenantID string) error {
+	id, err := qrdbsdk.TenantFromCert(leaf, "")
+	if err != nil {
+		if errors.Is(err, qrdbsdk.ErrSpiffeNoTenantID) {
+			err = nil
+		}
+		return &FleetNodeCertKindUnavailableError{TenantID: tenantID, Cause: err}
+	}
+	if id.TenantID != tenantID || id.Kind != qrdbsdk.SpiffeKindService {
+		return &FleetNodeCertKindUnavailableError{TenantID: tenantID, CertificateTenant: id.TenantID, Kind: id.Kind}
+	}
+	return nil
 }
 
 // UnexpectedPEMTypeError indicates a PEM block had an unexpected type when a

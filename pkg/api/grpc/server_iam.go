@@ -1038,24 +1038,48 @@ func (s *IAMServer) CreatePolicy(ctx context.Context, req *iampb.CreatePolicyReq
 	if req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "policy name is required")
 	}
-	if len(req.SpecYaml) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "spec_yaml is required")
+	if len(req.SpecYaml) > 0 && len(req.Rules) > 0 {
+		return nil, status.Error(codes.InvalidArgument, "set spec_yaml or rules, not both")
+	}
+	if len(req.SpecYaml) == 0 && len(req.Rules) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "spec_yaml or rules is required")
 	}
 
-	// Parse without the request's name so a full document keeps its own
-	// metadata.name for the check below.
-	policy, err := iam.ParsePolicyYAML(req.SpecYaml, iam.PolicyMetadata{
-		Tenant:      req.TenantId,
-		Description: req.Description,
-		Labels:      req.Labels,
-		Priority:    int(req.Priority),
-	})
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid spec_yaml: %v", err)
-	}
-	// The request selects the name; the document may not name another policy.
-	if err := iam.CheckPolicyName(policy, req.Name); err != nil {
-		return nil, convertIAMError(err)
+	var policy *iam.Policy
+	if len(req.Rules) > 0 {
+		rules, err := policyRulesFromProto(req.Rules)
+		if err != nil {
+			return nil, err
+		}
+		policy = &iam.Policy{
+			APIVersion: "v1",
+			Kind:       "Policy",
+			Metadata: iam.PolicyMetadata{
+				Name:        req.Name,
+				Tenant:      req.TenantId,
+				Description: req.Description,
+				Labels:      req.Labels,
+				Priority:    int(req.Priority),
+			},
+			Spec: iam.PolicySpec{Rules: rules},
+		}
+	} else {
+		// Parse without the request's name so a full document keeps its own
+		// metadata.name for the check below.
+		parsed, err := iam.ParsePolicyYAML(req.SpecYaml, iam.PolicyMetadata{
+			Tenant:      req.TenantId,
+			Description: req.Description,
+			Labels:      req.Labels,
+			Priority:    int(req.Priority),
+		})
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid spec_yaml: %v", err)
+		}
+		// The request selects the name; the document may not name another policy.
+		if err := iam.CheckPolicyName(parsed, req.Name); err != nil {
+			return nil, convertIAMError(err)
+		}
+		policy = parsed
 	}
 
 	created, err := s.iamService.CreatePolicy(ctx, policy)
@@ -1108,6 +1132,16 @@ func (s *IAMServer) UpdatePolicy(ctx context.Context, req *iampb.UpdatePolicyReq
 	if req.PolicyName == "" {
 		return nil, status.Error(codes.InvalidArgument, "policy_name is required")
 	}
+	if len(req.SpecYaml) > 0 && len(req.Rules) > 0 {
+		return nil, status.Error(codes.InvalidArgument, "set spec_yaml or rules, not both")
+	}
+	var rules []iam.Rule
+	if len(req.Rules) > 0 {
+		var err error
+		if rules, err = policyRulesFromProto(req.Rules); err != nil {
+			return nil, err
+		}
+	}
 
 	// Read-modify-write: the stored policy is the base, so a metadata-only
 	// update keeps the stored spec rather than replacing it with an empty one.
@@ -1127,6 +1161,11 @@ func (s *IAMServer) UpdatePolicy(ctx context.Context, req *iampb.UpdatePolicyReq
 		}
 		policy.Spec = parsed.Spec
 	}
+	if rules != nil {
+		// Structured rules replace the stored rules; the stored subjects
+		// and variables stay.
+		policy.Spec.Rules = rules
+	}
 	applyPolicyMetadata(&policy.Metadata, req.Description, req.Labels, req.Priority)
 
 	updated, err := s.iamService.UpdatePolicy(ctx, &policy)
@@ -1136,6 +1175,28 @@ func (s *IAMServer) UpdatePolicy(ctx context.Context, req *iampb.UpdatePolicyReq
 
 	// The response describes the stored policy, never the request's spec_yaml.
 	return convertPolicyToProto(updated)
+}
+
+// policyRulesFromProto maps structured request rules to engine rules. A
+// rule's effect must be exactly "allow" or "deny"; anything else is
+// InvalidArgument naming the rule, so nothing is stored.
+func policyRulesFromProto(in []*iampb.PolicyRule) ([]iam.Rule, error) {
+	rules := make([]iam.Rule, 0, len(in))
+	for i, r := range in {
+		effect := iam.Effect(r.GetEffect())
+		if effect != iam.EffectAllow && effect != iam.EffectDeny {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"rules[%d].effect must be %q or %q, got %q", i, iam.EffectAllow, iam.EffectDeny, r.GetEffect())
+		}
+		rules = append(rules, iam.Rule{
+			Name:      r.GetName(),
+			Effect:    effect,
+			Priority:  int(r.GetPriority()),
+			Actions:   append([]string(nil), r.GetActions()...),
+			Resources: append([]string(nil), r.GetResources()...),
+		})
+	}
+	return rules, nil
 }
 
 // parsePolicyDocument parses a spec_yaml document. A document that names its

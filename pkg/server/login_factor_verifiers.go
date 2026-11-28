@@ -15,8 +15,6 @@ package server
 
 import (
 	"context"
-	"crypto/x509"
-	"os"
 	"sync/atomic"
 	"time"
 
@@ -246,13 +244,13 @@ func (s *Server) bindPIVLoginVerifier(ver *lateBoundPIVVerifier) {
 		return
 	}
 
-	// Extend the daemon CA roots with the operator's PIV login CA
-	// (iam.piv_login.ca_file) so PIV factor logins verify certificates issued
-	// by the operator PKI — the SAME trust posture the REST PIV login path
-	// applies via appendPIVClientCAs. Startup already fails on an unreadable
-	// or empty ca_file (appendPIVClientCAsFn in startRESTServer), so a warn
-	// here is a defensive fallback, not a policy hole.
-	s.appendOperatorPIVLoginRoots(roots)
+	// Extend the daemon CA roots with the operator's security.tls_ca_file set
+	// so PIV factor logins verify certificates the operator PKI issued: the
+	// same anchors the TLS handshake trusts. The file was loaded, and its
+	// errors refused, at boot.
+	if s.config != nil && s.config.IAM.PIVLogin.Enabled {
+		s.clientTrustAnchors.appendTo(roots)
+	}
 
 	inner, err := xkmssdk.NewPIVHardwareFactorVerifier(roots, nil)
 	if err != nil {
@@ -261,28 +259,4 @@ func (s *Server) bindPIVLoginVerifier(ver *lateBoundPIVVerifier) {
 	}
 	ver.setVerifier(inner)
 	s.logger.Info("PIV login verifier bound to CA trust roots")
-}
-
-// appendOperatorPIVLoginRoots appends the operator's PIV login CA bundle
-// (iam.piv_login.ca_file) to the given trust pool when PIV login is enabled
-// and a ca_file is configured. Failures are logged and skipped: the daemon CA
-// roots remain in effect and PIV certs outside them fail closed at
-// verification time.
-func (s *Server) appendOperatorPIVLoginRoots(roots *x509.CertPool) {
-	if roots == nil || s.config == nil {
-		return
-	}
-	if !s.config.IAM.PIVLogin.Enabled || s.config.IAM.PIVLogin.CAFile == "" {
-		return
-	}
-	pemData, err := os.ReadFile(s.config.IAM.PIVLogin.CAFile)
-	if err != nil {
-		s.logger.WithError(err).Warnf("PIV login verifier: failed to read iam.piv_login.ca_file %s; operator PIV roots not added", s.config.IAM.PIVLogin.CAFile)
-		return
-	}
-	if !roots.AppendCertsFromPEM(pemData) {
-		s.logger.Warnf("PIV login verifier: no certificates parsed from iam.piv_login.ca_file %s; operator PIV roots not added", s.config.IAM.PIVLogin.CAFile)
-		return
-	}
-	s.logger.Infof("PIV login verifier: operator PIV roots appended from %s", s.config.IAM.PIVLogin.CAFile)
 }

@@ -139,6 +139,7 @@ func TestSPIFFEKindForProfile(t *testing.T) {
 		{"Client", qrdbspiffe.KindUser},
 		{" client ", qrdbspiffe.KindUser},
 		{"server", qrdbspiffe.KindService},
+		{FleetNodeCertProfile, qrdbspiffe.KindService},
 		{"codesigning", qrdbspiffe.KindService},
 		{"email", qrdbspiffe.KindService},
 		{"ocsp", qrdbspiffe.KindService},

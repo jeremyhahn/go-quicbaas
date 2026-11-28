@@ -66,6 +66,7 @@ func assertWinner(t *testing.T, got crypto.Signer, winner *ecdsa.PrivateKey) {
 }
 
 func TestLoadSigner_CreateConflictLoadsWinnersKey(t *testing.T) {
+	t.Parallel()
 	winner := newWinnerKey(t)
 	var currentCalls, generateCalls int
 	src := signerSource{
@@ -96,6 +97,7 @@ func TestLoadSigner_CreateConflictLoadsWinnersKey(t *testing.T) {
 }
 
 func TestLoadSigner_CreateConflictRetriesUntilVisible(t *testing.T) {
+	t.Parallel()
 	winner := newWinnerKey(t)
 	var currentCalls int
 	src := signerSource{
@@ -122,6 +124,7 @@ func TestLoadSigner_CreateConflictRetriesUntilVisible(t *testing.T) {
 }
 
 func TestLoadSigner_CreateConflictGivesUpAfterAttempts(t *testing.T) {
+	t.Parallel()
 	var currentCalls int
 	src := signerSource{
 		current: currentAfter(nil, 0, &currentCalls),
@@ -153,6 +156,7 @@ func TestLoadSigner_CreateConflictGivesUpAfterAttempts(t *testing.T) {
 }
 
 func TestLoadSigner_OtherCreateErrorPropagates(t *testing.T) {
+	t.Parallel()
 	hsmOffline := errors.New("hsm offline")
 	var currentCalls int
 	src := signerSource{
@@ -178,6 +182,7 @@ func TestLoadSigner_OtherCreateErrorPropagates(t *testing.T) {
 }
 
 func TestLoadSigner_FirstCreateUsesSigner(t *testing.T) {
+	t.Parallel()
 	created := newWinnerKey(t)
 	var currentCalls int
 	src := signerSource{

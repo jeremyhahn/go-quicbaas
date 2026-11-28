@@ -15,6 +15,8 @@ package grpc
 
 import (
 	"context"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -253,6 +255,12 @@ func (h *iamHandler) handleDeleteUser(ctx context.Context, client iampb.IAMServi
 	return nil, nil
 }
 
+// defaultListUsersPageSize is the page size of a user List that names none, the server's own default.
+const defaultListUsersPageSize = 100
+
+// maxListUsersPageSize keeps the lookahead request (pageSize+1) inside the int32 Limit.
+const maxListUsersPageSize = math.MaxInt32 - 1
+
 // handleListUsers handles ListUsers requests.
 func (h *iamHandler) handleListUsers(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
 	reqMap, ok := toMap(req)
@@ -264,12 +272,25 @@ func (h *iamHandler) handleListUsers(ctx context.Context, client iampb.IAMServic
 	requestData, _ := getMap(reqMap, "request")
 
 	pageSize, _ := getInt(requestData, "page_size")
+	if pageSize <= 0 {
+		pageSize = defaultListUsersPageSize
+	}
+	if pageSize > maxListUsersPageSize {
+		pageSize = maxListUsersPageSize
+	}
 	roleID, _ := getString(requestData, "role_id")
+	offset, err := iamPageOffset("handleListUsers", requestData)
+	if err != nil {
+		return nil, err
+	}
 
 	pbReq := &iampb.ListUsersRequest{
 		TenantId: tenantID,
-		Limit:    int32(pageSize),
-		Role:     roleID,
+		// One row past the page tells whether another page follows; the
+		// server's Total counts only the rows it returned.
+		Limit:  int32(pageSize + 1),
+		Offset: offset,
+		Role:   roleID,
 	}
 
 	resp, err := client.ListUsers(ctx, pbReq)
@@ -277,19 +298,63 @@ func (h *iamHandler) handleListUsers(ctx context.Context, client iampb.IAMServic
 		return nil, convertGRPCError(err, "handleListUsers")
 	}
 
-	users := make([]iam.User, 0, len(resp.Users))
-	for _, u := range resp.Users {
+	page := resp.Users
+	hasMore := len(page) > pageSize
+	if hasMore {
+		page = page[:pageSize]
+	}
+
+	users := make([]iam.User, 0, len(page))
+	for _, u := range page {
 		if converted := convertProtoUserToSDK(u); converted != nil {
 			users = append(users, *converted)
 		}
 	}
 
+	// A server that reports only the rows it returned (the production
+	// adapter) gets the page's own count, without the lookahead row; a
+	// server that reports a real total keeps it.
+	total := int(resp.Total)
+	if total <= len(resp.Users) {
+		total = len(page)
+	}
+	pagination := iam.PaginationInfo{
+		TotalCount: total,
+		PageSize:   pageSize,
+	}
+	if hasMore {
+		pagination.NextPageToken = strconv.Itoa(int(offset) + pageSize)
+		pagination.HasMore = true
+	}
+
 	return &iam.ListUsersResponse{
-		Users: users,
-		Pagination: iam.PaginationInfo{
-			TotalCount: int(resp.Total),
-		},
+		Users:      users,
+		Pagination: pagination,
 	}, nil
+}
+
+// iamPageOffset decodes the page_token (a decimal offset) the list calls carry.
+func iamPageOffset(op string, m map[string]interface{}) (int32, error) {
+	token, _ := getString(m, "page_token")
+	if token == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(token, 10, 32)
+	if err != nil || n < 0 {
+		return 0, errors.NewInvalidInput(op, "invalid page token")
+	}
+	return int32(n), nil
+}
+
+// iamPagination builds the page info, with a next token while items remain.
+func iamPagination(offset int32, pageSize, returned int, total int32) iam.PaginationInfo {
+	p := iam.PaginationInfo{TotalCount: int(total), PageSize: pageSize}
+	next := int(offset) + returned
+	if returned > 0 && next < int(total) {
+		p.NextPageToken = strconv.Itoa(next)
+		p.HasMore = true
+	}
+	return p
 }
 
 // handleAssignRole handles AssignRole requests.
@@ -527,9 +592,14 @@ func (h *iamHandler) handleListTenants(ctx context.Context, client iampb.IAMServ
 	}
 
 	pageSize, _ := getInt(reqMap, "page_size")
+	offset, err := iamPageOffset("handleListTenants", reqMap)
+	if err != nil {
+		return nil, err
+	}
 
 	pbReq := &iampb.ListTenantsRequest{
-		Limit: int32(pageSize),
+		Limit:  int32(pageSize),
+		Offset: offset,
 	}
 
 	resp, err := client.ListTenants(ctx, pbReq)
@@ -545,10 +615,8 @@ func (h *iamHandler) handleListTenants(ctx context.Context, client iampb.IAMServ
 	}
 
 	return &iam.ListTenantsResponse{
-		Tenants: tenants,
-		Pagination: iam.PaginationInfo{
-			TotalCount: int(resp.Total),
-		},
+		Tenants:    tenants,
+		Pagination: iamPagination(offset, pageSize, len(resp.Tenants), resp.Total),
 	}, nil
 }
 
@@ -674,10 +742,15 @@ func (h *iamHandler) handleListRoles(ctx context.Context, client iampb.IAMServic
 	requestData, _ := getMap(reqMap, "request")
 
 	pageSize, _ := getInt(requestData, "page_size")
+	offset, err := iamPageOffset("handleListRoles", requestData)
+	if err != nil {
+		return nil, err
+	}
 
 	pbReq := &iampb.ListRolesRequest{
 		TenantId: tenantID,
 		Limit:    int32(pageSize),
+		Offset:   offset,
 	}
 
 	resp, err := client.ListRoles(ctx, pbReq)
@@ -693,10 +766,8 @@ func (h *iamHandler) handleListRoles(ctx context.Context, client iampb.IAMServic
 	}
 
 	return &iam.ListRolesResponse{
-		Roles: roles,
-		Pagination: iam.PaginationInfo{
-			TotalCount: int(resp.Total),
-		},
+		Roles:      roles,
+		Pagination: iamPagination(offset, pageSize, len(resp.Roles), resp.Total),
 	}, nil
 }
 

@@ -101,12 +101,6 @@ type fleetEnrollResponse struct {
 // potentially-public endpoint against hostile large uploads.
 const defaultRegisterRequestMaxBytes int64 = 64 * 1024
 
-// fleetRegistrarOU is the Organizational Unit the server requires on
-// fleet node mTLS certificates. The deploy-service cert issuer stamps this
-// value by default; anything else is rejected to stop a client cert
-// that was minted for a different purpose from authenticating here.
-const fleetRegistrarOU = "agents"
-
 // registerFleetEnrollmentPublicRoutes wires the mTLS-only register
 // route (POST /api/v1/fleet/enroll) onto the root router. The
 // endpoint is public with respect to the server-side authorization
@@ -165,12 +159,12 @@ func (s *Server) HandleFleetEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The cert Organization carries the tenant claim. Cross-check
+	// The cert's subject OU carries the tenant (#1388). Cross-check
 	// against the request body so a valid cert cannot be used to
 	// register a daemon for an unintended tenant.
 	certTenant := extractCertTenant(peer)
 	if certTenant == "" {
-		respondFleetEnrollError(w, r, http.StatusUnauthorized, "invalid_client", "peer certificate missing tenant claim (Organization)")
+		respondFleetEnrollError(w, r, http.StatusUnauthorized, "invalid_client", "peer certificate missing tenant claim (OU)")
 		return
 	}
 	if certTenant != req.TenantID {
@@ -185,19 +179,13 @@ func (s *Server) HandleFleetEnroll(w http.ResponseWriter, r *http.Request) {
 	// tenant-scoped SPIFFE SAN (pkg/auth MTLSAuthenticator.TenantFromCert), so
 	// that SAN — not the Organization claim cross-checked above — is the
 	// authority when both are present.
+	// A certificate with no tenant SPIFFE SAN is refused like any other
+	// mismatch: it authenticates into no tenant, and the issuer never mints
+	// one, so enrolling it would hand credentials to an identity nothing can
+	// authorize.
 	if err := assertCertAuthenticatesInto(peer, req.TenantID); err != nil {
-		// A certificate carrying NO tenant SPIFFE SAN is reported, not
-		// refused: it is a certificate this build's issuer would not mint, and
-		// turning it into a registration failure would lock out a fleet that
-		// enrolled with one. Its consequence is stated instead, because the
-		// enrollment below cannot help it.
-		var noTenantSAN *FleetNodeCertNoSPIFFETenantError
-		if !errors.As(err, &noTenantSAN) {
-			respondFleetEnrollError(w, r, http.StatusForbidden, "tenant_mismatch", err.Error())
-			return
-		}
-		s.logger.Warnf("agent register: %v; re-issue the certificate with a tenant-scoped SPIFFE SAN or its"+
-			" control-plane calls will stay unauthorized", err)
+		respondFleetEnrollError(w, r, http.StatusForbidden, "tenant_mismatch", err.Error())
+		return
 	}
 
 	// The address is checked before anything is issued: a node the control
@@ -399,18 +387,8 @@ func extractFleetNodePeerCertificate(r *http.Request) (*x509.Certificate, error)
 		return nil, errMissingPeerCertificate
 	}
 
-	// Require the "agents" OU stamp — defence-in-depth against
-	// operator misuse of a cert the same CA minted for another role.
-	found := false
-	for _, ou := range peer.Subject.OrganizationalUnit {
-		if ou == fleetRegistrarOU {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return nil, errInvalidPeerOU
-	}
+	// The subject OU carries the tenant (#1388), not a role stamp: the agent
+	// role is the SPIFFE SAN's kind, checked by assertCertAuthenticatesInto.
 
 	// Require ClientAuth EKU.
 	hasClientAuth := false
@@ -430,10 +408,7 @@ func extractFleetNodePeerCertificate(r *http.Request) (*x509.Certificate, error)
 // certificate's Organization field. Empty return means the claim is
 // missing and registration must be rejected.
 func extractCertTenant(cert *x509.Certificate) string {
-	if cert == nil || len(cert.Subject.Organization) == 0 {
-		return ""
-	}
-	return strings.TrimSpace(cert.Subject.Organization[0])
+	return iam.TenantFromSubjectOU(cert)
 }
 
 // sanitizeAppName delegates to iam.SanitizeAppName so the REST handler
@@ -596,7 +571,7 @@ func registerMTLSApp(ctx context.Context, log interface {
 // requires OU=fleet nodes, so that fallback can never name a tenant: a certificate
 // carrying no SPIFFE SAN authenticates into a tenant called "agents" and its
 // principal is unresolvable wherever this enrollment writes it. Both
-// conditions are reported rather than papered over.
+// conditions refuse the certificate.
 //
 // A malformed SAN fails closed, exactly as qrdb's authenticator does with it.
 func assertCertAuthenticatesInto(peer *x509.Certificate, tenantID string) error {
@@ -606,12 +581,30 @@ func assertCertAuthenticatesInto(peer *x509.Certificate, tenantID string) error 
 		if id.TenantID != tenantID {
 			return &FleetNodeCertTenantMismatchError{Certificate: id.TenantID, Registering: tenantID}
 		}
+		// The SAN's kind marks the certificate as an agent's (ruling 62(a)):
+		// a fleet node is a machine identity, never a human user's.
+		if id.Kind != qrdbsdk.SpiffeKindService {
+			return &FleetNodeCertKindError{Kind: id.Kind}
+		}
 		return nil
 	case errors.Is(err, qrdbsdk.ErrSpiffeNoTenantID):
 		return &FleetNodeCertNoSPIFFETenantError{CommonName: peer.Subject.CommonName}
 	default:
 		return &FleetNodeCertSPIFFEInvalidError{Cause: err}
 	}
+}
+
+// FleetNodeCertKindError reports a client certificate whose tenant SPIFFE SAN
+// names a workload kind other than svc. The kind is what marks a certificate
+// as a fleet node's (ruling 62(a)); a user's certificate cannot register one.
+type FleetNodeCertKindError struct {
+	// Kind is the SPIFFE kind the certificate's SAN names.
+	Kind string
+}
+
+func (e *FleetNodeCertKindError) Error() string {
+	return fmt.Sprintf("agent register: peer certificate's SPIFFE SAN names kind %q, want %q",
+		e.Kind, qrdbsdk.SpiffeKindService)
 }
 
 // enrollFleetNodeCertIdentity confers the fleet node runtime grant on the identity the
@@ -720,10 +713,6 @@ var (
 	// errMissingPeerCertificate indicates the TLS handshake did not
 	// present a peer certificate. Surfaced to operators as 401.
 	errMissingPeerCertificate = errors.New("agent register: missing mTLS peer certificate")
-
-	// errInvalidPeerOU indicates the peer certificate's OU value is not
-	// the canonical "agents" stamp.
-	errInvalidPeerOU = errors.New("agent register: peer certificate missing required OU=agents stamp")
 
 	// errInvalidPeerEKU indicates the peer certificate does not carry
 	// the ClientAuth Extended Key Usage.

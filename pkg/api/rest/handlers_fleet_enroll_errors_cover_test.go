@@ -89,10 +89,10 @@ func TestHandleAgentRegister_TenantMismatch(t *testing.T) {
 
 func TestHandleAgentRegister_CertMissingTenant(t *testing.T) {
 	srv := newFleetEnrollTestServer(t, "")
-	// Cert has the OU + EKU but no Organization -> tenant claim missing -> 401.
+	// Cert has the EKU and an Organization but no OU -> tenant claim missing -> 401.
 	cert := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: "agent01", OrganizationalUnit: []string{fleetRegistrarOU}},
+		Subject:      pkix.Name{CommonName: "agent01", Organization: []string{"acme"}},
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 	w := httptest.NewRecorder()

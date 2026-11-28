@@ -24,6 +24,7 @@ import (
 // =============================================================================
 
 func TestTenant_Validate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		tenant  *Tenant
@@ -76,6 +77,7 @@ func TestTenant_Validate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.tenant.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Tenant.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -93,6 +95,7 @@ func TestTenant_Validate(t *testing.T) {
 // =============================================================================
 
 func TestUser_Validate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		user    *User
@@ -169,6 +172,7 @@ func TestUser_Validate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.user.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("User.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -186,6 +190,7 @@ func TestUser_Validate(t *testing.T) {
 // =============================================================================
 
 func TestRole_Validate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		role    *Role
@@ -262,6 +267,7 @@ func TestRole_Validate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.role.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Role.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -279,6 +285,7 @@ func TestRole_Validate(t *testing.T) {
 // =============================================================================
 
 func TestPolicy_Validate(t *testing.T) {
+	t.Parallel()
 	validRule := Rule{
 		Name:      "test-rule",
 		Effect:    EffectAllow,
@@ -471,6 +478,7 @@ func TestPolicy_Validate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.policy.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Policy.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -488,6 +496,7 @@ func TestPolicy_Validate(t *testing.T) {
 // =============================================================================
 
 func TestRule_Validate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		rule    *Rule
@@ -602,6 +611,7 @@ func TestRule_Validate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.rule.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Rule.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -619,6 +629,7 @@ func TestRule_Validate(t *testing.T) {
 // =============================================================================
 
 func TestSession_IsExpired(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 
 	tests := []struct {
@@ -675,6 +686,7 @@ func TestSession_IsExpired(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tt.session.IsExpired(); got != tt.want {
 				t.Errorf("Session.IsExpired() = %v, want %v", got, tt.want)
 			}
@@ -687,6 +699,7 @@ func TestSession_IsExpired(t *testing.T) {
 // =============================================================================
 
 func TestToken_IsExpired(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 
 	tests := []struct {

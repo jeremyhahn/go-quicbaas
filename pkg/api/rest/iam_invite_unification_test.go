@@ -159,16 +159,18 @@ func TestInvite_FirstBootStyleInviteIsRetrievableThroughREST(t *testing.T) {
 // an invite created through the REST CreateUser path lands in the SAME store the
 // activation endpoints read, so a REST-issued invite is immediately redeemable.
 func TestInvite_RESTCreatedInviteLandsInSameStore(t *testing.T) {
-	_, mock, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, mock, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant-rest", Name: "Rest"}))
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-member", TenantID: "tenant-rest", Name: "member"}))
 
-	body := `{"email":"rest@example.com","username":"restuser","name":"Rest User","auth_methods":["webauthn"]}`
+	body := `{"email":"rest@example.com","username":"restuser","name":"Rest User","auth_methods":["webauthn"],"roles":["role-member"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-rest/users",
 		bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req = withRoleAssignCallerIn(server, req, "tenant-rest")
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant-rest"})
 	w := httptest.NewRecorder()
 

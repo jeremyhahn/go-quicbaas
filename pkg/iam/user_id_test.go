@@ -36,6 +36,7 @@ import (
 // anyone whose display name was not also their username and two people sharing
 // a display name collided in qrdb on a constraint neither had asked to share.
 func TestLoginName_IsTheUsername(t *testing.T) {
+	t.Parallel()
 	u := &User{Email: "alice@acme.test", Username: "alice", Name: "Alice Display"}
 	if got := u.LoginName(); got != "alice" {
 		t.Errorf("LoginName = %q, want the username, not the email or the display name", got)
@@ -62,6 +63,7 @@ func TestLoginName_IsTheUsername(t *testing.T) {
 // the pre-release policy removes — and a fail-open on an authentication gate
 // needs a much better reason than a population we do not carry.
 func TestCanAuthenticate_OnlyActivePasses(t *testing.T) {
+	t.Parallel()
 	if (&User{}).CanAuthenticate() {
 		t.Error("a record with no lifecycle must not authenticate")
 	}
@@ -90,6 +92,7 @@ func TestCanAuthenticate_OnlyActivePasses(t *testing.T) {
 // the create fails with ErrAlreadyExists — a collision the caller cannot see the
 // cause of, and one the real qrdb allocator would never produce.
 func TestMemoryStorage_SeededIDAdvancesTheAllocator(t *testing.T) {
+	t.Parallel()
 	mem := NewMemoryStorage()
 	ctx := t.Context()
 
@@ -125,6 +128,7 @@ func TestMemoryStorage_SeededIDAdvancesTheAllocator(t *testing.T) {
 // TestMemoryStorage_UserCRUDByUint64 drives a record through its whole life by
 // an id above 2^53, the range a float64-based decoder would corrupt.
 func TestMemoryStorage_UserCRUDByUint64(t *testing.T) {
+	t.Parallel()
 	mem := NewMemoryStorage()
 	ctx := t.Context()
 	const id uint64 = 1<<53 + 1
@@ -166,6 +170,7 @@ func TestMemoryStorage_UserCRUDByUint64(t *testing.T) {
 // TestMemoryStorage_MissingUserIsNotFound pins the typed not-found answer for
 // an id the store does not hold, including one held only by another tenant.
 func TestMemoryStorage_MissingUserIsNotFound(t *testing.T) {
+	t.Parallel()
 	mem := NewMemoryStorage()
 	ctx := t.Context()
 	other := &User{TenantID: "other", Email: "o@other.test"}
@@ -192,6 +197,7 @@ func TestMemoryStorage_MissingUserIsNotFound(t *testing.T) {
 // TestMemoryStorage_RefusesTheZeroID proves the "not created yet" id is refused
 // rather than looked up.
 func TestMemoryStorage_RefusesTheZeroID(t *testing.T) {
+	t.Parallel()
 	mem := NewMemoryStorage()
 	ctx := t.Context()
 
@@ -210,6 +216,7 @@ func TestMemoryStorage_RefusesTheZeroID(t *testing.T) {
 // 2^53 survives a round trip, and is encoded as a string so a JavaScript
 // client does not round it.
 func TestUser_JSONCarriesTheIDAsADecimalString(t *testing.T) {
+	t.Parallel()
 	const id uint64 = 1<<53 + 1
 	data, err := json.Marshal(&User{ID: id, TenantID: "acme"})
 	if err != nil {
@@ -229,6 +236,7 @@ func TestUser_JSONCarriesTheIDAsADecimalString(t *testing.T) {
 }
 
 func TestUser_JSONRefusesANonDecimalID(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{
 		`{"id":"user-1"}`,
 		`{"id":"18446744073709551616"}`,

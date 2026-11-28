@@ -74,7 +74,7 @@ func TestRevokeSession_RevokeError(t *testing.T) {
 // RevokeAllForUser returns an error.
 func TestRevokeAllSessions_RevokeAllForUserError(t *testing.T) {
 	mgr := &mockSessionManager{revokeErr: stderrors.New("bulk revoke failed")}
-	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr, oidc: newLogoutOIDCProvider(t, iam.NewMemoryStorage())}
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 

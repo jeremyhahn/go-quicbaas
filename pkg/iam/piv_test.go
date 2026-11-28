@@ -254,6 +254,7 @@ func setupPIVTest(t *testing.T) (activator *PIVActivator, token string, userStor
 
 // TestPIVActivator_Valid verifies a complete successful PIV activation.
 func TestPIVActivator_Valid(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
@@ -339,6 +340,7 @@ func newPIVLoginFactorTest(t *testing.T, enroller *CertLoginFactorEnroller) (*PI
 // TestPIVActivator_EnrollsLoginFactor verifies the activated certificate
 // resolves to the user through the lookup the unified login ceremony makes.
 func TestPIVActivator_EnrollsLoginFactor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	enroller, factors := newPIVTestFactorEnroller(t)
 	act, _, _, token, leaf, certPEM := newPIVLoginFactorTest(t, enroller)
@@ -366,6 +368,7 @@ func TestPIVActivator_EnrollsLoginFactor(t *testing.T) {
 // invite is redeemed, so the user stays pending, the invite unspent, and a
 // retry with the right certificate activates.
 func TestPIVActivator_ForeignCertificateKeepsActivationRetryable(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	rt := newPIVRollbackTest(t, newMockUserStorage(), nil)
 	foreign, foreignPEM := rt.leaf(t)
@@ -392,6 +395,7 @@ func TestPIVActivator_ForeignCertificateKeepsActivationRetryable(t *testing.T) {
 // failure after the invite was won: the error is typed, the user stays
 // pending, no factor exists, and the spent invite cannot be replayed.
 func TestPIVActivator_EnrollFailureAfterRedeemFailsTyped(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	rt := newPIVRollbackTest(t, newMockUserStorage(), nil)
 	rt.factors.addErr = errors.New("factor store down")
@@ -419,6 +423,7 @@ func TestPIVActivator_EnrollFailureAfterRedeemFailsTyped(t *testing.T) {
 // authentication) for a certificate already enrolled as the user's factor: it
 // must find that factor as the user's own, complete, and leave it in place.
 func TestPIVActivator_TenantlessActivateKeepsPreexistingFactor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	rt := newPIVRollbackTest(t, newMockUserStorage(), nil)
 	leaf, certPEM := rt.leaf(t)
@@ -531,6 +536,7 @@ func (rt *pivRollbackTest) assertInviteUsed(t *testing.T, want bool) {
 // certificate cannot log in to an account that never activated, and no later
 // call can use the spent invite to enroll another.
 func TestPIVActivator_UpdateFailureRevokesCreatedFactor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := &flakyUpdateUserStorage{mockUserStorage: newMockUserStorage(), failUpdate: true}
 	rt := newPIVRollbackTest(t, users, nil)
@@ -563,6 +569,7 @@ func TestPIVActivator_UpdateFailureRevokesCreatedFactor(t *testing.T) {
 // revoke the login factor: the user is active and bound, the invite is spent,
 // and no further activation could repair it.
 func TestPIVActivator_UpdateLostResponseKeepsFactor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := &flakyUpdateUserStorage{mockUserStorage: newMockUserStorage(), lostResponse: true}
 	rt := newPIVRollbackTest(t, users, nil)
@@ -590,6 +597,7 @@ func TestPIVActivator_UpdateLostResponseKeepsFactor(t *testing.T) {
 // When the re-read after a failed update also fails, the outcome is unknown
 // and the activation keeps the safe behaviour: the factor is revoked.
 func TestPIVActivator_UpdateFailureWithFailedRereadRevokesFactor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := &flakyUpdateUserStorage{mockUserStorage: newMockUserStorage(), failUpdate: true, failReread: true}
 	rt := newPIVRollbackTest(t, users, nil)
@@ -610,6 +618,7 @@ func TestPIVActivator_UpdateFailureWithFailedRereadRevokesFactor(t *testing.T) {
 // Exactly one wins; the loser gets a typed error and never enrolled a factor,
 // so the only certificate able to log in is the one the user is bound to.
 func TestPIVActivator_ConcurrentActivationsHaveOneWinner(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	rt := newPIVRaceTest(t, 2)
 	leaves := make([]*x509.Certificate, 2)
@@ -646,6 +655,7 @@ func TestPIVActivator_ConcurrentActivationsHaveOneWinner(t *testing.T) {
 // loses must leave that factor in place: the winner's account is active and
 // the certificate still resolves to it at login.
 func TestPIVActivator_SameCertificateRaceKeepsTheFactor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	rt := newPIVRaceTest(t, 2)
 	leaf, certPEM := rt.leaf(t)
@@ -671,6 +681,7 @@ func TestPIVActivator_SameCertificateRaceKeepsTheFactor(t *testing.T) {
 // user's claim is what must pick one winner: exactly one factor is enrolled
 // and the user is bound to the winner's certificate alone.
 func TestPIVActivator_TwoTokensForOneUserHaveOneWinner(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	rt := newPIVRaceTest(t, 2)
 	second, _, err := rt.invites.Create(ctx, "t1", 1, time.Hour)
@@ -710,6 +721,7 @@ func TestPIVActivator_TwoTokensForOneUserHaveOneWinner(t *testing.T) {
 // returning an active user to pending: the claim the first activation
 // completed must not block the user's next activation.
 func TestPIVActivator_ResetToPendingCanActivateAgain(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	rt := newPIVRollbackTest(t, newMockUserStorage(), nil)
 	_, firstPEM := rt.leaf(t)
@@ -816,6 +828,7 @@ func (s *stagedLookupInviteStore) Lookup(ctx context.Context, tenantID, token st
 // not win its invite because the store failed: nothing is committed, no
 // factor is enrolled, and the invite stays unspent for a retry.
 func TestPIVActivator_RedeemFailureEnrollsNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	failing := &switchableRedeemInviteStore{fail: true}
 	rt := newPIVRollbackTest(t, newMockUserStorage(), func(inner InviteStore) InviteStore {
@@ -850,6 +863,7 @@ func TestPIVActivator_RedeemFailureEnrollsNothing(t *testing.T) {
 // cancellation, and the factor is revoked anyway, because the compensation
 // does not run on the canceled request context.
 func TestPIVActivator_CancellationAfterEnrollStillRevokes(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	users := &flakyUpdateUserStorage{mockUserStorage: newMockUserStorage(), cancelUpdate: cancel}
@@ -884,6 +898,7 @@ func (s *switchableRedeemInviteStore) Redeem(ctx context.Context, tenantID, toke
 // revokes only a factor it created: the same certificate enrolled before the
 // call keeps its factor.
 func TestPIVActivator_FailureKeepsPreexistingFactor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := &flakyUpdateUserStorage{mockUserStorage: newMockUserStorage(), failUpdate: true}
 	rt := newPIVRollbackTest(t, users, nil)
@@ -904,6 +919,7 @@ func TestPIVActivator_FailureKeepsPreexistingFactor(t *testing.T) {
 // failure: the caller learns a residual factor may exist, and the audit log
 // names it.
 func TestPIVActivator_CleanupFailureSurfacesResidualFactor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := &flakyUpdateUserStorage{mockUserStorage: newMockUserStorage(), failUpdate: true}
 	rt := newPIVRollbackTest(t, users, nil)
@@ -985,6 +1001,7 @@ func (s *flakyUpdateUserStorage) UpdateUser(ctx context.Context, user *User) err
 
 // TestPIVActivator_ExpiredInvite verifies that an expired invite is rejected.
 func TestPIVActivator_ExpiredInvite(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
@@ -1017,6 +1034,7 @@ func TestPIVActivator_ExpiredInvite(t *testing.T) {
 
 // TestPIVActivator_UntrustedCert verifies that a certificate from an unknown CA is rejected.
 func TestPIVActivator_UntrustedCert(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
@@ -1053,6 +1071,7 @@ func TestPIVActivator_UntrustedCert(t *testing.T) {
 // TestPIVActivate_RejectsUntrustedIssuer verifies that a certificate whose issuer DN is not
 // in the TrustedIssuers allowlist is rejected even when chain verification succeeds.
 func TestPIVActivate_RejectsUntrustedIssuer(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
@@ -1097,6 +1116,7 @@ func TestPIVActivate_RejectsUntrustedIssuer(t *testing.T) {
 // TestPIVActivate_AcceptsTrustedIssuer verifies that a certificate whose issuer DN matches
 // an entry in TrustedIssuers passes the second-gate check.
 func TestPIVActivate_AcceptsTrustedIssuer(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
@@ -1133,6 +1153,7 @@ func TestPIVActivate_AcceptsTrustedIssuer(t *testing.T) {
 // TestPIVActivate_EmptyTrustedIssuers verifies that an empty TrustedIssuers list
 // is backward-compatible (any valid issuer is accepted).
 func TestPIVActivate_EmptyTrustedIssuers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
@@ -1169,6 +1190,7 @@ func TestPIVActivate_EmptyTrustedIssuers(t *testing.T) {
 // guard in the constructor: a nil root pool, nil user storage, and nil invite
 // store must all return a typed PIVActivatorConfigError.
 func TestNewPIVActivator_MissingDependencies(t *testing.T) {
+	t.Parallel()
 	roots := x509.NewCertPool()
 	us := newMockUserStorage()
 	is := newFakeInviteStore()
@@ -1202,6 +1224,7 @@ func TestNewPIVActivator_MissingDependencies(t *testing.T) {
 // TestPIVActivator_AuditOnSuccess verifies a successful activation emits a
 // success-outcome audit event through the configured logger.
 func TestPIVActivator_AuditOnSuccess(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
@@ -1240,6 +1263,7 @@ func TestPIVActivator_AuditOnSuccess(t *testing.T) {
 }
 
 func TestPIVActivator_UserNotPending(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()

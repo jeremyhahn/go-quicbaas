@@ -517,6 +517,7 @@ func sortedStrings(in ...string) []string {
 // touches no lookup key at all, so anything it costs the user is a defect in
 // the update path rather than in the store.
 func TestRename_NameOnlyKeepsBothCredentials(t *testing.T) {
+	t.Parallel()
 	f := newRenameFixture(t, "alice@example.com", "Alice")
 	first := f.enroll(t, 0x10)
 	second := f.enroll(t, 0x40)
@@ -542,6 +543,7 @@ func TestRename_NameOnlyKeepsBothCredentials(t *testing.T) {
 // offers them, the fido2 factors are untouched, and the OLD address resolves to
 // nothing — there is no orphan for a revocation to prevent.
 func TestRename_EmailChangeCarriesCredentialOwnership(t *testing.T) {
+	t.Parallel()
 	f := newRenameFixture(t, "old@example.com", "Alice")
 	first := f.enroll(t, 0x10)
 	second := f.enroll(t, 0x40)
@@ -574,6 +576,7 @@ func TestRename_EmailChangeCarriesCredentialOwnership(t *testing.T) {
 // a new qrdb id, and the credential index is keyed by id, so the newcomer
 // starts with none.
 func TestRename_OldAddressIsFreeForANewAccount(t *testing.T) {
+	t.Parallel()
 	f := newRenameFixture(t, "old@example.com", "Alice")
 	f.enroll(t, 0x10)
 	f.rename(t, &qrdbtransport.UpdateUserRequest{Email: "new@example.com"})

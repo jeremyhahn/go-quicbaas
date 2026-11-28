@@ -335,6 +335,11 @@ type CreateTenantOptions struct {
 	// QRDBTenantProvisioner.UpdateEntitlements immediately after engine-side
 	// CreateTenant succeeds.
 	EngineEntitlements *qrdbsdk.Entitlements
+
+	// SelfRegistration, when set, records on the tenant that self-service
+	// registration created it and has not finished. Only the self-registration
+	// broker sets it; see Tenant.SelfRegistration.
+	SelfRegistration *TenantSelfRegistration
 }
 
 // UpdateTenantOptions contains options for updating a tenant.
@@ -347,6 +352,11 @@ type UpdateTenantOptions struct {
 
 	// Quotas contains tenant quotas
 	Quotas *TenantQuotas
+
+	// FinishSelfRegistration, when true, removes the tenant's
+	// SelfRegistration record: the registrant finished the ceremony, so the
+	// tenant is no longer an unfinished registration's to discard.
+	FinishSelfRegistration bool
 }
 
 // IdentityStoreOptions contains options for creating an identity store.

@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"testing"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/test/integration/certfixture"
@@ -66,18 +65,13 @@ func (tc *testCluster) asTenantAuditor(t *testing.T, tenantID string) *testClust
 		"name":         "Audit Test Auditor",
 		"enabled":      true,
 		"auth_methods": []string{"piv"},
+		"roles":        fixtureRoles(tenantID),
 	}, &user))
 	require.NotEmpty(t, user.ID, "tenant auditor id")
 	require.NotEmpty(t, user.InviteToken, "tenant auditor invite token")
 
 	require.NoError(t, helpers.ActivateInvitePIV(ctx, tc.httpEndpoint, tenantID, user.InviteToken, issued.CertificatePEM),
 		"activate tenant auditor")
-
-	// The tenant is fresh, so its Auditor role carries the identifier go-qrdb
-	// seeds it under. It is bound before the login so the session holds it.
-	require.NoError(t, admin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/roles", tenantID, user.ID), map[string]interface{}{
-		"role_id": qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameAuditor),
-	}, nil), "bind the Auditor role to the tenant auditor")
 
 	bearer, err := helpers.LoginWithCert(ctx, tc.httpEndpoint, issued.CertificatePEM, issued.PrivateKeyPEM)
 	require.NoError(t, err, "tenant auditor PIV login")

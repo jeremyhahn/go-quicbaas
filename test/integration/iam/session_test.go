@@ -95,6 +95,7 @@ func createSessionUser(t *testing.T, cluster *testCluster, tenantID string) stri
 	createUserReq := map[string]interface{}{
 		"email":    email,
 		"username": generateUniqueUsername(),
+		"roles":    fixtureRoles(tenantID),
 		"name":     "Session Test User",
 	}
 

@@ -71,6 +71,7 @@ func TestCreateUser_InviteFailureRollsBackTheUser(t *testing.T) {
 	tenants := iam.NewDefaultTenantManager(mem)
 	_, err = tenants.CreateTenant(context.Background(), iam.CreateTenantOptions{ID: "acme", Name: "Acme"})
 	require.NoError(t, err)
+	require.NoError(t, mem.CreateRole(context.Background(), &iam.Role{ID: "role-member", TenantID: "acme", Name: "member"}))
 
 	identity := iam.NewIdentityStore(iam.IdentityStoreOptions{
 		UserStorage: mem,
@@ -92,8 +93,9 @@ func TestCreateUser_InviteFailureRollsBackTheUser(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/",
-		strings.NewReader(`{"email":"bob@acme.com","username":"bob","name":"Bob"}`))
+		strings.NewReader(`{"email":"bob@acme.com","username":"bob","name":"Bob","roles":["role-member"]}`))
 	req = req.WithContext(callerRouteContext(req.Context(), rctx))
+	req = withRoleAssignCallerIn(server, req, "acme")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -133,6 +135,7 @@ func TestCreateUser_AttachFailureRollsBackTheUser(t *testing.T) {
 	tenants := iam.NewDefaultTenantManager(mem)
 	_, err = tenants.CreateTenant(context.Background(), iam.CreateTenantOptions{ID: "acme", Name: "Acme"})
 	require.NoError(t, err)
+	require.NoError(t, mem.CreateRole(context.Background(), &iam.Role{ID: "role-member", TenantID: "acme", Name: "member"}))
 
 	identity := iam.NewIdentityStore(iam.IdentityStoreOptions{
 		UserStorage: &failingUpdateUserStorage{UserStorage: mem, err: errors.New("user store unavailable")},
@@ -155,8 +158,9 @@ func TestCreateUser_AttachFailureRollsBackTheUser(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/",
-		strings.NewReader(`{"email":"carol@acme.com","username":"carol","name":"Carol"}`))
+		strings.NewReader(`{"email":"carol@acme.com","username":"carol","name":"Carol","roles":["role-member"]}`))
 	req = req.WithContext(callerRouteContext(req.Context(), rctx))
+	req = withRoleAssignCallerIn(server, req, "acme")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -243,6 +247,7 @@ func TestCreateUser_RollbackSurvivesRequestCancellation(t *testing.T) {
 	tenants := iam.NewDefaultTenantManager(mem)
 	_, err = tenants.CreateTenant(context.Background(), iam.CreateTenantOptions{ID: "acme", Name: "Acme"})
 	require.NoError(t, err)
+	require.NoError(t, mem.CreateRole(context.Background(), &iam.Role{ID: "role-member", TenantID: "acme", Name: "member"}))
 
 	identity := iam.NewIdentityStore(iam.IdentityStoreOptions{
 		UserStorage: &ctxAwareUserStorage{UserStorage: mem},
@@ -270,8 +275,9 @@ func TestCreateUser_RollbackSurvivesRequestCancellation(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/",
-		strings.NewReader(`{"email":"dave@acme.com","username":"dave","name":"Dave"}`))
+		strings.NewReader(`{"email":"dave@acme.com","username":"dave","name":"Dave","roles":["role-member"]}`))
 	req = req.WithContext(callerRouteContext(reqCtx, rctx))
+	req = withRoleAssignCallerIn(server, req, "acme")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 

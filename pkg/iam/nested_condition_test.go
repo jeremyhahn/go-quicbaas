@@ -33,6 +33,7 @@ func requireNestedConditionError(t *testing.T, err error, field string, index in
 }
 
 func TestValidateConditions(t *testing.T) {
+	t.Parallel()
 	t.Run("flat expressions pass", func(t *testing.T) {
 		conds := []Condition{{Expression: "subject.dept == 'eng'"}, {Expression: "a and not b"}}
 		if err := ValidateConditions("when", conds); err != nil {
@@ -41,6 +42,7 @@ func TestValidateConditions(t *testing.T) {
 	})
 	for name, nested := range nestedConditionCases {
 		t.Run(name+" refused", func(t *testing.T) {
+			t.Parallel()
 			conds := []Condition{{Expression: "x == 1"}, nested}
 			requireNestedConditionError(t, ValidateConditions("unless", conds), "unless", 1)
 		})
@@ -48,6 +50,7 @@ func TestValidateConditions(t *testing.T) {
 }
 
 func TestRule_Validate_NestedCondition(t *testing.T) {
+	t.Parallel()
 	rule := Rule{Name: "r", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}
 
 	rule.When = []Condition{{Expression: "x == 1"}}
@@ -60,10 +63,12 @@ func TestRule_Validate_NestedCondition(t *testing.T) {
 }
 
 func TestPolicyEngine_CreatePolicy_NestedCondition(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	for name, nested := range nestedConditionCases {
 		t.Run(name+" refused and not stored", func(t *testing.T) {
+			t.Parallel()
 			storage := NewMemoryStorage()
 			engine := NewPolicyEngine(PolicyEngineOptions{Storage: storage})
 
@@ -95,6 +100,7 @@ func TestPolicyEngine_CreatePolicy_NestedCondition(t *testing.T) {
 }
 
 func TestPolicyEngine_UpdatePolicy_NestedCondition(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 	engine := NewPolicyEngine(PolicyEngineOptions{Storage: storage})
@@ -129,6 +135,7 @@ func TestPolicyEngine_UpdatePolicy_NestedCondition(t *testing.T) {
 }
 
 func TestBatchManager_ImportPolicies_NestedCondition(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 	bm := NewBatchManager(BatchManagerOptions{
@@ -162,6 +169,7 @@ func TestBatchManager_ImportPolicies_NestedCondition(t *testing.T) {
 }
 
 func TestPolicyImportItem_Validate_NestedCondition(t *testing.T) {
+	t.Parallel()
 	flatRules := []Rule{{Name: "r", When: []Condition{{Expression: "x == 1"}}}}
 	nestedRules := []Rule{{Name: "r", Unless: []Condition{nestedConditionCases["not"]}}}
 

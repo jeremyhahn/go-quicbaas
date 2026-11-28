@@ -231,7 +231,7 @@ func TestIssueSessionToken_ResolvesPermissionsForAScopedXKMSVerb(t *testing.T) {
 	provider, users := newTestOIDCProviderWithResolver(t, &fixedPermissionResolver{client: rbac})
 	seedSessionUser(t, users, "acme", "key-reader", []string{role})
 
-	token, _, err := issueSessionTokenForTest(t, provider, "acme", "key-reader")
+	token, _, err := issueSessionTokenForTest(t, provider, "acme", "key-reader@example.test")
 	if err != nil {
 		t.Fatalf("IssueSessionToken: %v — an identity holding %q could not obtain a token, which is the login outage go-xkms#617 describes",
 			err, xkmsScopedPermission)
@@ -268,7 +268,7 @@ func TestIssueSessionToken_RefusesAnIdentityHoldingAnUnscopedPermission(t *testi
 	provider, users := newTestOIDCProviderWithResolver(t, &fixedPermissionResolver{client: rbac})
 	seedSessionUser(t, users, "acme", "unscoped-holder", []string{role})
 
-	token, _, err := issueSessionTokenForTest(t, provider, "acme", "unscoped-holder")
+	token, _, err := issueSessionTokenForTest(t, provider, "acme", "unscoped-holder@example.test")
 	if err == nil {
 		t.Fatalf("IssueSessionToken succeeded for an identity holding %q, which has no declared scope; "+
 			"issuance must fail closed rather than mint a bearer over a permission nobody scoped (token=%q)",

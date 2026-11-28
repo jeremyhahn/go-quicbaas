@@ -184,6 +184,22 @@ func (f *fakeAuthSessionServer) RevokeSession(_ context.Context, req *iampb.Revo
 	return &iampb.RevokeSessionResponse{Success: true}, nil
 }
 
+func (f *fakeAuthSessionServer) ListSessions(_ context.Context, req *iampb.ListSessionsRequest) (*iampb.ListSessionsResponse, error) {
+	f.received["ListSessions"] = req
+	if f.fail != nil {
+		return nil, f.fail
+	}
+	return &iampb.ListSessionsResponse{Sessions: []*iampb.Session{authFedSession()}}, nil
+}
+
+func (f *fakeAuthSessionServer) RevokeAllSessions(_ context.Context, req *iampb.RevokeAllSessionsRequest) (*iampb.RevokeAllSessionsResponse, error) {
+	f.received["RevokeAllSessions"] = req
+	if f.fail != nil {
+		return nil, f.fail
+	}
+	return &iampb.RevokeAllSessionsResponse{RevokedCount: 1}, nil
+}
+
 // newAuthFederationClient drives the real auth SDK client over bufconn
 // against the fake federation and session servers.
 func newAuthFederationClient(t *testing.T, fed *fakeAuthFederationServer, sess *fakeAuthSessionServer) auth.Client {
@@ -328,6 +344,22 @@ func TestGRPCAuth_SessionVerbsReachTheServer(t *testing.T) {
 		t.Fatalf("RevokeSession: %v", err)
 	}
 	requireReceived(t, sess.received, "RevokeSession", &iampb.RevokeSessionRequest{SessionId: "sess-1"})
+
+	// The caller's own sessions: the request names no tenant or user, so the
+	// server scopes it to the authenticated caller (#1842).
+	list, err := client.ListSessions(ctx)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	requireReceived(t, sess.received, "ListSessions", &iampb.ListSessionsRequest{})
+	if len(list.Sessions) != 1 || list.Sessions[0] != want {
+		t.Fatalf("ListSessions = %+v, want [%+v]", list.Sessions, want)
+	}
+
+	if err := client.RevokeAllSessions(ctx); err != nil {
+		t.Fatalf("RevokeAllSessions: %v", err)
+	}
+	requireReceived(t, sess.received, "RevokeAllSessions", &iampb.RevokeAllSessionsRequest{})
 }
 
 func TestGRPCAuth_ServerRefusalsAreConverted(t *testing.T) {
@@ -351,10 +383,12 @@ func TestGRPCAuth_ServerRefusalsAreConverted(t *testing.T) {
 			})
 			return err
 		},
-		"ListProviders": func() error { _, err := client.ListProviders(ctx, "t-1"); return err },
-		"GetProvider":   func() error { _, err := client.GetProvider(ctx, "t-1", "prov-1"); return err },
-		"GetSession":    func() error { _, err := client.GetSession(ctx, "sess-1"); return err },
-		"RevokeSession": func() error { return client.RevokeSession(ctx, "sess-1") },
+		"ListProviders":     func() error { _, err := client.ListProviders(ctx, "t-1"); return err },
+		"GetProvider":       func() error { _, err := client.GetProvider(ctx, "t-1", "prov-1"); return err },
+		"GetSession":        func() error { _, err := client.GetSession(ctx, "sess-1"); return err },
+		"RevokeSession":     func() error { return client.RevokeSession(ctx, "sess-1") },
+		"ListSessions":      func() error { _, err := client.ListSessions(ctx); return err },
+		"RevokeAllSessions": func() error { return client.RevokeAllSessions(ctx) },
 	}
 	for verb, call := range calls {
 		if err := call(); !sdkerrors.IsNotFound(err) {
@@ -471,8 +505,6 @@ func TestGRPCAuth_VerbsWithNoRPCAreRefused(t *testing.T) {
 	calls := map[string]func() error{
 		"GetJWKS":                func() error { _, err := client.GetJWKS(ctx); return err },
 		"GetOpenIDConfiguration": func() error { _, err := client.GetOpenIDConfiguration(ctx); return err },
-		"ListSessions":           func() error { _, err := client.ListSessions(ctx); return err },
-		"RevokeAllSessions":      func() error { return client.RevokeAllSessions(ctx) },
 	}
 	for verb, call := range calls {
 		if err := call(); sdkerrors.Code(err) != sdkerrors.CodeUnimplemented {

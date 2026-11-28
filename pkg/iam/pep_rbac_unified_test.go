@@ -214,6 +214,7 @@ func TestPEPService_UnifiedDecision_MatchesQRDBAuthorizer(t *testing.T) {
 // authorizer is genuinely live-reloadable end to end, not merely
 // constructed once with a static policy set.
 func TestPEPService_LiveReload_FlipsDecisionWithoutRestart(t *testing.T) {
+	t.Parallel()
 	roles := &pepTestRoleServicer{perms: map[string][]permission.Permission{}}
 	rbacAuthorizer := rbac.New(roles)
 
@@ -257,6 +258,7 @@ func TestPEPService_LiveReload_FlipsDecisionWithoutRestart(t *testing.T) {
 // nil) keeps the historical default-deny-on-no-match behavior rather than
 // silently admitting.
 func TestPolicyEvaluator_NilRBACAuthorizer_PreservesDefaultDeny(t *testing.T) {
+	t.Parallel()
 	engine := NewPolicyEngine(PolicyEngineOptions{Storage: NewMemoryStorage()})
 
 	resp, err := engine.Evaluate(context.Background(), &CheckRequest{

@@ -23,6 +23,7 @@ import (
 )
 
 func TestWithImpersonationContext(t *testing.T) {
+	t.Parallel()
 	t.Run("AttachesContextSuccessfully", func(t *testing.T) {
 		ctx := context.Background()
 		impCtx := &ImpersonationContext{
@@ -58,6 +59,7 @@ func TestWithImpersonationContext(t *testing.T) {
 }
 
 func TestGetImpersonationContext(t *testing.T) {
+	t.Parallel()
 	t.Run("ReturnsNilForEmptyContext", func(t *testing.T) {
 		ctx := context.Background()
 		retrieved := GetImpersonationContext(ctx)
@@ -72,6 +74,7 @@ func TestGetImpersonationContext(t *testing.T) {
 }
 
 func TestIsImpersonating(t *testing.T) {
+	t.Parallel()
 	t.Run("ReturnsTrueWhenImpersonating", func(t *testing.T) {
 		ctx := context.Background()
 		impCtx := &ImpersonationContext{
@@ -89,6 +92,7 @@ func TestIsImpersonating(t *testing.T) {
 }
 
 func TestImpersonationContextFromSession(t *testing.T) {
+	t.Parallel()
 	t.Run("CreatesContextFromSession", func(t *testing.T) {
 		session := &ImpersonationSession{
 			ID:             "imp_session1",
@@ -121,6 +125,7 @@ func TestImpersonationContextFromSession(t *testing.T) {
 }
 
 func TestBuildImpersonatedActor(t *testing.T) {
+	t.Parallel()
 	t.Run("BuildsActorCorrectly", func(t *testing.T) {
 		impCtx := &ImpersonationContext{
 			SessionID:      "imp_test123",

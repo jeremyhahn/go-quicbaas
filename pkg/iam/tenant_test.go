@@ -276,6 +276,7 @@ func newTestTenantManager() *DefaultTenantManager {
 // Test CreateTenant
 
 func TestCreateTenant_Success(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -309,6 +310,7 @@ func TestCreateTenant_Success(t *testing.T) {
 }
 
 func TestCreateTenant_WithCustomID(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -328,6 +330,7 @@ func TestCreateTenant_WithCustomID(t *testing.T) {
 }
 
 func TestCreateTenant_InvalidName(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		opts     CreateTenantOptions
@@ -344,6 +347,7 @@ func TestCreateTenant_InvalidName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mgr := newTestTenantManager()
 			ctx := context.Background()
 
@@ -364,6 +368,7 @@ func TestCreateTenant_InvalidName(t *testing.T) {
 }
 
 func TestCreateTenant_InvalidID(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		tenantID string
@@ -381,6 +386,7 @@ func TestCreateTenant_InvalidID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mgr := newTestTenantManager()
 			ctx := context.Background()
 
@@ -404,6 +410,7 @@ func TestCreateTenant_InvalidID(t *testing.T) {
 }
 
 func TestCreateTenant_DuplicateID(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -435,6 +442,7 @@ func TestCreateTenant_DuplicateID(t *testing.T) {
 }
 
 func TestCreateTenant_WithQuotas(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -460,6 +468,7 @@ func TestCreateTenant_WithQuotas(t *testing.T) {
 }
 
 func TestCreateTenant_DefaultQuotas(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -484,6 +493,7 @@ func TestCreateTenant_DefaultQuotas(t *testing.T) {
 // Test GetTenant
 
 func TestGetTenant_Success(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -511,6 +521,7 @@ func TestGetTenant_Success(t *testing.T) {
 }
 
 func TestGetTenant_NotFound(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -525,6 +536,7 @@ func TestGetTenant_NotFound(t *testing.T) {
 }
 
 func TestGetTenant_InvalidID(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		tenantID string
@@ -537,6 +549,7 @@ func TestGetTenant_InvalidID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mgr := newTestTenantManager()
 			ctx := context.Background()
 
@@ -551,6 +564,7 @@ func TestGetTenant_InvalidID(t *testing.T) {
 // Test UpdateTenant
 
 func TestUpdateTenant_Success(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -584,6 +598,7 @@ func TestUpdateTenant_Success(t *testing.T) {
 }
 
 func TestUpdateTenant_NotFound(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -601,6 +616,7 @@ func TestUpdateTenant_NotFound(t *testing.T) {
 }
 
 func TestUpdateTenant_EmptyName(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -632,6 +648,7 @@ func TestUpdateTenant_EmptyName(t *testing.T) {
 }
 
 func TestUpdateTenant_Settings(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -667,6 +684,7 @@ func TestUpdateTenant_Settings(t *testing.T) {
 }
 
 func TestUpdateTenant_Quotas(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -698,6 +716,7 @@ func TestUpdateTenant_Quotas(t *testing.T) {
 }
 
 func TestUpdateTenant_PartialUpdate(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -730,9 +749,64 @@ func TestUpdateTenant_PartialUpdate(t *testing.T) {
 	}
 }
 
+// The self-registration record is the broker's: it is written at create,
+// survives an unrelated update, and only FinishSelfRegistration removes it.
+func TestUpdateTenant_FinishSelfRegistration(t *testing.T) {
+	t.Parallel()
+	mgr := newTestTenantManager()
+	ctx := context.Background()
+	expires := time.Now().Add(5 * time.Minute).UTC()
+
+	_, err := mgr.CreateTenant(ctx, CreateTenantOptions{
+		ID:               "self-reg",
+		Name:             "Self Reg",
+		SelfRegistration: &TenantSelfRegistration{Expires: expires},
+	})
+	if err != nil {
+		t.Fatalf("CreateTenant failed: %v", err)
+	}
+	got, err := mgr.GetTenant(ctx, "self-reg")
+	if err != nil {
+		t.Fatalf("GetTenant failed: %v", err)
+	}
+	if got.SelfRegistration == nil || !got.SelfRegistration.Expires.Equal(expires) {
+		t.Fatalf("Expected the self-registration record to expire at %v, got %+v", expires, got.SelfRegistration)
+	}
+
+	newName := "Renamed"
+	renamed, err := mgr.UpdateTenant(ctx, "self-reg", UpdateTenantOptions{Name: &newName})
+	if err != nil {
+		t.Fatalf("UpdateTenant failed: %v", err)
+	}
+	if renamed.SelfRegistration == nil {
+		t.Error("Expected an unrelated update to keep the self-registration record")
+	}
+
+	finished, err := mgr.UpdateTenant(ctx, "self-reg", UpdateTenantOptions{FinishSelfRegistration: true})
+	if err != nil {
+		t.Fatalf("UpdateTenant failed: %v", err)
+	}
+	if finished.SelfRegistration != nil {
+		t.Errorf("Expected FinishSelfRegistration to remove the record, got %+v", finished.SelfRegistration)
+	}
+}
+
+func TestUpdateTenant_FinishSelfRegistrationNotFound(t *testing.T) {
+	t.Parallel()
+	mgr := newTestTenantManager()
+
+	_, err := mgr.UpdateTenant(context.Background(), "nonexistent-tenant", UpdateTenantOptions{
+		FinishSelfRegistration: true,
+	})
+	if !dberrors.IsNotFound(err) {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+}
+
 // Test DeleteTenant
 
 func TestDeleteTenant_Success(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -759,6 +833,7 @@ func TestDeleteTenant_Success(t *testing.T) {
 }
 
 func TestDeleteTenant_NotFound(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -773,6 +848,7 @@ func TestDeleteTenant_NotFound(t *testing.T) {
 }
 
 func TestDeleteTenant_InvalidID(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -785,6 +861,7 @@ func TestDeleteTenant_InvalidID(t *testing.T) {
 // Test ListTenants
 
 func TestListTenants_Success(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -810,6 +887,7 @@ func TestListTenants_Success(t *testing.T) {
 }
 
 func TestListTenants_WithPagination(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -855,6 +933,7 @@ func TestListTenants_WithPagination(t *testing.T) {
 }
 
 func TestListTenants_Empty(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -871,6 +950,7 @@ func TestListTenants_Empty(t *testing.T) {
 // Test CheckQuota
 
 func TestCheckQuota_Success(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -894,6 +974,7 @@ func TestCheckQuota_Success(t *testing.T) {
 }
 
 func TestCheckQuota_Exceeded(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -933,6 +1014,7 @@ func TestCheckQuota_Exceeded(t *testing.T) {
 }
 
 func TestCheckQuota_UnknownResource(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -957,6 +1039,7 @@ func TestCheckQuota_UnknownResource(t *testing.T) {
 }
 
 func TestCheckQuota_TenantNotFound(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -971,6 +1054,7 @@ func TestCheckQuota_TenantNotFound(t *testing.T) {
 }
 
 func TestCheckQuota_AllResources(t *testing.T) {
+	t.Parallel()
 	resources := []string{
 		QuotaResourceUsers,
 		QuotaResourceRoles,
@@ -980,6 +1064,7 @@ func TestCheckQuota_AllResources(t *testing.T) {
 
 	for _, resource := range resources {
 		t.Run(resource, func(t *testing.T) {
+			t.Parallel()
 			mgr := newTestTenantManager()
 			ctx := context.Background()
 
@@ -1004,6 +1089,7 @@ func TestCheckQuota_AllResources(t *testing.T) {
 // Test Edge Cases
 
 func TestTenantIDGeneration_Uniqueness(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -1029,6 +1115,7 @@ func TestTenantIDGeneration_Uniqueness(t *testing.T) {
 }
 
 func TestTenantIDGeneration_Format(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
@@ -1049,6 +1136,7 @@ func TestTenantIDGeneration_Format(t *testing.T) {
 }
 
 func TestValidateTenantIDPattern(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		id      string
@@ -1073,6 +1161,7 @@ func TestValidateTenantIDPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := validateTenantIDPattern(tt.id)
 			if tt.wantErr {
 				if err == nil {
@@ -1088,6 +1177,7 @@ func TestValidateTenantIDPattern(t *testing.T) {
 }
 
 func TestTenantContextCancellation(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -1101,6 +1191,7 @@ func TestTenantContextCancellation(t *testing.T) {
 }
 
 func TestConcurrentTenantOperations(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 

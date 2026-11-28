@@ -23,6 +23,7 @@ import (
 
 // TestParameterContextFromContext tests retrieving parameter context from context.
 func TestParameterContextFromContext(t *testing.T) {
+	t.Parallel()
 	t.Run("returns parameter context when set", func(t *testing.T) {
 		pc := &ParameterContext{
 			Path:        "/app/config/database",
@@ -71,6 +72,7 @@ func TestParameterContextFromContext(t *testing.T) {
 
 // TestContextWithParameterContext tests setting parameter context in context.
 func TestContextWithParameterContext(t *testing.T) {
+	t.Parallel()
 	t.Run("sets parameter context successfully", func(t *testing.T) {
 		pc := &ParameterContext{
 			Path:      "/app/secret",
@@ -111,6 +113,7 @@ func TestContextWithParameterContext(t *testing.T) {
 
 // TestParameterContextClone tests the Clone method.
 func TestParameterContextClone(t *testing.T) {
+	t.Parallel()
 	t.Run("clones all fields correctly", func(t *testing.T) {
 		original := &ParameterContext{
 			Path:         "/app/database/host",
@@ -212,6 +215,7 @@ func TestParameterContextClone(t *testing.T) {
 
 // TestParameterContextHasTag tests the HasTag method.
 func TestParameterContextHasTag(t *testing.T) {
+	t.Parallel()
 	t.Run("returns true when tag exists with matching value", func(t *testing.T) {
 		pc := &ParameterContext{
 			Tags: map[string]string{
@@ -287,6 +291,7 @@ func TestParameterContextHasTag(t *testing.T) {
 
 // TestParameterContextGetTagValue tests the GetTagValue method.
 func TestParameterContextGetTagValue(t *testing.T) {
+	t.Parallel()
 	t.Run("returns tag value when exists", func(t *testing.T) {
 		pc := &ParameterContext{
 			Tags: map[string]string{
@@ -337,6 +342,7 @@ func TestParameterContextGetTagValue(t *testing.T) {
 
 // TestParameterContextIsPathPrefix tests the IsPathPrefix method.
 func TestParameterContextIsPathPrefix(t *testing.T) {
+	t.Parallel()
 	t.Run("returns true when path starts with prefix", func(t *testing.T) {
 		pc := &ParameterContext{
 			Path: "/app/database/host",
@@ -409,6 +415,7 @@ func TestParameterContextIsPathPrefix(t *testing.T) {
 
 // TestParameterOperationConstants tests that operation constants are defined correctly.
 func TestParameterOperationConstants(t *testing.T) {
+	t.Parallel()
 	t.Run("operation constants have expected values", func(t *testing.T) {
 		assert.Equal(t, "get", ParameterOperationGet)
 		assert.Equal(t, "set", ParameterOperationSet)
@@ -448,6 +455,7 @@ func TestParameterOperationConstants(t *testing.T) {
 
 // TestParameterContextFullWorkflow tests a complete ABAC workflow.
 func TestParameterContextFullWorkflow(t *testing.T) {
+	t.Parallel()
 	t.Run("simulates ABAC evaluation workflow", func(t *testing.T) {
 		// Create a parameter context for a set operation
 		pc := &ParameterContext{
@@ -496,6 +504,7 @@ func TestParameterContextFullWorkflow(t *testing.T) {
 
 // TestParameterContextEdgeCases tests edge cases and boundary conditions.
 func TestParameterContextEdgeCases(t *testing.T) {
+	t.Parallel()
 	t.Run("handles special characters in path", func(t *testing.T) {
 		pc := &ParameterContext{
 			Path: "/app/config/key-with-dashes_and_underscores.json",

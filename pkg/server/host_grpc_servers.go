@@ -103,28 +103,49 @@ func (s *Server) buildSessionServer(getter iamComponentsGetter) iampb.SessionSer
 		s.logger.Warn("QuicBaaS service does not resolve caller accounts; gRPC session RPCs will refuse every caller")
 	}
 	return grpcapi.NewSessionServer(grpcapi.NewSessionServiceAdapter(sessionStorage), callers, s.logger).
-		WithBearerRevoker(oidcBearerRevoker{s: s})
+		WithBearerRevoker(oidcBearerRevoker{s: s}).
+		WithCredentialRevoker(oidcBearerRevoker{s: s})
 }
 
 // oidcBearerRevoker resolves the OIDC provider on each call, because the
 // session server is built before IAM initialisation completes.
 type oidcBearerRevoker struct{ s *Server }
 
-func (r oidcBearerRevoker) RevokeSubjectBearers(ctx context.Context, tenantID, subject, keepSessionID string) (int, error) {
+var _ grpcapi.CredentialRevoker = oidcBearerRevoker{}
+
+// provider resolves the OIDC provider for one revocation call.
+func (r oidcBearerRevoker) provider(ctx context.Context) (*iam.OIDCProvider, error) {
 	getter, ok := r.s.quicBaaSServiceRef().(interface {
 		GetOIDCProvider(context.Context) (*iam.OIDCProvider, error)
 	})
 	if !ok {
-		return 0, status.Error(codes.Unavailable, "login bearer revocation not available: no OIDC provider")
+		return nil, status.Error(codes.Unavailable, "login bearer revocation not available: no OIDC provider")
 	}
 	provider, err := getter.GetOIDCProvider(ctx)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if provider == nil {
-		return 0, status.Error(codes.Unavailable, "login bearer revocation not available: no OIDC provider")
+		return nil, status.Error(codes.Unavailable, "login bearer revocation not available: no OIDC provider")
+	}
+	return provider, nil
+}
+
+func (r oidcBearerRevoker) RevokeSubjectBearers(ctx context.Context, tenantID, subject, keepSessionID string) (int, error) {
+	provider, err := r.provider(ctx)
+	if err != nil {
+		return 0, err
 	}
 	return provider.RevokeSubjectBearers(ctx, tenantID, subject, keepSessionID)
+}
+
+// RevokeSubjectCredentials ends the subject's login credentials in tenantID.
+func (r oidcBearerRevoker) RevokeSubjectCredentials(ctx context.Context, tenantID, subject string) (int, error) {
+	provider, err := r.provider(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return provider.RevokeSubjectCredentials(ctx, tenantID, subject)
 }
 
 // buildAuditServer builds the AuditService server over the IAM audit logger.
@@ -154,3 +175,6 @@ func (s *Server) buildPEPServer(getter iamComponentsGetter) iampb.PEPServiceServ
 	}
 	return grpcapi.NewPEPServer(grpcapi.NewPEPServiceAdapter(engine), s.logger)
 }
+
+// The OIDC provider is what ends a caller's credentials on gRPC logout-all.
+var _ grpcapi.CredentialRevoker = (*iam.OIDCProvider)(nil)

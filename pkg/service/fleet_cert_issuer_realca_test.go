@@ -67,7 +67,7 @@ func TestXKMSAgentCertIssuer_IssuesAVerifiableCertificate(t *testing.T) {
 		Subject: FleetNodeCertificateSubject{
 			CommonName:         "agent-ses-7f3a91",
 			Organization:       testAgentTenant,
-			OrganizationalUnit: DefaultFleetNodeCertOU,
+			OrganizationalUnit: testAgentTenant,
 		},
 		ExtraDNSNames:     []string{"localhost"},
 		ValidityDays:      1,
@@ -98,9 +98,9 @@ func TestXKMSAgentCertIssuer_IssuesAVerifiableCertificate(t *testing.T) {
 	if leaf.Subject.CommonName != "agent-ses-7f3a91" {
 		t.Errorf("CommonName = %q", leaf.Subject.CommonName)
 	}
-	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != DefaultFleetNodeCertOU {
-		t.Errorf("OU = %v, want %q: the register handler rejects any other value",
-			leaf.Subject.OrganizationalUnit, DefaultFleetNodeCertOU)
+	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != testAgentTenant {
+		t.Errorf("OU = %v, want %q: the OU carries the tenant (#1388)",
+			leaf.Subject.OrganizationalUnit, testAgentTenant)
 	}
 	if len(leaf.Subject.Organization) == 0 || leaf.Subject.Organization[0] != testAgentTenant {
 		t.Errorf("O = %v, want the tenant", leaf.Subject.Organization)
@@ -186,8 +186,8 @@ func TestXKMSAgentCertIssuer_AppliesDefaults(t *testing.T) {
 	if len(leaf.Subject.Organization) == 0 || leaf.Subject.Organization[0] != testAgentTenant {
 		t.Errorf("O = %v, want the tenant default", leaf.Subject.Organization)
 	}
-	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != DefaultFleetNodeCertOU {
-		t.Errorf("OU = %v, want %q", leaf.Subject.OrganizationalUnit, DefaultFleetNodeCertOU)
+	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != testAgentTenant {
+		t.Errorf("OU = %v, want %q", leaf.Subject.OrganizationalUnit, testAgentTenant)
 	}
 	// DefaultFleetNodeCertValidityDays, allowing a day of slack for the CA's own
 	// not-before backdating.
@@ -455,7 +455,7 @@ func TestXKMSAgentCertIssuer_FallsBackToTheCACertificate(t *testing.T) {
 	issued, err := issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{
 		TenantID: testAgentTenant,
 		Hostname: "agent-04",
-		Subject:  FleetNodeCertificateSubject{OrganizationalUnit: DefaultFleetNodeCertOU},
+		Subject:  FleetNodeCertificateSubject{OrganizationalUnit: testAgentTenant},
 	})
 	if err != nil {
 		t.Fatalf("IssueFleetNodeCertificate: %v", err)

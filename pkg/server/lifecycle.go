@@ -172,6 +172,36 @@ func (s *Server) appendPlatformClientCAs(tlsConfig *tls.Config) error {
 	return nil
 }
 
+// applyClientCertPosture trusts the operator's client trust anchors and the
+// platform xkms CA on tlsConfig and sets its client-auth mode: every client
+// must present a certificate with Security.TLSClientAuth, otherwise one is
+// requested whenever a client CA is configured.
+func (s *Server) applyClientCertPosture(tlsConfig *tls.Config) error {
+	// Trust the operator's security.tls_ca_file set in the handshake,
+	// with optional mTLS unless full mTLS is configured.
+	if s.clientTrustAnchors != nil {
+		s.appendClientTrustAnchors(tlsConfig)
+		if !s.config.Security.TLSClientAuth {
+			tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
+		}
+	}
+	// Both postures trust the platform xkms CA alongside the operator's
+	// client CAs, so the certificates this node issues (agent mTLS certs,
+	// cert-mode tenant admins) verify on its own listener. Full-mTLS
+	// clusters also require every client to present a cert
+	// (go-quicbaas#1727).
+	if s.config.Security.TLSClientAuth {
+		return s.appendPlatformClientCAs(tlsConfig)
+	}
+	if err := s.trustPlatformClientCAs(tlsConfig); err != nil {
+		return err
+	}
+	if tlsConfig.ClientCAs != nil {
+		tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
+	}
+	return nil
+}
+
 // trustPlatformClientCAs appends the platform xkms CA bundle to
 // tlsConfig.ClientCAs without changing the client-auth mode. The CA signs the
 // certificates this node hands out itself (cert-mode tenant admins, agent mTLS
@@ -280,6 +310,12 @@ func (s *Server) initializeCA() error {
 	// intact. In production this is always a first build.
 	if s.secretRegistry == nil {
 		s.secretRegistry = s.buildSecretRegistry()
+	}
+
+	// Load the operator's security.tls_ca_file before the path is defaulted
+	// below. A configured file that cannot be read is a boot error.
+	if err := s.loadOperatorClientTrustAnchors(); err != nil {
+		return err
 	}
 
 	// When the caller provides an external CA, adopt it. This MUST happen
@@ -638,7 +674,8 @@ func (s *Server) initializeCA() error {
 		s.config.Security.TLSKeyFile = filepath.Join(certsDir, "server.key")
 	}
 	if s.config.Security.TLSCAFile == "" {
-		s.config.Security.TLSCAFile = filepath.Join(certsDir, "ca-chain.crt")
+		s.config.Security.TLSCAFile = s.defaultTLSCAFile()
+		s.tlsCAFileDefaulted = true
 	}
 	s.config.Security.TLSEnabled = true
 
@@ -657,36 +694,8 @@ func (s *Server) initializeCA() error {
 			MinVersion:   tls.VersionTLS13,
 			NextProtos:   []string{"h2", "http/1.1"},
 		}
-		// Wire the operator-provided CA for optional mTLS so per-route
-		// client-cert validation still works with externally-managed
-		// chains.
-		if s.config.Security.TLSCAFile != "" {
-			if caBytes, caErr := os.ReadFile(s.config.Security.TLSCAFile); caErr == nil {
-				pool := x509.NewCertPool()
-				if pool.AppendCertsFromPEM(caBytes) {
-					s.tlsConfig.ClientCAs = pool
-					if !s.config.Security.TLSClientAuth {
-						s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
-					}
-				}
-			}
-		}
-		// Both postures trust the platform xkms CA alongside the operator's
-		// client CAs, so the certificates this node issues (agent mTLS certs,
-		// cert-mode tenant admins) verify on its own listener. Full-mTLS
-		// clusters also require every client to present a cert
-		// (go-quicbaas#1727).
-		if s.config.Security.TLSClientAuth {
-			if err := s.appendPlatformClientCAs(s.tlsConfig); err != nil {
-				return err
-			}
-		} else {
-			if err := s.trustPlatformClientCAs(s.tlsConfig); err != nil {
-				return err
-			}
-			if s.tlsConfig.ClientCAs != nil {
-				s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
-			}
+		if err := s.applyClientCertPosture(s.tlsConfig); err != nil {
+			return err
 		}
 		s.logger.Infof("TLS configured from operator-provided cert: %s", s.config.Security.TLSCertFile)
 		return nil
@@ -745,17 +754,25 @@ func (s *Server) initializeCA() error {
 	//   - TLSClientAuth=true  → RequireAndVerifyClientCert: every connection must
 	//     present a CA-signed client cert, with the platform CA appended to any
 	//     operator-supplied client CAs (appendPlatformClientCAs).
+	// The operator's security.tls_ca_file set is trusted alongside the
+	// platform CA in both postures.
 	if !s.config.Security.TLSClientAuth {
+		pool := x509.NewCertPool()
+		platformTrusted := false
 		if caBundle, caErr := xkmsCA.CABundle(); caErr == nil && len(caBundle) > 0 {
-			pool := x509.NewCertPool()
-			if pool.AppendCertsFromPEM(caBundle) {
-				s.tlsConfig.ClientCAs = pool
-				s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
-				s.logger.Info("TLS configured with optional mTLS (per-route client cert validation)")
-			}
+			platformTrusted = pool.AppendCertsFromPEM(caBundle)
 		}
-	} else if err := s.appendPlatformClientCAs(s.tlsConfig); err != nil {
-		return err
+		s.clientTrustAnchors.appendTo(pool)
+		if platformTrusted || s.clientTrustAnchors != nil {
+			s.tlsConfig.ClientCAs = pool
+			s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
+			s.logger.Info("TLS configured with optional mTLS (per-route client cert validation)")
+		}
+	} else {
+		s.appendClientTrustAnchors(s.tlsConfig)
+		if err := s.appendPlatformClientCAs(s.tlsConfig); err != nil {
+			return err
+		}
 	}
 
 	// Advertise gRPC ALPN (h2) on the in-memory TLS config so gRPC
@@ -771,12 +788,17 @@ func (s *Server) initializeCA() error {
 			return err
 		}
 
-		caBundle, err := xkmsCA.CABundle()
-		if err != nil {
-			return api.NewOperationFailedError("get CA bundle", err)
-		}
-		if err := os.WriteFile(s.config.Security.TLSCAFile, caBundle, 0600); err != nil {
-			return api.NewDataDirOperationError("server.initializeCA", "write CA chain", s.config.Security.TLSCAFile, err)
+		// The chain is written only to the path this boot defaulted: an
+		// operator's tls_ca_file, even at the same path, is their trust-anchor
+		// set and is never overwritten.
+		if s.tlsCAFileDefaulted {
+			caBundle, err := xkmsCA.CABundle()
+			if err != nil {
+				return api.NewOperationFailedError("get CA bundle", err)
+			}
+			if err := os.WriteFile(s.config.Security.TLSCAFile, caBundle, 0600); err != nil {
+				return api.NewDataDirOperationError("server.initializeCA", "write CA chain", s.config.Security.TLSCAFile, err)
+			}
 		}
 	}
 
@@ -863,7 +885,7 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 			MinVersion:   tls.VersionTLS13,
 			NextProtos:   []string{"h2", "http/1.1"},
 		}
-		return nil
+		return s.applyClientCertPosture(s.tlsConfig)
 	}
 
 	// Issue a server TLS certificate through the external CA
@@ -933,6 +955,9 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 	// the gRPC server's TLS handshake completes for clients that
 	// negotiate HTTP/2.
 	s.tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+	if err := s.applyClientCertPosture(s.tlsConfig); err != nil {
+		return err
+	}
 
 	s.logger.Info("TLS certificate issued from external CA")
 	return nil

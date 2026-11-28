@@ -55,15 +55,20 @@ type testTenantManager struct {
 	// the way production's DefaultTenantManager does (iam_init.go
 	// SetRoleSeeder). Nil leaves the tenant without roles.
 	roleSeeder iam.TenantRoleSeeder
+
+	// onUpdate, when set, is called first by UpdateTenant, so a test can
+	// observe the state at the moment of a tenant write.
+	onUpdate func(id string, opts iam.UpdateTenantOptions)
 }
 
 func (m *testTenantManager) CreateTenant(ctx context.Context, opts iam.CreateTenantOptions) (*iam.Tenant, error) {
 	m.lastCreateOpts = opts
 	tenant := &iam.Tenant{
-		ID:      opts.ID,
-		Name:    opts.Name,
-		Created: time.Now(),
-		Updated: time.Now(),
+		ID:               opts.ID,
+		Name:             opts.Name,
+		SelfRegistration: opts.SelfRegistration,
+		Created:          time.Now(),
+		Updated:          time.Now(),
 	}
 	if opts.Settings != nil {
 		tenant.Settings = *opts.Settings
@@ -86,7 +91,16 @@ func (m *testTenantManager) GetTenant(ctx context.Context, id string) (*iam.Tena
 	return m.storage.GetTenant(ctx, id)
 }
 
+// ClaimSelfRegistration takes the claim through the in-memory storage, as
+// production's DefaultTenantManager does through its storage.
+func (m *testTenantManager) ClaimSelfRegistration(ctx context.Context, id string, claim iam.SelfRegistrationClaim) (*iam.Tenant, error) {
+	return m.storage.ClaimSelfRegistration(ctx, id, claim)
+}
+
 func (m *testTenantManager) UpdateTenant(ctx context.Context, id string, opts iam.UpdateTenantOptions) (*iam.Tenant, error) {
+	if m.onUpdate != nil {
+		m.onUpdate(id, opts)
+	}
 	tenant, err := m.storage.GetTenant(ctx, id)
 	if err != nil {
 		return nil, err
@@ -99,6 +113,9 @@ func (m *testTenantManager) UpdateTenant(ctx context.Context, id string, opts ia
 	}
 	if opts.Quotas != nil {
 		tenant.Quotas = *opts.Quotas
+	}
+	if opts.FinishSelfRegistration {
+		tenant.SelfRegistration = nil
 	}
 	tenant.Updated = time.Now()
 	if err := m.storage.UpdateTenant(ctx, tenant); err != nil {
@@ -533,15 +550,17 @@ func TestIAMHandler_ListUsers_Success(t *testing.T) {
 // "groups" key in the body is not part of the user schema, so it does not come
 // back on the response.
 func TestIAMHandler_CreateUser_GroupsIsNotAUserField(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-member", TenantID: "tenant1", Name: "member"}))
 
-	body := `{"email": "withgroups@example.com", "username": "withgroups", "name": "With Groups", "groups": ["group-ops"]}`
+	body := `{"email": "withgroups@example.com", "username": "withgroups", "name": "With Groups", "groups": ["group-ops"], "roles": ["role-member"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req = withRoleAssignCaller(server, req)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
 	w := httptest.NewRecorder()
 
@@ -555,15 +574,17 @@ func TestIAMHandler_CreateUser_GroupsIsNotAUserField(t *testing.T) {
 }
 
 func TestIAMHandler_CreateUser_Success(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-member", TenantID: "tenant1", Name: "member"}))
 
-	body := `{"email": "newuser@example.com", "username": "newuser", "name": "New User"}`
+	body := `{"email": "newuser@example.com", "username": "newuser", "name": "New User", "roles": ["role-member"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req = withRoleAssignCaller(server, req)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
 	w := httptest.NewRecorder()
 
@@ -579,15 +600,17 @@ func TestIAMHandler_CreateUser_Success(t *testing.T) {
 // the response MUST carry those fields. invite_token, invite_expires_at, and
 // invite_url must be present so the caller can deliver the invite.
 func TestIAMHandler_CreateUser_ResponseShape(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-member", TenantID: "tenant1", Name: "member"}))
 
-	body := `{"email": "shape@example.com", "username": "shape-user", "name": "Shape Test User"}`
+	body := `{"email": "shape@example.com", "username": "shape-user", "name": "Shape Test User", "roles": ["role-member"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req = withRoleAssignCaller(server, req)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
 	w := httptest.NewRecorder()
 
@@ -894,6 +917,39 @@ func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
 	stored, err := memStorage.GetUserByEmail(ctx, "tenant1", "withroles@example.com")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"role-auditor"}, stored.Roles)
+}
+
+// A user with no roles would authenticate into an authorization vacuum, so
+// the create is refused with 400 and nothing is written (#75).
+func TestIAMHandler_CreateUser_NoRolesRefused(t *testing.T) {
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+
+	for name, roles := range map[string]string{
+		"omitted": ``,
+		"empty":   `, "roles": []`,
+		"blank":   `, "roles": ["", "  "]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			email := "noroles-" + name + "@example.com"
+			body := `{"email": "` + email + `", "username": "noroles` + name + `"` + roles + `}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
+			req.Header.Set("Content-Type", "application/json")
+			req = withRoleAssignCaller(server, req)
+			req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+			w := httptest.NewRecorder()
+
+			handler.CreateUser(w, req)
+			require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+			assert.Contains(t, w.Body.String(), "at least one role is required")
+
+			_, err := memStorage.GetUserByEmail(ctx, "tenant1", email)
+			assert.Error(t, err, "a refused create must write no user")
+		})
+	}
 }
 
 // TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser proves the REST

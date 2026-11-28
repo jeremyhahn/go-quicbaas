@@ -28,8 +28,9 @@ import (
 // record no longer grants: the record must win. The groups claim is the names
 // of the roles the record binds, since the account holds no group list.
 func TestIssueSessionToken_RoundTrip(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, memStorage := createTestOIDCProvider(t)
-	user := seedCeremonyUser(t, memStorage, "tenant-a", "user-42", []string{"admin", "operator"})
+	user := seedCeremonyUser(t, memStorage, "tenant-a", "user-42@example.com", []string{"admin", "operator"})
 	for _, r := range []*Role{
 		{ID: "admin", TenantID: "tenant-a", Name: "Administrators"},
 		{ID: "operator", TenantID: "tenant-a", Name: "Operators"},
@@ -89,11 +90,12 @@ func TestIssueSessionToken_RoundTrip(t *testing.T) {
 // TestRevokeSessionToken invalidates a minted bearer so subsequent validation
 // fails — the logout path for ceremony-issued session tokens.
 func TestRevokeSessionToken(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, memStorage := createTestOIDCProvider(t)
-	seedCeremonyUser(t, memStorage, "tenant-a", "user-1", []string{"viewer"})
+	seedCeremonyUser(t, memStorage, "tenant-a", "user-1@example.com", []string{"viewer"})
 
 	token, _, err := provider.IssueSessionToken(t.Context(), SessionIdentity{
-		Subject:  "user-1",
+		Subject:  "user-1@example.com",
 		TenantID: "tenant-a",
 	})
 	if err != nil {

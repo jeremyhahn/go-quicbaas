@@ -21,6 +21,7 @@ import (
 
 // claimEmailVerified handles bool, string, missing, and unrecognised shapes.
 func TestClaimEmailVerified(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		claims map[string]interface{}
@@ -36,6 +37,7 @@ func TestClaimEmailVerified(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := claimEmailVerified(tc.claims); got != tc.want {
 				t.Fatalf("claimEmailVerified(%v) = %v, want %v", tc.claims, got, tc.want)
 			}
@@ -45,6 +47,7 @@ func TestClaimEmailVerified(t *testing.T) {
 
 // emailDomain extracts the normalized domain, returning "" for malformed input.
 func TestEmailDomain(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"alice@Example.COM": "example.com",
 		"no-at-sign":        "",
@@ -60,6 +63,7 @@ func TestEmailDomain(t *testing.T) {
 
 // emailDomainAllowed enforces the allowlist, permitting all when empty.
 func TestEmailDomainAllowed(t *testing.T) {
+	t.Parallel()
 	if !emailDomainAllowed(nil, "anyone@anywhere.com") {
 		t.Fatal("empty allowlist must permit all domains")
 	}
@@ -77,6 +81,7 @@ func TestEmailDomainAllowed(t *testing.T) {
 
 // groupMatches handles exact, prefix, case-insensitive, and empty cases.
 func TestGroupMatches(t *testing.T) {
+	t.Parallel()
 	if !groupMatches(GroupRoleMapping{Group: "Admins"}, "admins") {
 		t.Fatal("exact case-insensitive match expected")
 	}
@@ -96,6 +101,7 @@ func TestGroupMatches(t *testing.T) {
 
 // tenant_provisioner accessors round-trip their configured values.
 func TestTenantManager_ProvisionerAccessors(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	if mgr.Provisioner() != nil {
 		t.Fatal("Provisioner() should be nil by default")
@@ -120,6 +126,7 @@ func (o *observerRecorder) OnTenantSettingsChanged(tenantID string) {
 // AddSettingsObserver registers an observer that fires on UpdateTenant; a nil
 // observer is ignored.
 func TestTenantManager_AddSettingsObserver(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mgr := newTestTenantManager()
 
@@ -144,6 +151,7 @@ func TestTenantManager_AddSettingsObserver(t *testing.T) {
 
 // WithFederationClock ignores a nil clock and installs a usable one otherwise.
 func TestWithFederationClock(t *testing.T) {
+	t.Parallel()
 	m := &DefaultFederationManager{}
 	WithFederationClock(nil)(m)
 	if m.now != nil {
@@ -161,6 +169,7 @@ func TestWithFederationClock(t *testing.T) {
 
 // WebAuthnLoginSessionError renders a default message for nil/empty reason.
 func TestWebAuthnLoginSessionError_DefaultMessage(t *testing.T) {
+	t.Parallel()
 	var nilErr *WebAuthnLoginSessionError
 	if nilErr.Error() == "" {
 		t.Fatal("nil receiver must still render a message")

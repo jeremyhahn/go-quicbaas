@@ -21,6 +21,7 @@ func (revocationDownStorage) IsTokenRevoked(context.Context, string) (bool, erro
 }
 
 func TestValidateAccessToken_RevocationStoreErrorDeniesToken(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 	token, _ := mintIntrospectToken(t, provider, "tenant-a", "fc-user", 0, time.Hour)
@@ -42,6 +43,7 @@ func TestValidateAccessToken_RevocationStoreErrorDeniesToken(t *testing.T) {
 }
 
 func TestRefreshSession_RevocationStoreErrorMintsNothing(t *testing.T) {
+	t.Parallel()
 	provider, _ := newSessionRefreshProvider(t, 15*time.Minute, time.Hour)
 	ctx := context.Background()
 

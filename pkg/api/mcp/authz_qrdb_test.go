@@ -31,6 +31,9 @@ func TestGetToolQRDBPermission_Mapped(t *testing.T) {
 		{"qrdb_get", "kv", "get"},
 		{"qrdb_put", "kv", "put"},
 		{"qrdb_delete", "kv", "delete"},
+		{"quicbaas_kv_get", "kv", "get"},
+		{"quicbaas_kv_put", "kv", "put"},
+		{"quicbaas_kv_delete", "kv", "delete"},
 		{"quicbaas_batch_put", "batch", "execute"},
 		// User administration is the quicbaas_iam_user_* family; the
 		// quicbaas_user_* / quicbaas_role_* names that used to be pinned here

@@ -142,6 +142,7 @@ func TestBeginEnrollmentRejectsSHA1UnderFIPS(t *testing.T) {
 // default is SHA256, so this is the end-to-end proof the MFA path works in FIPS
 // mode without panicking.
 func TestEnrollAndVerifyUsesModeAlgorithm(t *testing.T) {
+	t.Parallel()
 	m, err := NewMFAManager()
 	require.NoError(t, err)
 
@@ -165,6 +166,7 @@ func TestEnrollAndVerifyUsesModeAlgorithm(t *testing.T) {
 // that tells the operator the user must re-enroll - it never panics, and it is
 // never silently downgraded.
 func TestVerifyCodeStoredSHA1Secret(t *testing.T) {
+	t.Parallel()
 	m, err := NewMFAManager(WithMFAConfig(MFAConfig{Algorithm: MFAAlgorithmSHA256}))
 	require.NoError(t, err)
 
@@ -228,6 +230,7 @@ func TestConvertAlgorithmRejectsUnknown(t *testing.T) {
 // TestMFASecretValidateRejectsUnknownAlgorithm verifies a corrupted record
 // cannot be persisted. An empty algorithm predates the field and stays valid.
 func TestMFASecretValidateRejectsUnknownAlgorithm(t *testing.T) {
+	t.Parallel()
 	secret := func(algo MFAAlgorithm) *MFASecret {
 		return &MFASecret{
 			ID: "secret-1", UserID: 1000123, TenantID: "tenant-123",
@@ -251,6 +254,7 @@ func TestMFASecretValidateRejectsUnknownAlgorithm(t *testing.T) {
 // restart, a rolling deployment, or a move into FIPS mode during the ten
 // minute enrollment window.
 func TestCompleteEnrollmentUsesProvisionedParameters(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryMFAStorage()
 	ctx := context.Background()
 
@@ -288,6 +292,7 @@ func TestCompleteEnrollmentUsesProvisionedParameters(t *testing.T) {
 // would verify a SHA1 QR code under SHA256 and reject every code the
 // authenticator app produces.
 func TestCompleteEnrollmentLegacyEnrollmentUsesSHA1(t *testing.T) {
+	t.Parallel()
 	m, err := NewMFAManager()
 	require.NoError(t, err)
 

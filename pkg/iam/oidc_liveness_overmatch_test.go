@@ -86,6 +86,7 @@ var errForeignNotFound = &dberrors.QBError{
 // the thing whose failure used to be read as "service principal, therefore
 // live".
 func TestPrincipalLive_NeitherClaimConsultsNoStore(t *testing.T) {
+	t.Parallel()
 	p := livenessProvider(t, errForeignNotFound)
 
 	live, err := p.principalLive(context.Background(), "acme", "operator", 0, "")
@@ -99,6 +100,7 @@ func TestPrincipalLive_NeitherClaimConsultsNoStore(t *testing.T) {
 // store fails every call, and the answer is still live — which is only correct
 // because nothing was asked of it.
 func TestPrincipalLive_ServicePrincipalNeedsNoLookup(t *testing.T) {
+	t.Parallel()
 	p := livenessProvider(t, errForeignNotFound)
 
 	live, err := p.principalLive(context.Background(), "acme", "app_acme_x", 0, PrincipalTypeService)
@@ -112,6 +114,7 @@ func TestPrincipalLive_ServicePrincipalNeedsNoLookup(t *testing.T) {
 // the consequence here is the operator's, not the caller's: (false, nil) says
 // the account is gone, and nothing establishes that.
 func TestPrincipalLive_ForeignNotFoundIsNotADeletedAccount(t *testing.T) {
+	t.Parallel()
 	p := livenessProvider(t, errForeignNotFound)
 
 	live, err := p.principalLive(context.Background(), "acme", "operator", 77, "")
@@ -122,6 +125,7 @@ func TestPrincipalLive_ForeignNotFoundIsNotADeletedAccount(t *testing.T) {
 
 // TestPrincipalLive_DeletedAccountStillDeniesQuietly is the positive half.
 func TestPrincipalLive_DeletedAccountStillDeniesQuietly(t *testing.T) {
+	t.Parallel()
 	p := livenessProvider(t, ErrUserNotFound)
 
 	live, err := p.principalLive(context.Background(), "acme", "operator", 77, "")

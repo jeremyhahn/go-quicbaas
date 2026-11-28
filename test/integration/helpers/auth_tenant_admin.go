@@ -156,9 +156,9 @@ func deleteTenantAsSystemAdmin(ctx context.Context, baseURL, tenantID string) er
 // invite flow, binding the cert. adminBearer is the system admin's: the users
 // route requires users:create (the same permission as gRPC CreateUser), and
 // since go-quicbaas#2342 a system caller acts in the tenant the URL names,
-// re-authorized there through the tenant lift. The user holds no role: the
-// caller grants whatever the principal is for.
-func enrollTenantPIVUser(ctx context.Context, baseURL, tenantID, adminBearer string) (userID string, certPEM, keyPEM []byte, err error) {
+// re-authorized there through the tenant lift. The user is created holding
+// roleID, the role the principal is for: user create refuses a user with no role.
+func enrollTenantPIVUser(ctx context.Context, baseURL, tenantID, roleID, adminBearer string) (userID string, certPEM, keyPEM []byte, err error) {
 	certPEM, keyPEM, err = IssueTenantClientCert(ctx, tenantID)
 	if err != nil {
 		return "", nil, nil, &TenantAdminCertError{TenantID: tenantID, Cause: err}
@@ -166,7 +166,7 @@ func enrollTenantPIVUser(ctx context.Context, baseURL, tenantID, adminBearer str
 
 	// The create-user response carries the one-time invite_token.
 	email := fmt.Sprintf("tenant-admin-%s@integration.test", sanitizeTenantID(tenantID))
-	userID, inviteToken, err := createTenantAdminUser(ctx, baseURL, tenantID, email, adminBearer)
+	userID, inviteToken, err := createTenantAdminUser(ctx, baseURL, tenantID, email, roleID, adminBearer)
 	if err != nil {
 		return "", nil, nil, &TenantProvisionError{Step: "create user", TenantID: tenantID, Cause: err}
 	}
@@ -251,13 +251,14 @@ func IssueTenantClientCert(ctx context.Context, tenantID string) (certPEM, keyPE
 // tenant admin's bearer and returns the user ID and the one-time invite token.
 // The user is provisioned with auth_methods=["piv"] so the PIV activation
 // path is expected.
-func createTenantAdminUser(ctx context.Context, baseURL, tenantID, email, adminBearer string) (userID, inviteToken string, err error) {
+func createTenantAdminUser(ctx context.Context, baseURL, tenantID, email, roleID, adminBearer string) (userID, inviteToken string, err error) {
 	reqBody := map[string]interface{}{
 		"email":        email,
 		"username":     "tenant-admin-" + sanitizeTenantID(tenantID),
 		"name":         "Tenant Admin (" + tenantID + ")",
 		"enabled":      true,
 		"auth_methods": []string{"piv"},
+		"roles":        []string{roleID},
 	}
 
 	endpoint := baseURL + "/api/v1/tenants/" + tenantID + "/users"

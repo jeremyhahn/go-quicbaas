@@ -488,6 +488,16 @@ type Server struct {
 	// Created by initializeCA() and used by all transport layers.
 	tlsConfig *tls.Config
 
+	// clientTrustAnchors is the operator's security.tls_ca_file set, loaded
+	// once by initializeCA. The handshake and the client-certificate
+	// authenticators share it; nil when no tls_ca_file is configured.
+	clientTrustAnchors *clientTrustAnchors
+
+	// tlsCAFileDefaulted is true once initializeCA filled an empty
+	// security.tls_ca_file with defaultTLSCAFile(). Only then is that file the
+	// server's own chain; an operator may configure the same path.
+	tlsCAFileDefaulted bool
+
 	// Barrier management - uses the interfaces.BarrierManager abstraction
 	// backed by qrdb's StorageBarrier via the BarrierSealManager adapter.
 	barrierManager interfaces.BarrierManager

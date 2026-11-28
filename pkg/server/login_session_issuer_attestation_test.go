@@ -30,14 +30,18 @@ type enrolledFactorClient struct {
 	qrdbtransport.UserAuthFactorClient
 
 	wantFactorID string
-	metadata     map[string]string
-	err          error
+	// tenantID, when set, scopes the factor to the tenant it was enrolled
+	// in: a read whose context carries another tenant does not find it.
+	tenantID string
+	metadata map[string]string
+	userID   uint64
+	err      error
 
 	gets int
 }
 
 func (c *enrolledFactorClient) GetAuthFactor(
-	_ context.Context, req *qrdbtransport.AuthFactorGetRequest,
+	ctx context.Context, req *qrdbtransport.AuthFactorGetRequest,
 ) (*qrdbtransport.AuthFactorGetResponse, error) {
 	c.gets++
 	if c.err != nil {
@@ -46,8 +50,13 @@ func (c *enrolledFactorClient) GetAuthFactor(
 	if req == nil || req.FactorID != c.wantFactorID {
 		return nil, errors.New("no such factor")
 	}
+	if c.tenantID != "" {
+		if tenantID, _ := qrdbauth.TenantFromContext(ctx); tenantID != c.tenantID {
+			return nil, errors.New("no such factor in this tenant")
+		}
+	}
 	return &qrdbtransport.AuthFactorGetResponse{
-		Factor: qrdbtransport.AuthFactorRecord{ID: req.FactorID, Metadata: c.metadata},
+		Factor: qrdbtransport.AuthFactorRecord{ID: req.FactorID, UserID: c.userID, Metadata: c.metadata},
 	}, nil
 }
 
@@ -57,7 +66,7 @@ func (c *enrolledFactorClient) GetAuthFactor(
 // no seam to replace that hydrator, which is why the issuer reads the record.
 func webauthnLoginIdentity(factorID string) *qrdbauth.Identity {
 	return &qrdbauth.Identity{
-		Subject:  "user-42",
+		Subject:  "user-42@example.test",
 		TenantID: "acme",
 		Metadata: map[string]string{
 			authMethodMetadataKey: "fido2",
@@ -109,6 +118,110 @@ func TestOIDCSessionIssuer_WebAuthnLoginReplaysEnrolledAttestation(t *testing.T)
 	}
 	if factors.gets != 1 {
 		t.Fatalf("the factor was read %d times, want exactly 1", factors.gets)
+	}
+}
+
+// passkeyUsernameIdentity is a WebAuthn login whose subject is the username,
+// as an invited admin's passkey login presents it (go-quicbaas#377).
+func passkeyUsernameIdentity(factorID string) *qrdbauth.Identity {
+	identity := webauthnLoginIdentity(factorID)
+	identity.Subject = "user-42"
+	return identity
+}
+
+// Issue copies the user go-qrdb bound to the verified factor into the session
+// identity, so a username-subject passkey login resolves to that user — even
+// when the factor record carries no attestation metadata (ruling 254 option 1).
+func TestOIDCSessionIssuer_PasskeyLoginResolvesTheFactorOwner(t *testing.T) {
+	provider, users := newTestOIDCProviderWithUsers(t)
+	seedSessionUser(t, users, "acme", "user-42", []string{"admin"})
+	ctx := context.Background()
+	owner, err := users.GetUserByUsername(ctx, "acme", "user-42")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+
+	issuer := newOIDCSessionIssuer()
+	issuer.SetProvider(provider)
+	issuer.SetAuthFactorClient(&enrolledFactorClient{wantFactorID: "factor-1", userID: owner.ID})
+
+	token, _, err := issuer.Issue(ctx, passkeyUsernameIdentity("factor-1"))
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	claims, err := provider.ValidateAccessToken(ctx, token)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken: %v", err)
+	}
+	if claims.UserID != owner.ID {
+		t.Fatalf("uid = %d, want the factor owner's %d", claims.UserID, owner.ID)
+	}
+}
+
+// A factor that cannot be read binds no user, so the username subject stays
+// unresolvable and the login is refused rather than resolved by name.
+func TestOIDCSessionIssuer_PasskeyLoginWithUnreadableFactorIsRefused(t *testing.T) {
+	provider, users := newTestOIDCProviderWithUsers(t)
+	seedSessionUser(t, users, "acme", "user-42", []string{"admin"})
+
+	issuer := newOIDCSessionIssuer()
+	issuer.SetProvider(provider)
+	issuer.SetAuthFactorClient(&enrolledFactorClient{wantFactorID: "another-factor"})
+
+	if _, _, err := issuer.Issue(context.Background(), passkeyUsernameIdentity("factor-1")); err == nil {
+		t.Fatal("Issue resolved a username subject with no go-qrdb-bound user")
+	}
+}
+
+// A passkey enrolled in a tenant is read in the login identity's tenant, so
+// the login resolves to the user go-qrdb bound to it (go-quicbaas#377).
+func TestOIDCSessionIssuer_PasskeyLoginReadsTheFactorInItsTenant(t *testing.T) {
+	provider, users := newTestOIDCProviderWithUsers(t)
+	seedSessionUser(t, users, "acme", "user-42", []string{"admin"})
+	ctx := context.Background()
+	owner, err := users.GetUserByUsername(ctx, "acme", "user-42")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+
+	issuer := newOIDCSessionIssuer()
+	issuer.SetProvider(provider)
+	issuer.SetAuthFactorClient(&enrolledFactorClient{
+		wantFactorID: "factor-1", tenantID: "acme", userID: owner.ID,
+	})
+
+	token, _, err := issuer.Issue(ctx, passkeyUsernameIdentity("factor-1"))
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	claims, err := provider.ValidateAccessToken(ctx, token)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken: %v", err)
+	}
+	if claims.UserID != owner.ID {
+		t.Fatalf("uid = %d, want the factor owner's %d", claims.UserID, owner.ID)
+	}
+}
+
+// A passkey enrolled in another tenant is not found by this tenant's login,
+// so it binds no user and the username subject is refused.
+func TestOIDCSessionIssuer_PasskeyOfAnotherTenantIsNotFound(t *testing.T) {
+	provider, users := newTestOIDCProviderWithUsers(t)
+	seedSessionUser(t, users, "acme", "user-42", []string{"admin"})
+	ctx := context.Background()
+	owner, err := users.GetUserByUsername(ctx, "acme", "user-42")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+
+	issuer := newOIDCSessionIssuer()
+	issuer.SetProvider(provider)
+	issuer.SetAuthFactorClient(&enrolledFactorClient{
+		wantFactorID: "factor-1", tenantID: "globex", userID: owner.ID,
+	})
+
+	if _, _, err := issuer.Issue(ctx, passkeyUsernameIdentity("factor-1")); err == nil {
+		t.Fatal("Issue resolved a login through a factor enrolled in another tenant")
 	}
 }
 
@@ -189,7 +302,7 @@ func TestOIDCSessionIssuer_AttestationFailuresUnderstateNeverOverstate(t *testin
 			name:    "identity carries no factor id",
 			factors: &enrolledFactorClient{wantFactorID: "factor-1"},
 			id: &qrdbauth.Identity{
-				Subject: "user-42", TenantID: "acme",
+				Subject: "user-42@example.test", TenantID: "acme",
 				Metadata: map[string]string{authMethodMetadataKey: "fido2"},
 			},
 			wire: true,
@@ -197,7 +310,7 @@ func TestOIDCSessionIssuer_AttestationFailuresUnderstateNeverOverstate(t *testin
 		{
 			name:    "identity carries no metadata at all",
 			factors: &enrolledFactorClient{wantFactorID: "factor-1"},
-			id:      &qrdbauth.Identity{Subject: "user-42", TenantID: "acme"},
+			id:      &qrdbauth.Identity{Subject: "user-42@example.test", TenantID: "acme"},
 			wire:    true,
 		},
 	} {

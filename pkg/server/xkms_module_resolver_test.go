@@ -42,7 +42,6 @@ func TestXKMSModuleResolver_KeystoreServesCAAfterLateAdoption(t *testing.T) {
 	srv := withTempServer(t)
 	srv.config.Security.TLSEnabled = true
 	srv.config.CA.KeysDir = filepath.Join(t.TempDir(), "ca-keys")
-	srv.config.Security.TLSCAFile = filepath.Join(t.TempDir(), "ca-chain.crt")
 
 	services := newResolverKeystoreModule(t, srv)
 

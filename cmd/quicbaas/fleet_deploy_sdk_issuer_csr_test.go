@@ -30,6 +30,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -40,6 +41,7 @@ import (
 	pkgservice "github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -57,11 +59,18 @@ func TestSDKAgentCertIssuer_PostsASignableCSRAndKeepsTheMatchingKey(t *testing.T
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if req.Profile != pkgservice.FleetNodeCertProfile {
+			http.Error(w, "unexpected profile "+req.Profile, http.StatusBadRequest)
+			return
+		}
 		gotCSR = req.CSRPEM
 
 		cert, signErr := ca.SignCSR(r.Context(), req.CSRPEM, &xkmssdk.TrustedCASignOptions{
-			ValidityDays: req.ValidityDays,
-			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+			ValidityDays:      req.ValidityDays,
+			ExtKeyUsage:       []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+			TenantID:          req.TenantID,
+			SPIFFETrustDomain: "quicbaas.test",
+			SPIFFEKind:        qrdbsdk.SpiffeKindService,
 		})
 		if signErr != nil {
 			http.Error(w, signErr.Error(), http.StatusUnprocessableEntity)
@@ -102,8 +111,8 @@ func TestSDKAgentCertIssuer_PostsASignableCSRAndKeepsTheMatchingKey(t *testing.T
 	require.NotEmpty(t, csr.Subject.Organization)
 	assert.Equal(t, "automatethethings", csr.Subject.Organization[0])
 	require.NotEmpty(t, csr.Subject.OrganizationalUnit)
-	assert.Equal(t, "agents", csr.Subject.OrganizationalUnit[0],
-		"the control plane's register handler rejects any other OU")
+	assert.Equal(t, "automatethethings", csr.Subject.OrganizationalUnit[0],
+		"the subject OU carries the tenant, which the fleet enrollment endpoint requires")
 	assert.ElementsMatch(t, []string{"agent01.example.com", "alt.example.com"}, csr.DNSNames)
 
 	// 3. The certificate the CA returned verifies against the bundle shipped
@@ -128,6 +137,47 @@ func TestSDKAgentCertIssuer_PostsASignableCSRAndKeepsTheMatchingKey(t *testing.T
 	leafPub, err := x509.MarshalPKIXPublicKey(leaf.PublicKey)
 	require.NoError(t, err)
 	require.Equal(t, csrPub, leafPub, "the certified key is not the key that requested certification")
+}
+
+// TestSDKAgentCertIssuer_RefusesALeafWithoutAServiceSAN pins finding 2 of the
+// #2447 review: a CA that signs without a svc-kind tenant SPIFFE SAN must not
+// hand the deploy a certificate the fleet enrollment endpoint would refuse.
+func TestSDKAgentCertIssuer_RefusesALeafWithoutAServiceSAN(t *testing.T) {
+	ca := xkmsca.New(t, "QuicBaaS #2447 Agent Deploy Root CA")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/xkms/ca/sign", func(w http.ResponseWriter, r *http.Request) {
+		var req xkmsSignCSRRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cert, signErr := ca.SignCSR(r.Context(), req.CSRPEM, &xkmssdk.TrustedCASignOptions{
+			ValidityDays: req.ValidityDays,
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		})
+		if signErr != nil {
+			http.Error(w, signErr.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		bundle, _ := ca.CABundle()
+		_ = json.NewEncoder(w).Encode(&xkmsSignCSRResponse{
+			CertificatePEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}),
+			ChainPEM:       bundle,
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	issuer := &sdkFleetNodeCertIssuer{baseURL: srv.URL, httpClient: srv.Client()}
+	out, err := issuer.IssueFleetNodeCertificate(context.Background(), &pkgservice.FleetNodeCertificateRequest{
+		TenantID: "automatethethings",
+		Hostname: "agent01.example.com",
+	})
+	var kindErr *pkgservice.FleetNodeCertKindUnavailableError
+	require.True(t, errors.As(err, &kindErr), "err = %v, want *FleetNodeCertKindUnavailableError", err)
+	assert.Equal(t, "automatethethings", kindErr.TenantID)
+	assert.Nil(t, out)
 }
 
 // A CA that refuses the CSR surfaces as an error with nothing returned: the

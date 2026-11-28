@@ -75,6 +75,7 @@ func goodWebAuthnOverride() *TenantWebAuthnConfig {
 }
 
 func TestTenantWebAuthnConfig_Validate_AcceptsWellFormedAndInheritingOverrides(t *testing.T) {
+	t.Parallel()
 	var none *TenantWebAuthnConfig
 	assert.NoError(t, none.Validate(), "a nil override defers to the global relying party")
 	assert.NoError(t, (&TenantWebAuthnConfig{}).Validate(), "empty fields inherit the global values")
@@ -83,8 +84,10 @@ func TestTenantWebAuthnConfig_Validate_AcceptsWellFormedAndInheritingOverrides(t
 }
 
 func TestTenantWebAuthnConfig_Validate_RefusesWhatTheGlobalConfigRefuses(t *testing.T) {
+	t.Parallel()
 	for _, tt := range invalidWebAuthnOverrides {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.override.Validate()
 			var overrideErr *TenantWebAuthnOverrideError
 			require.True(t, errors.As(err, &overrideErr), "got %v", err)
@@ -100,6 +103,7 @@ func TestTenantWebAuthnConfig_Validate_RefusesWhatTheGlobalConfigRefuses(t *test
 }
 
 func TestCreateTenant_AcceptsAValidWebAuthnOverride(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mgr := NewDefaultTenantManager(NewMemoryStorage())
 
@@ -116,8 +120,10 @@ func TestCreateTenant_AcceptsAValidWebAuthnOverride(t *testing.T) {
 }
 
 func TestCreateTenant_RefusesAnInvalidWebAuthnOverride(t *testing.T) {
+	t.Parallel()
 	for _, tt := range invalidWebAuthnOverrides {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			ctx := context.Background()
 			mgr := NewDefaultTenantManager(NewMemoryStorage())
 			override := tt.override
@@ -136,8 +142,10 @@ func TestCreateTenant_RefusesAnInvalidWebAuthnOverride(t *testing.T) {
 }
 
 func TestUpdateTenant_RefusesAnInvalidWebAuthnOverride(t *testing.T) {
+	t.Parallel()
 	for _, tt := range invalidWebAuthnOverrides {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			ctx := context.Background()
 			mgr := NewDefaultTenantManager(NewMemoryStorage())
 			_, err := mgr.CreateTenant(ctx, CreateTenantOptions{
@@ -168,6 +176,7 @@ func TestUpdateTenant_RefusesAnInvalidWebAuthnOverride(t *testing.T) {
 // override from the tenant write to the relying-party config the WebAuthn
 // factory resolves for that tenant.
 func TestUpdateTenant_StoredOverrideIsTheOneTheFactoryUses(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mgr := NewDefaultTenantManager(NewMemoryStorage())
 	_, err := mgr.CreateTenant(ctx, CreateTenantOptions{ID: "acme", Name: "Acme"})
@@ -187,8 +196,10 @@ func TestUpdateTenant_StoredOverrideIsTheOneTheFactoryUses(t *testing.T) {
 }
 
 func TestWebAuthnFactory_BuildFailsClosedOnAStoredInvalidOverride(t *testing.T) {
+	t.Parallel()
 	for _, tt := range invalidWebAuthnOverrides {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// An override stored before writes were validated reaches the
 			// factory unchecked; only the build stands between it and a
 			// relying party that can never verify a ceremony.

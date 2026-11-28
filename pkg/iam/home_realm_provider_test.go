@@ -41,6 +41,7 @@ func newHRDWithTenant(t *testing.T) (*HomeRealmDirectory, context.Context) {
 // Single-provider shortcut: a tenant with exactly one enabled provider resolves
 // unambiguously even with no explicit per-domain or default mapping.
 func TestResolveProvider_SingleProviderShortcut(t *testing.T) {
+	t.Parallel()
 	dir, ctx := newHRDWithTenant(t)
 	lister := stubProviderLister{providers: []*ExternalProvider{
 		{ID: "okta-1", TenantID: "tenant-acme", Enabled: true},
@@ -60,6 +61,7 @@ func TestResolveProvider_SingleProviderShortcut(t *testing.T) {
 
 // Disabled providers are excluded from the single-provider shortcut count.
 func TestResolveProvider_SingleProviderShortcutIgnoresDisabled(t *testing.T) {
+	t.Parallel()
 	dir, ctx := newHRDWithTenant(t)
 	lister := stubProviderLister{providers: []*ExternalProvider{
 		{ID: "okta-1", TenantID: "tenant-acme", Enabled: true},
@@ -78,6 +80,7 @@ func TestResolveProvider_SingleProviderShortcutIgnoresDisabled(t *testing.T) {
 // Per-domain provider mapping wins over the default/shortcut and routes a
 // specific domain to a specific IdP.
 func TestResolveProvider_EmailDomainMapping(t *testing.T) {
+	t.Parallel()
 	dir, ctx := newHRDWithTenant(t)
 	// Two providers configured => shortcut would be ambiguous; the per-domain
 	// mapping must take priority.
@@ -101,6 +104,7 @@ func TestResolveProvider_EmailDomainMapping(t *testing.T) {
 // Default provider fallback: no per-domain mapping, multiple providers, but a
 // registered default resolves cleanly.
 func TestResolveProvider_DefaultFallback(t *testing.T) {
+	t.Parallel()
 	dir, ctx := newHRDWithTenant(t)
 	if err := dir.SetDefaultProvider(ctx, "tenant-acme", "okta-1"); err != nil {
 		t.Fatalf("SetDefaultProvider: %v", err)
@@ -122,6 +126,7 @@ func TestResolveProvider_DefaultFallback(t *testing.T) {
 // Ambiguous fail-closed: multiple enabled providers, no per-domain mapping, no
 // default => the directory refuses to guess.
 func TestResolveProvider_AmbiguousFailClosed(t *testing.T) {
+	t.Parallel()
 	dir, ctx := newHRDWithTenant(t)
 	lister := stubProviderLister{providers: []*ExternalProvider{
 		{ID: "okta-1", TenantID: "tenant-acme", Enabled: true},
@@ -136,6 +141,7 @@ func TestResolveProvider_AmbiguousFailClosed(t *testing.T) {
 
 // A nil lister with no routing entries is also ambiguous (fail-closed).
 func TestResolveProvider_NilListerAmbiguous(t *testing.T) {
+	t.Parallel()
 	dir, ctx := newHRDWithTenant(t)
 	_, err := dir.ResolveProvider(ctx, RealmHints{Email: "e@acme.example"}, nil)
 	if !errors.As(err, new(*HRDProviderAmbiguousError)) {
@@ -146,6 +152,7 @@ func TestResolveProvider_NilListerAmbiguous(t *testing.T) {
 // A lister error is treated as ambiguous (fail-closed), never as a silent
 // success.
 func TestResolveProvider_ListerErrorFailClosed(t *testing.T) {
+	t.Parallel()
 	dir, ctx := newHRDWithTenant(t)
 	lister := stubProviderLister{err: errors.New("store down")}
 	_, err := dir.ResolveProvider(ctx, RealmHints{Email: "f@acme.example"}, lister)
@@ -157,6 +164,7 @@ func TestResolveProvider_ListerErrorFailClosed(t *testing.T) {
 // Unresolvable tenant: ResolveProvider fails closed with the tenant-level
 // HRDNotFoundError before any provider selection.
 func TestResolveProvider_TenantNotFound(t *testing.T) {
+	t.Parallel()
 	dir, ctx := newHRDWithTenant(t)
 	_, err := dir.ResolveProvider(ctx, RealmHints{Email: "g@unknown.example"}, nil)
 	if !errors.As(err, new(*HRDNotFoundError)) {
@@ -167,6 +175,7 @@ func TestResolveProvider_TenantNotFound(t *testing.T) {
 // Local realm: a tenant routes its domain to the local-factor path via the
 // LocalRealmProviderID sentinel; IsLocalRealm reports true.
 func TestResolveProvider_LocalRealmViaDomain(t *testing.T) {
+	t.Parallel()
 	dir, ctx := newHRDWithTenant(t)
 	if err := dir.RegisterDomainProvider(ctx, "tenant-acme", "acme.example", LocalRealmProviderID); err != nil {
 		t.Fatalf("RegisterDomainProvider(local): %v", err)
@@ -183,6 +192,7 @@ func TestResolveProvider_LocalRealmViaDomain(t *testing.T) {
 
 // Local realm via the tenant default selector.
 func TestResolveProvider_LocalRealmViaDefault(t *testing.T) {
+	t.Parallel()
 	dir, ctx := newHRDWithTenant(t)
 	if err := dir.SetDefaultProvider(ctx, "tenant-acme", LocalRealmProviderID); err != nil {
 		t.Fatalf("SetDefaultProvider(local): %v", err)
@@ -198,6 +208,7 @@ func TestResolveProvider_LocalRealmViaDefault(t *testing.T) {
 
 // SNI host / parent-domain routing for per-domain provider mapping.
 func TestResolveProvider_SNIParentDomainMapping(t *testing.T) {
+	t.Parallel()
 	dir := mustHRD(t)
 	ctx := context.Background()
 	if err := dir.RegisterDomain(ctx, "tenant-b", "tenant-b.io"); err != nil {
@@ -218,6 +229,7 @@ func TestResolveProvider_SNIParentDomainMapping(t *testing.T) {
 
 // RegisterDomainProvider input validation and ownership guards.
 func TestRegisterDomainProvider_Validation(t *testing.T) {
+	t.Parallel()
 	dir := mustHRD(t)
 	ctx := context.Background()
 
@@ -238,6 +250,7 @@ func TestRegisterDomainProvider_Validation(t *testing.T) {
 }
 
 func TestSetDefaultProvider_Validation(t *testing.T) {
+	t.Parallel()
 	dir := mustHRD(t)
 	ctx := context.Background()
 	if err := dir.SetDefaultProvider(ctx, "", "p"); !errors.As(err, new(*HRDInvalidError)) {
@@ -249,6 +262,7 @@ func TestSetDefaultProvider_Validation(t *testing.T) {
 }
 
 func TestHRDProviderAmbiguousError_Message(t *testing.T) {
+	t.Parallel()
 	e := &HRDProviderAmbiguousError{TenantID: "t"}
 	if e.Error() == "" {
 		t.Fatal("empty error message")
@@ -267,6 +281,7 @@ func mustHRD(t *testing.T) *HomeRealmDirectory {
 // ResolveProviderForTenant selects within an already-known tenant without
 // re-running tenant discovery (the hint carries no email/SNI).
 func TestResolveProviderForTenant_SingleProvider(t *testing.T) {
+	t.Parallel()
 	dir := mustHRD(t)
 	ctx := context.Background()
 	lister := stubProviderLister{providers: []*ExternalProvider{
@@ -282,6 +297,7 @@ func TestResolveProviderForTenant_SingleProvider(t *testing.T) {
 }
 
 func TestResolveProviderForTenant_EmptyTenant(t *testing.T) {
+	t.Parallel()
 	dir := mustHRD(t)
 	_, err := dir.ResolveProviderForTenant(context.Background(), "", RealmHints{}, nil)
 	if !errors.As(err, new(*HRDInvalidError)) {
@@ -292,6 +308,7 @@ func TestResolveProviderForTenant_EmptyTenant(t *testing.T) {
 // ResolveProvider honours an explicit tenant hint validated against a registered
 // SNI host entry (anti-spoof: the hint must match a real routing entry).
 func TestResolveProvider_ExplicitHintViaSNIHost(t *testing.T) {
+	t.Parallel()
 	dir := mustHRD(t)
 	ctx := context.Background()
 	if err := dir.RegisterHost(ctx, "tenant-h", "portal.tenant-h.io"); err != nil {
@@ -313,6 +330,7 @@ func TestResolveProvider_ExplicitHintViaSNIHost(t *testing.T) {
 // ResolveProvider honours an explicit tenant hint validated against a registered
 // parent-domain entry reached from an SNI subdomain.
 func TestResolveProvider_ExplicitHintViaSNIParentDomain(t *testing.T) {
+	t.Parallel()
 	dir := mustHRD(t)
 	ctx := context.Background()
 	if err := dir.RegisterDomain(ctx, "tenant-p", "tenant-p.io"); err != nil {
@@ -334,6 +352,7 @@ func TestResolveProvider_ExplicitHintViaSNIParentDomain(t *testing.T) {
 // Resolve honours an explicit tenant hint validated against an exact SNI host
 // entry (exercises the anti-spoof exact-host branch).
 func TestResolve_ExplicitHintExactHost(t *testing.T) {
+	t.Parallel()
 	dir := mustHRD(t)
 	ctx := context.Background()
 	if err := dir.RegisterHost(ctx, "tenant-x", "edge.tenant-x.io"); err != nil {
@@ -352,6 +371,7 @@ func TestResolve_ExplicitHintExactHost(t *testing.T) {
 // owns no matching entry) and resolution falls through to the authoritative SNI
 // host entry, never to the attacker-asserted tenant.
 func TestResolve_SpoofedHintIgnored(t *testing.T) {
+	t.Parallel()
 	dir := mustHRD(t)
 	ctx := context.Background()
 	if err := dir.RegisterHost(ctx, "tenant-real", "edge.tenant-real.io"); err != nil {
@@ -368,6 +388,7 @@ func TestResolve_SpoofedHintIgnored(t *testing.T) {
 
 // RegisterDomain / RegisterHost reject empty inputs (fail-closed validation).
 func TestRegister_EmptyInputsRejected(t *testing.T) {
+	t.Parallel()
 	dir := mustHRD(t)
 	ctx := context.Background()
 	if err := dir.RegisterDomain(ctx, "", "d.example"); !errors.As(err, new(*HRDInvalidError)) {
@@ -388,6 +409,7 @@ func TestRegister_EmptyInputsRejected(t *testing.T) {
 // trailing dot, or single-label parent like "com"), so HRD never routes on a
 // non-domain.
 func TestResolveProvider_NoRoutableParentDomain(t *testing.T) {
+	t.Parallel()
 	dir := mustHRD(t)
 	ctx := context.Background()
 	// "localhost" has no parent label, and "host.com" has only the single-label
@@ -410,6 +432,7 @@ func (getErrorKVStore) Get(context.Context, string) ([]byte, error) {
 // A shared-store Get error during resolution is a clean miss -> fail closed,
 // never a silent route to a wrong tenant.
 func TestResolve_SharedStoreErrorFailsClosed(t *testing.T) {
+	t.Parallel()
 	dir, err := NewHomeRealmDirectory(getErrorKVStore{KVStore: newMockKVStore()})
 	if err != nil {
 		t.Fatalf("NewHomeRealmDirectory: %v", err)
@@ -423,6 +446,7 @@ func TestResolve_SharedStoreErrorFailsClosed(t *testing.T) {
 // parentDomain strips a :port before computing the registrable parent so an
 // SNI host carrying a port still routes via its registered parent domain.
 func TestResolveProvider_SNIHostWithPort(t *testing.T) {
+	t.Parallel()
 	dir := mustHRD(t)
 	ctx := context.Background()
 	if err := dir.RegisterDomain(ctx, "tenant-port", "tenant-port.io"); err != nil {

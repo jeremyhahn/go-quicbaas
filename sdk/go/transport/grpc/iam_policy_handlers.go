@@ -15,6 +15,8 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -26,8 +28,10 @@ import (
 )
 
 // grpcPolicyTransport names this transport in a policyfields refusal. The
-// IAM proto carries a policy as spec_yaml only until #1405, so structured
-// rules, conditions, subjects and targets are refused instead of dropped.
+// IAM proto carries a policy as spec_yaml or as structured rules holding a
+// name, effect, priority and action and resource patterns. What the engine
+// cannot store (conditions, targets, rule subjects, matcher negate, resource
+// type and attributes) is refused instead of dropped.
 const grpcPolicyTransport = "gRPC"
 
 // handleCreatePolicy handles CreatePolicy requests.
@@ -39,7 +43,11 @@ func (h *iamHandler) handleCreatePolicy(ctx context.Context, client iampb.IAMSer
 
 	tenantID, _ := getString(reqMap, "tenant_id")
 	requestData, _ := getMap(reqMap, "request")
-	if err := policyfields.Refuse("handleCreatePolicy", grpcPolicyTransport, requestData); err != nil {
+	if err := policyfields.RefuseUnstorable("handleCreatePolicy", grpcPolicyTransport, requestData); err != nil {
+		return nil, err
+	}
+	rules, err := policyRulesToProto("handleCreatePolicy", requestData)
+	if err != nil {
 		return nil, err
 	}
 
@@ -56,6 +64,7 @@ func (h *iamHandler) handleCreatePolicy(ctx context.Context, client iampb.IAMSer
 		Labels:      labels,
 		Priority:    int32(priority),
 		SpecYaml:    specYAML,
+		Rules:       rules,
 	}
 
 	resp, err := client.CreatePolicy(ctx, pbReq)
@@ -89,7 +98,9 @@ func (h *iamHandler) handleGetPolicy(ctx context.Context, client iampb.IAMServic
 	return convertProtoPolicyToSDK(resp), nil
 }
 
-// handleUpdatePolicy handles UpdatePolicy requests.
+// handleUpdatePolicy handles UpdatePolicy requests. On the server spec_yaml
+// replaces the stored spec, structured rules replace only the stored rules,
+// and a request carrying both is refused.
 func (h *iamHandler) handleUpdatePolicy(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
 	reqMap, ok := toMap(req)
 	if !ok {
@@ -99,21 +110,18 @@ func (h *iamHandler) handleUpdatePolicy(ctx context.Context, client iampb.IAMSer
 	tenantID, _ := getString(reqMap, "tenant_id")
 	policyName, _ := getString(reqMap, "policy_name")
 	requestData, _ := getMap(reqMap, "request")
-	if err := policyfields.Refuse("handleUpdatePolicy", grpcPolicyTransport, requestData); err != nil {
+	if err := policyfields.RefuseUnstorable("handleUpdatePolicy", grpcPolicyTransport, requestData); err != nil {
+		return nil, err
+	}
+	rules, err := policyRulesToProto("handleUpdatePolicy", requestData)
+	if err != nil {
 		return nil, err
 	}
 
 	description, _ := getString(requestData, "description")
 	labels, _ := getStringMap(requestData, "labels")
 	priority, _ := getInt(requestData, "priority")
-	// The server's UpdatePolicy does not apply spec_yaml yet (#1406): it
-	// echoes the bytes back while keeping the stored rules, so a caller
-	// could not tell the replacement was dropped. Refuse before the RPC.
-	if specYAML, _ := getBytes(requestData, "spec_yaml"); len(specYAML) > 0 {
-		return nil, errors.NewInvalidInput("handleUpdatePolicy",
-			"spec_yaml cannot be sent on a policy update over "+grpcPolicyTransport+
-				"; the server does not apply it yet")
-	}
+	specYAML, _ := getBytes(requestData, "spec_yaml")
 
 	pbReq := &iampb.UpdatePolicyRequest{
 		TenantId:    tenantID,
@@ -121,6 +129,8 @@ func (h *iamHandler) handleUpdatePolicy(ctx context.Context, client iampb.IAMSer
 		Description: description,
 		Labels:      labels,
 		Priority:    int32(priority),
+		Rules:       rules,
+		SpecYaml:    specYAML,
 	}
 
 	resp, err := client.UpdatePolicy(ctx, pbReq)
@@ -129,6 +139,56 @@ func (h *iamHandler) handleUpdatePolicy(ctx context.Context, client iampb.IAMSer
 	}
 
 	return convertProtoPolicyToSDK(resp), nil
+}
+
+// policyRulesToProto maps a policy request's structured rules to the proto
+// rules, or returns nil when the request carries none. Call it after
+// policyfields.RefuseUnstorable: what the engine cannot store is refused
+// there, so only names, effects, priorities and patterns are left to map.
+func policyRulesToProto(op string, requestData map[string]interface{}) ([]*iampb.PolicyRule, error) {
+	raw, ok := requestData["rules"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.CodeInvalidInput, op, "policy rules are not JSON-encodable")
+	}
+	var sdkRules []iam.Rule
+	if err := json.Unmarshal(data, &sdkRules); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInvalidInput, op, "policy rules are not valid rules")
+	}
+	if len(sdkRules) == 0 {
+		return nil, nil
+	}
+	rules := make([]*iampb.PolicyRule, 0, len(sdkRules))
+	for i, r := range sdkRules {
+		var effect string
+		switch r.Effect {
+		case iam.EffectAllow:
+			effect = "allow"
+		case iam.EffectDeny:
+			effect = "deny"
+		default:
+			return nil, errors.NewInvalidInput(op, "rules["+strconv.Itoa(i)+"].effect must be allow or deny")
+		}
+		actions := make([]string, 0, len(r.Actions))
+		for _, a := range r.Actions {
+			actions = append(actions, a.Pattern)
+		}
+		resources := make([]string, 0, len(r.Resources))
+		for _, res := range r.Resources {
+			resources = append(resources, res.Pattern)
+		}
+		rules = append(rules, &iampb.PolicyRule{
+			Name:      r.Name,
+			Effect:    effect,
+			Priority:  int32(r.Priority),
+			Actions:   actions,
+			Resources: resources,
+		})
+	}
+	return rules, nil
 }
 
 // handleDeletePolicy handles DeletePolicy requests.
@@ -165,11 +225,16 @@ func (h *iamHandler) handleListPolicies(ctx context.Context, client iampb.IAMSer
 	tenantID, _ := getString(reqMap, "tenant_id")
 	requestData, _ := getMap(reqMap, "request")
 
-	pageSize, _ := getInt(requestData, "page_size")
+	limit, _ := getInt(requestData, "limit")
+	offset, err := policyCursorOffset("handleListPolicies", requestData)
+	if err != nil {
+		return nil, err
+	}
 
 	pbReq := &iampb.ListPoliciesRequest{
 		TenantId: tenantID,
-		Limit:    int32(pageSize),
+		Limit:    int32(limit),
+		Offset:   offset,
 	}
 
 	resp, err := client.ListPolicies(ctx, pbReq)
@@ -184,10 +249,27 @@ func (h *iamHandler) handleListPolicies(ctx context.Context, client iampb.IAMSer
 		}
 	}
 
+	p := iamPagination(offset, limit, len(resp.Policies), resp.Total)
 	return &iam.ListPoliciesResponse{
 		Policies:   policies,
+		NextCursor: p.NextPageToken,
+		HasMore:    p.HasMore,
 		TotalCount: int64(resp.Total),
 	}, nil
+}
+
+// policyCursorOffset reads the policy list's "cursor": the decimal offset a
+// previous page returned as its next cursor. Empty means the first page.
+func policyCursorOffset(op string, m map[string]interface{}) (int32, error) {
+	cursor, _ := getString(m, "cursor")
+	if cursor == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(cursor, 10, 32)
+	if err != nil || n < 0 {
+		return 0, errors.NewInvalidInput(op, "invalid cursor")
+	}
+	return int32(n), nil
 }
 
 // handleValidatePolicy handles ValidatePolicy requests.
@@ -584,8 +666,23 @@ func (h *iamHandler) handleRotateAppSecret(ctx context.Context, client iampb.IAM
 // used to extract rules from the SpecYaml field in the proto response.
 type policySpecYAML struct {
 	Spec struct {
-		Rules []specRuleYAML `yaml:"rules"`
+		Rules   []specRuleYAML `yaml:"rules"`
+		Enabled *bool          `yaml:"enabled"`
 	} `yaml:"spec"`
+}
+
+// parseEnabledFromSpecYAML reports whether a YAML policy specification is
+// enabled. An absent spec.enabled means enabled; only an explicit false
+// disables the policy.
+func parseEnabledFromSpecYAML(specYAML []byte) bool {
+	var spec policySpecYAML
+	if err := yaml.Unmarshal(specYAML, &spec); err != nil {
+		return true
+	}
+	if spec.Spec.Enabled == nil {
+		return true
+	}
+	return *spec.Spec.Enabled
 }
 
 // specRuleYAML represents a single rule in the YAML policy spec.
@@ -643,6 +740,7 @@ func convertProtoPolicyToSDK(p *iampb.Policy) *iam.Policy {
 		Priority:    int(p.Priority),
 		Labels:      p.Labels,
 		SpecYAML:    p.SpecYaml,
+		Enabled:     parseEnabledFromSpecYAML(p.SpecYaml),
 	}
 
 	if p.CreatedAt != nil {

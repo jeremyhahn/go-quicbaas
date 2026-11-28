@@ -77,8 +77,8 @@ func TestHashSecret_ProducesNonInvertibleDigest(t *testing.T) {
 	if parseErr != nil {
 		t.Fatalf("digest is not a PBKDF2 hash: %v", parseErr)
 	}
-	if parsed.iterations != pbkdf2Iterations {
-		t.Errorf("iterations = %d, want %d", parsed.iterations, pbkdf2Iterations)
+	if parsed.iterations != secretWorkFactor {
+		t.Errorf("iterations = %d, want %d", parsed.iterations, secretWorkFactor)
 	}
 	if len(parsed.salt) != pbkdf2SaltLength {
 		t.Errorf("salt = %d bytes, want %d — FIPS requires at least 128 bits", len(parsed.salt), pbkdf2SaltLength)
@@ -136,21 +136,21 @@ func TestParseSecretHash_RejectsMalformedDigests(t *testing.T) {
 		stored string
 	}{
 		{"empty", ""},
-		{"too few fields", "$pbkdf2-sha256$i=600000$c2FsdA"},
+		{"too few fields", "$pbkdf2-sha256$" + fields[2] + "$c2FsdA"},
 		{"no leading delimiter", strings.TrimPrefix(valid, "$")},
-		{"unknown scheme", "$scrypt$i=600000$" + fields[3] + "$" + fields[4]},
-		{"missing iteration prefix", "$pbkdf2-sha256$600000$" + fields[3] + "$" + fields[4]},
+		{"unknown scheme", "$scrypt$" + fields[2] + "$" + fields[3] + "$" + fields[4]},
+		{"missing iteration prefix", "$pbkdf2-sha256$" + strconv.Itoa(secretWorkFactor) + "$" + fields[3] + "$" + fields[4]},
 		{"non-numeric iterations", "$pbkdf2-sha256$i=many$" + fields[3] + "$" + fields[4]},
 		{"zero iterations", "$pbkdf2-sha256$i=0$" + fields[3] + "$" + fields[4]},
 		{"negative iterations", "$pbkdf2-sha256$i=-1$" + fields[3] + "$" + fields[4]},
-		{"iterations above the accepted factor", "$pbkdf2-sha256$i=" + strconv.Itoa(pbkdf2Iterations+1) + "$" + fields[3] + "$" + fields[4]},
-		{"iterations below the accepted factor", "$pbkdf2-sha256$i=1000$" + fields[3] + "$" + fields[4]},
+		{"iterations above the accepted factor", "$pbkdf2-sha256$i=" + strconv.Itoa(secretWorkFactor+1) + "$" + fields[3] + "$" + fields[4]},
+		{"iterations below the accepted factor", "$pbkdf2-sha256$i=" + strconv.Itoa(secretWorkFactor-1) + "$" + fields[3] + "$" + fields[4]},
 		{"iterations at MaxInt32", "$pbkdf2-sha256$i=2147483647$" + fields[3] + "$" + fields[4]},
-		{"salt is not base64", "$pbkdf2-sha256$i=600000$!!!!$" + fields[4]},
-		{"salt below 128 bits", "$pbkdf2-sha256$i=600000$c2hvcnQ$" + fields[4]},
-		{"salt above the accepted length", "$pbkdf2-sha256$i=600000$" + secretHashEncoding.EncodeToString(make([]byte, pbkdf2SaltLength+1)) + "$" + fields[4]},
-		{"key is not base64", "$pbkdf2-sha256$i=600000$" + fields[3] + "$!!!!"},
-		{"key is the wrong length", "$pbkdf2-sha256$i=600000$" + fields[3] + "$c2hvcnQ"},
+		{"salt is not base64", "$pbkdf2-sha256$" + fields[2] + "$!!!!$" + fields[4]},
+		{"salt below 128 bits", "$pbkdf2-sha256$" + fields[2] + "$c2hvcnQ$" + fields[4]},
+		{"salt above the accepted length", "$pbkdf2-sha256$" + fields[2] + "$" + secretHashEncoding.EncodeToString(make([]byte, pbkdf2SaltLength+1)) + "$" + fields[4]},
+		{"key is not base64", "$pbkdf2-sha256$" + fields[2] + "$" + fields[3] + "$!!!!"},
+		{"key is the wrong length", "$pbkdf2-sha256$" + fields[2] + "$" + fields[3] + "$c2hvcnQ"},
 	}
 
 	for _, tc := range cases {
@@ -186,7 +186,11 @@ func TestCompareSecretHash_RejectsEveryWorkFactorButTheAccepted(t *testing.T) {
 
 	salt := []byte("sixteen-byte-slt")
 
-	for _, iterations := range []int{1, 1000, pbkdf2Iterations - 1, pbkdf2Iterations + 1, 10 * pbkdf2Iterations} {
+	// The neighbours of the accepted factor are relative to secretWorkFactor
+	// (lowered in this test binary, #721); pbkdf2Iterations itself is only a
+	// non-accepted factor here, which the production-side check in
+	// secret_kdf_workfactor_test.go mirrors.
+	for _, iterations := range []int{1, secretWorkFactor - 1, secretWorkFactor + 1, 10 * secretWorkFactor} {
 		key, err := pbkdf2.Key(sha256.New, secret, salt, iterations, pbkdf2KeyLength)
 		if err != nil {
 			t.Fatalf("i=%d: unexpected error: %v", iterations, err)
@@ -219,14 +223,19 @@ func TestCompareSecretHash_RefusesAnOversizedSaltWithoutRunningTheKDF(t *testing
 	// rather than the iteration side, and letting stored data dictate CPU and
 	// allocation. This package always writes exactly pbkdf2SaltLength, so
 	// anything else is refused during parsing.
-	digest, err := hashSecret("s3cr3t-client-secret")
+	//
+	// The calibration is one derivation at the PRODUCTION factor, not the
+	// test binary's lowered one (#721): decoding a 4 MiB salt is cheap next to
+	// 600,000 iterations but not next to 1,000, and the claim is about the
+	// production cost.
+	digest, err := deriveSecretHashAt("s3cr3t-client-secret", pbkdf2Iterations)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	fields := strings.Split(digest, "$")
 
 	start := time.Now()
-	if !compareSecretHash(digest, "s3cr3t-client-secret") {
+	if !compareSecretHashAt(digest, "s3cr3t-client-secret", pbkdf2Iterations) {
 		t.Fatal("the honest digest must verify")
 	}
 	honest := time.Since(start)
@@ -236,7 +245,7 @@ func TestCompareSecretHash_RefusesAnOversizedSaltWithoutRunningTheKDF(t *testing
 			secretHashEncoding.EncodeToString(make([]byte, saltLen)) + "$" + fields[4]
 
 		start := time.Now()
-		matched := compareSecretHash(oversized, "s3cr3t-client-secret")
+		matched := compareSecretHashAt(oversized, "s3cr3t-client-secret", pbkdf2Iterations)
 		elapsed := time.Since(start)
 
 		if matched {
@@ -261,7 +270,10 @@ func TestCompareSecretHash_RefusesAnOversizedWorkFactorWithoutRunningTheKDF(t *t
 	// The rejection has to happen during parsing, so what this test really
 	// asserts is the elapsed time: a verification that ran even a fraction of
 	// the requested work would take far longer than deriving one honest digest.
-	digest, err := hashSecret("s3cr3t-client-secret")
+	// Both sides run at the PRODUCTION factor (#721), which is what the claim
+	// is about; the test binary's lowered factor would make the honest
+	// calibration too cheap to bound anything.
+	digest, err := deriveSecretHashAt("s3cr3t-client-secret", pbkdf2Iterations)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -270,7 +282,7 @@ func TestCompareSecretHash_RefusesAnOversizedWorkFactorWithoutRunningTheKDF(t *t
 	// Calibrate against one real derivation rather than a wall-clock constant,
 	// so the bound holds on a slow or loaded runner.
 	start := time.Now()
-	if !compareSecretHash(digest, "s3cr3t-client-secret") {
+	if !compareSecretHashAt(digest, "s3cr3t-client-secret", pbkdf2Iterations) {
 		t.Fatal("the honest digest must verify")
 	}
 	honest := time.Since(start)
@@ -279,7 +291,7 @@ func TestCompareSecretHash_RefusesAnOversizedWorkFactorWithoutRunningTheKDF(t *t
 		oversized := "$pbkdf2-sha256$i=" + strconv.Itoa(iterations) + "$" + fields[3] + "$" + fields[4]
 
 		start := time.Now()
-		matched := compareSecretHash(oversized, "s3cr3t-client-secret")
+		matched := compareSecretHashAt(oversized, "s3cr3t-client-secret", pbkdf2Iterations)
 		elapsed := time.Since(start)
 
 		if matched {
@@ -1215,9 +1227,9 @@ func TestAuthenticateServiceAccount_CostsTheSameWhateverTheStoredState(t *testin
 			t.Errorf("%s: compared against a value that is not a digest: %v", tc.name, parseErr)
 			continue
 		}
-		if digest.iterations != pbkdf2Iterations {
+		if digest.iterations != secretWorkFactor {
 			t.Errorf("%s: compared at %d iterations, want %d — this attempt costs a different amount than an unknown client ID",
-				tc.name, digest.iterations, pbkdf2Iterations)
+				tc.name, digest.iterations, secretWorkFactor)
 		}
 	}
 }
@@ -1232,9 +1244,9 @@ func TestTimingEqualizerDigest_MatchesCurrentParameters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("equalizer digest is not a PBKDF2 hash: %v", err)
 	}
-	if digest.iterations != pbkdf2Iterations {
+	if digest.iterations != secretWorkFactor {
 		t.Errorf("equalizer iterations = %d, want %d — it must cost the same as a real verification",
-			digest.iterations, pbkdf2Iterations)
+			digest.iterations, secretWorkFactor)
 	}
 	if len(digest.salt) != pbkdf2SaltLength {
 		t.Errorf("equalizer salt = %d bytes, want %d", len(digest.salt), pbkdf2SaltLength)

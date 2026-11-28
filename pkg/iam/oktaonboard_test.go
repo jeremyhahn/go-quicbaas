@@ -128,6 +128,7 @@ func newOnboardProvisioner(t *testing.T) *oktaprovision.Provisioner {
 // RegisterDomain in one call produces a provider whose GroupRoleMapping +
 // AllowedEmailDomains are set and whose domain resolves via the HRD.
 func TestOnboardTenant_EndToEnd(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
@@ -228,6 +229,7 @@ func TestOnboardTenant_EndToEnd(t *testing.T) {
 // Gap 5 (error handling): a request missing required inputs is rejected before
 // any side effect (fail-closed validation).
 func TestOnboardTenant_InvalidRequestRejected(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	shared := newMockKVStore()
@@ -285,6 +287,7 @@ func TestOnboardTenant_InvalidRequestRejected(t *testing.T) {
 
 // Gap 5 (nil collaborators): the constructor fails closed.
 func TestNewOktaOnboarder_NilCollaborators(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	shared := newMockKVStore()
 	hrd, _ := NewHomeRealmDirectory(shared)

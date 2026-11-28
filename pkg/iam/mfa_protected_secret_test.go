@@ -49,6 +49,7 @@ func newProtectedSecretTestManager(t *testing.T) *DefaultMFAManager {
 // right size, and an authenticator built on that key derives exactly the code
 // an authenticator app derives from the same base32 text.
 func TestProtectedSharedSecretDecodesIntoEnclave(t *testing.T) {
+	t.Parallel()
 	key, err := protectedSharedSecret("test.protected", testTOTPSecret)
 	require.NoError(t, err)
 	require.NotNil(t, key)
@@ -108,6 +109,7 @@ func TestProtectedSharedSecretDecodesIntoEnclave(t *testing.T) {
 // later in the next step fails while nothing is wrong. The third assertion is
 // the other half, that bracketing does not degrade into accepting anything.
 func TestTOTPCodesForBracketCoversATimeStepBoundary(t *testing.T) {
+	t.Parallel()
 	config := MFAConfig{Digits: 6, Period: 30, Algorithm: MFAAlgorithmSHA1}
 
 	// 1700000010 is a multiple of 30, so it is exactly a step boundary.
@@ -136,6 +138,7 @@ func TestTOTPCodesForBracketCoversATimeStepBoundary(t *testing.T) {
 // protectedSharedSecret: a stored value that is not base32 is reported as a
 // typed IAM error tagged with the operation, not silently turned into a key.
 func TestProtectedSharedSecretRejectsMalformedSecret(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		secret string
@@ -148,6 +151,7 @@ func TestProtectedSharedSecretRejectsMalformedSecret(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			key, err := protectedSharedSecret("iam.mfa.verify", tc.secret)
 			require.Error(t, err)
 			assert.Nil(t, key)
@@ -185,8 +189,10 @@ var truncatedBase32Tails = []struct {
 // A remainder of 1, 3 or 6 is not a recoverable encoding, it is a corrupt
 // stored value, so it is refused rather than normalised.
 func TestProtectedSharedSecretRejectsTruncatedBase32Tail(t *testing.T) {
+	t.Parallel()
 	for _, tc := range truncatedBase32Tails {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			malformed := testTOTPSecret + tc.tail
 			require.Contains(t, []int{1, 3, 6}, len(malformed)%8,
 				"the test input must actually end in an incomplete group")
@@ -210,10 +216,12 @@ func TestProtectedSharedSecretRejectsTruncatedBase32Tail(t *testing.T) {
 // identical to the real one, so before the length check this code verified
 // successfully against a secret nobody enrolled.
 func TestVerifyCodeRejectsStoredSecretWithTruncatedBase32Tail(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	for _, tc := range truncatedBase32Tails {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			m := newProtectedSecretTestManager(t)
 			stored := &MFASecret{
 				ID:          uuid.New().String(),
@@ -280,6 +288,7 @@ func storeCorruptSecretWithChallenge(t *testing.T, m *DefaultMFAManager, stored 
 // attempts spent. The operator saw a bad login, the user was rate-limited for
 // a fault that was not theirs, and the corrupt enrollment stayed invisible.
 func TestVerifyChallengeSurfacesCorruptSecret(t *testing.T) {
+	t.Parallel()
 	// Every way a stored secret fails to become a key, not only the incomplete
 	// terminal group. The length case is the one the decoder does not report;
 	// the rest are what it does report, and they were falling through to the
@@ -300,6 +309,7 @@ func TestVerifyChallengeSurfacesCorruptSecret(t *testing.T) {
 
 	for _, tc := range corruptions {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ctx := context.Background()
 			m := newProtectedSecretTestManager(t)
 			challenge := storeCorruptSecretWithChallenge(t, m, tc.stored)
@@ -333,6 +343,7 @@ func TestVerifyChallengeSurfacesCorruptSecret(t *testing.T) {
 // reported that the stored TOTP secret was unusable. The guard was defeated at
 // exactly the layer that matters.
 func TestVerifyChallengeDoesNotHideCorruptSecretBehindBackupCode(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	m := newProtectedSecretTestManager(t)
 
@@ -426,6 +437,7 @@ func TestVerifyChallengeKeepsBackupRecoveryForDisallowedAlgorithm(t *testing.T) 
 // a code that was correct a moment earlier rather than falling back to some
 // other copy of the secret.
 func TestDestroyedSharedSecretFailsClosed(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	key, err := protectedSharedSecret("test.protected", testTOTPSecret)
@@ -465,6 +477,7 @@ func TestDestroyedSharedSecretFailsClosed(t *testing.T) {
 // verifies, a wrong code is ErrMFACodeInvalid, and a corrupt stored secret is
 // a typed malformed-secret fault rather than a wrong code.
 func TestCheckTOTPCode(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	m := newProtectedSecretTestManager(t)
 	provisioned := mfaProvisioningParams{Algorithm: MFAAlgorithmSHA1, Digits: 6, Period: 30}
@@ -491,6 +504,7 @@ func TestCheckTOTPCode(t *testing.T) {
 // string — and the code is derived by the authenticator app's implementation.
 // A user enrolled the old way must keep authenticating.
 func TestVerifyCodeAcceptsSecretEnrolledBeforeProtectedMemory(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	m := newProtectedSecretTestManager(t)
 
@@ -539,6 +553,7 @@ func TestVerifyCodeAcceptsSecretEnrolledBeforeProtectedMemory(t *testing.T) {
 // into the provisioning URI the user scans, and the code their app derives
 // from it completes enrollment and then authenticates.
 func TestCompleteEnrollmentAcceptsCodeFromProvisionedSecret(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	m := newProtectedSecretTestManager(t)
 
@@ -564,6 +579,7 @@ func TestCompleteEnrollmentAcceptsCodeFromProvisionedSecret(t *testing.T) {
 // refused and consumes an attempt, so the enclave is not accepting any code
 // that merely parses.
 func TestCompleteEnrollmentRejectsCodeFromAnotherSecret(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	m := newProtectedSecretTestManager(t)
 
@@ -584,6 +600,7 @@ func TestCompleteEnrollmentRejectsCodeFromAnotherSecret(t *testing.T) {
 // IAM error naming the verify operation, rather than being handed to the OTP
 // library as a string.
 func TestVerifyCodeRejectsCorruptStoredSecret(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	m := newProtectedSecretTestManager(t)
 

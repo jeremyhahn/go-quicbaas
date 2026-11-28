@@ -28,6 +28,7 @@ import (
 // -----------------------------------------------------------------------------
 
 func TestDefaultAgentRuntimeScopes(t *testing.T) {
+	t.Parallel()
 	scopes := DefaultFleetRuntimeScopes()
 	assert.ElementsMatch(t, []string{
 		"agent:runtime:spawn",
@@ -37,6 +38,7 @@ func TestDefaultAgentRuntimeScopes(t *testing.T) {
 }
 
 func TestDefaultAgentRuntimeScopes_FreshSlice(t *testing.T) {
+	t.Parallel()
 	// Each call must return an independent slice so callers can't mutate
 	// shared package state.
 	a := DefaultFleetRuntimeScopes()
@@ -50,6 +52,7 @@ func TestDefaultAgentRuntimeScopes_FreshSlice(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestInMemoryServiceAccountStore_DeleteServiceAccount(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewInMemoryServiceAccountStore()
 
@@ -63,6 +66,7 @@ func TestInMemoryServiceAccountStore_DeleteServiceAccount(t *testing.T) {
 }
 
 func TestInMemoryServiceAccountStore_DeleteServiceAccount_NotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewInMemoryServiceAccountStore()
 
@@ -73,6 +77,7 @@ func TestInMemoryServiceAccountStore_DeleteServiceAccount_NotFound(t *testing.T)
 }
 
 func TestInMemoryServiceAccountStore_GetByClientID(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewInMemoryServiceAccountStore()
 
@@ -85,6 +90,7 @@ func TestInMemoryServiceAccountStore_GetByClientID(t *testing.T) {
 }
 
 func TestInMemoryServiceAccountStore_GetByClientID_NotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewInMemoryServiceAccountStore()
 
@@ -99,6 +105,7 @@ func TestInMemoryServiceAccountStore_GetByClientID_NotFound(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestIdentityStore_GetUserByPIVThumbprint(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := newTestIdentityStore()
 
@@ -121,6 +128,7 @@ func TestIdentityStore_GetUserByPIVThumbprint(t *testing.T) {
 }
 
 func TestIdentityStore_GetUserByPIVThumbprint_EmptyThumbprint(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := newTestIdentityStore()
 
@@ -133,6 +141,7 @@ func TestIdentityStore_GetUserByPIVThumbprint_EmptyThumbprint(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestWebAuthnErrorConstructors(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("boom")
 
 	credErr := NewCredentialNotFoundError("t1", "cred-1")
@@ -154,6 +163,7 @@ func TestWebAuthnErrorConstructors(t *testing.T) {
 }
 
 func TestBatchErrors_Error(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "unsupported operation type", (&BatchUnsupportedOperationError{}).Error())
 	assert.Equal(t, "CSV must have header and at least one data row", (&BatchCSVHeaderError{}).Error())
 	assert.Contains(t, (&BatchCSVNotSupportedError{OperationType: "users"}).Error(), "users")
@@ -161,6 +171,7 @@ func TestBatchErrors_Error(t *testing.T) {
 }
 
 func TestMTLSErrors_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("chain")
 	ver := &MTLSCertVerificationError{Cause: cause}
 	assert.Contains(t, ver.Error(), "chain")
@@ -172,11 +183,13 @@ func TestMTLSErrors_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestPIVCertIssuerRejectedError_Error(t *testing.T) {
+	t.Parallel()
 	e := &PIVCertIssuerRejectedError{Issuer: "CN=Bad", AllowedIssuers: []string{"CN=Good"}}
 	assert.Contains(t, e.Error(), "CN=Bad")
 }
 
 func TestAAGUIDNotAllowedError_Error(t *testing.T) {
+	t.Parallel()
 	withName := &ErrAAGUIDNotAllowedError{AAGUID: "aaa", AuthenticatorName: "YubiKey"}
 	assert.Contains(t, withName.Error(), "YubiKey")
 
@@ -190,6 +203,7 @@ func TestAAGUIDNotAllowedError_Error(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestPIVErrors_Error(t *testing.T) {
+	t.Parallel()
 	assert.Contains(t, (&PIVActivatorConfigError{Reason: "no logger"}).Error(), "no logger")
 	assert.Contains(t, (&PIVCertDecodeError{Reason: "bad pem"}).Error(), "bad pem")
 

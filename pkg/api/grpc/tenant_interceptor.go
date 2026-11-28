@@ -19,6 +19,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"google.golang.org/grpc"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // tenantContextFromClientCert applies qrdb's canonical certificate-to-tenant
@@ -30,6 +32,11 @@ func tenantContextFromClientCert(ctx context.Context, cert *x509.Certificate, tr
 	}
 	if tenantID == "" {
 		return ctx, qrdbsdk.ErrInvalidClientCertificate
+	}
+	// The subject OU carries the tenant too, and must agree with the SAN
+	// (#1388, go-qrdb#777).
+	if err := iam.CheckCertOUTenant(cert, tenantID); err != nil {
+		return ctx, err
 	}
 	return qrdbsdk.ContextWithTenant(ctx, qrdbsdk.NormalizeTenantID(tenantID)), nil
 }

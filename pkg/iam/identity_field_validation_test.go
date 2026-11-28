@@ -38,6 +38,7 @@ func assertCodedFieldValidationError(t *testing.T, err error, field string) {
 }
 
 func TestFieldValidators_ReturnCodedFieldErrors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		field    string
@@ -55,12 +56,14 @@ func TestFieldValidators_ReturnCodedFieldErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			assertCodedFieldValidationError(t, tt.validate(), tt.field)
 		})
 	}
 }
 
 func TestFieldValidators_AcceptValidInput(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		validate func() error
@@ -75,6 +78,7 @@ func TestFieldValidators_AcceptValidInput(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if err := tt.validate(); err != nil {
 				t.Errorf("valid input refused: %v", err)
 			}
@@ -85,6 +89,7 @@ func TestFieldValidators_AcceptValidInput(t *testing.T) {
 // TestIdentityStore_RoleNameChecksAreCoded covers the role-name checks in
 // CreateRole and UpdateRole.
 func TestIdentityStore_RoleNameChecksAreCoded(t *testing.T) {
+	t.Parallel()
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{UserStorage: mem, RoleStorage: mem})
 	ctx := context.Background()
@@ -107,6 +112,7 @@ func TestIdentityStore_RoleNameChecksAreCoded(t *testing.T) {
 // wired server would only have been refused for the field it should have been
 // told about the first time (#335).
 func TestCreateInvitedUser_InvalidInputBeatsMissingInviteStore(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		opts  CreateUserOptions
@@ -119,6 +125,7 @@ func TestCreateInvitedUser_InvalidInputBeatsMissingInviteStore(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mem := NewMemoryStorage()
 			store := NewIdentityStore(IdentityStoreOptions{UserStorage: mem, RoleStorage: mem})
 
@@ -136,6 +143,7 @@ func TestCreateInvitedUser_InvalidInputBeatsMissingInviteStore(t *testing.T) {
 // field. Looking the records up first answered not-found, so the caller fixed
 // the id and was then refused for a field it could have fixed in the same go.
 func TestIdentityStore_UpdateUserValidatesBeforeLookup(t *testing.T) {
+	t.Parallel()
 	badEmail := "not-an-email"
 	emailName := "kim@acme.test"
 	badUsername := "a b"
@@ -155,6 +163,7 @@ func TestIdentityStore_UpdateUserValidatesBeforeLookup(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mem := NewMemoryStorage()
 			store := NewIdentityStore(IdentityStoreOptions{UserStorage: mem, RoleStorage: mem})
 
@@ -167,6 +176,7 @@ func TestIdentityStore_UpdateUserValidatesBeforeLookup(t *testing.T) {
 // TestIdentityStore_UpdateRoleValidatesBeforeLookup: an empty role name is
 // refused for the name even when the role does not exist.
 func TestIdentityStore_UpdateRoleValidatesBeforeLookup(t *testing.T) {
+	t.Parallel()
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{UserStorage: mem, RoleStorage: mem})
 	empty := " "
@@ -178,6 +188,7 @@ func TestIdentityStore_UpdateRoleValidatesBeforeLookup(t *testing.T) {
 // The exported validators need no store, so the service wrapper can judge a
 // request before it resolves one (#335).
 func TestValidateCreateUserOptions(t *testing.T) {
+	t.Parallel()
 	valid := CreateUserOptions{Email: "sam@example.com", Username: "sam"}
 	if err := ValidateCreateUserOptions("t-1", valid); err != nil {
 		t.Fatalf("valid create: %v", err)
@@ -189,6 +200,7 @@ func TestValidateCreateUserOptions(t *testing.T) {
 }
 
 func TestValidateUpdateUserOptions(t *testing.T) {
+	t.Parallel()
 	name := "Sam"
 	if err := ValidateUpdateUserOptions(UpdateUserOptions{Name: &name}); err != nil {
 		t.Fatalf("valid update: %v", err)
@@ -199,6 +211,7 @@ func TestValidateUpdateUserOptions(t *testing.T) {
 }
 
 func TestBatchValidate_ReturnsCodedFieldErrors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		field    string
@@ -216,12 +229,14 @@ func TestBatchValidate_ReturnsCodedFieldErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			assertCodedFieldValidationError(t, tt.validate(), tt.field)
 		})
 	}
 }
 
 func TestBatchManager_ExportRequiresTenantWithCodedError(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 

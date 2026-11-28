@@ -59,6 +59,7 @@ func putTestRole(t *testing.T, storage *BackendStorage, tenantID, roleID, name s
 
 // TestBackendStorage_GetRoleByName_Hit resolves a created role by its name.
 func TestBackendStorage_GetRoleByName_Hit(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 	putTestRole(t, storage, "acme", "role-1", "auditor")
@@ -75,6 +76,7 @@ func TestBackendStorage_GetRoleByName_Hit(t *testing.T) {
 // ErrRoleNotFound SENTINEL, so IsRoleNotFound — which reads the typed inner
 // error, not a bare code — recognises it.
 func TestBackendStorage_GetRoleByName_Miss(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 	putTestRole(t, storage, "acme", "role-1", "auditor")
@@ -91,6 +93,7 @@ func TestBackendStorage_GetRoleByName_Miss(t *testing.T) {
 // tenant's name from another tenant's index: the index is tenant-scoped, and a
 // role name is only unique WITHIN a tenant.
 func TestBackendStorage_GetRoleByName_TenantIsolation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 	putTestRole(t, storage, "acme", "role-acme", "auditor")
@@ -114,6 +117,7 @@ func TestBackendStorage_GetRoleByName_TenantIsolation(t *testing.T) {
 // admitting the duplicate would either overwrite the entry or make the new role
 // invisible to the lookup — and the canonical qrdb store refuses it too.
 func TestBackendStorage_CreateRole_DuplicateName(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 	putTestRole(t, storage, "acme", "role-1", "auditor")
@@ -134,6 +138,7 @@ func TestBackendStorage_CreateRole_DuplicateName(t *testing.T) {
 // TestBackendStorage_CreateRole_DuplicateNameOtherTenant admits the same name
 // in a DIFFERENT tenant: uniqueness is per tenant, not global.
 func TestBackendStorage_CreateRole_DuplicateNameOtherTenant(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 	putTestRole(t, storage, "acme", "role-1", "auditor")
@@ -144,6 +149,7 @@ func TestBackendStorage_CreateRole_DuplicateNameOtherTenant(t *testing.T) {
 // TestBackendStorage_UpdateRole_Rename moves the index with the name: the new
 // name resolves and the old one stops resolving.
 func TestBackendStorage_UpdateRole_Rename(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 	role := putTestRole(t, storage, "acme", "role-1", "auditor")
@@ -164,6 +170,7 @@ func TestBackendStorage_UpdateRole_Rename(t *testing.T) {
 // name another role holds, and leaves both index entries untouched. Overwriting
 // the entry would make the displaced role unresolvable by its own name.
 func TestBackendStorage_UpdateRole_RenameOntoTakenName(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 	putTestRole(t, storage, "acme", "role-1", "auditor")
@@ -190,6 +197,7 @@ func TestBackendStorage_UpdateRole_RenameOntoTakenName(t *testing.T) {
 // TestBackendStorage_UpdateRole_NoRenameKeepsIndex leaves the name resolvable
 // when an update changes something other than the name.
 func TestBackendStorage_UpdateRole_NoRenameKeepsIndex(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 	role := putTestRole(t, storage, "acme", "role-1", "auditor")
@@ -206,6 +214,7 @@ func TestBackendStorage_UpdateRole_NoRenameKeepsIndex(t *testing.T) {
 // TestBackendStorage_UpdateRole_NotFoundLeavesIndexAlone refuses an update to a
 // role that does not exist without inventing an index entry for it.
 func TestBackendStorage_UpdateRole_NotFoundLeavesIndexAlone(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 
@@ -220,6 +229,7 @@ func TestBackendStorage_UpdateRole_NotFoundLeavesIndexAlone(t *testing.T) {
 // TestBackendStorage_DeleteRole_ClearsIndex frees the name, so a later create
 // can take it and the old name resolves to nothing in between.
 func TestBackendStorage_DeleteRole_ClearsIndex(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 	putTestRole(t, storage, "acme", "role-1", "auditor")
@@ -240,6 +250,7 @@ func TestBackendStorage_DeleteRole_ClearsIndex(t *testing.T) {
 // TestBackendStorage_DeleteRole_NotFoundKeepsIndex refuses to delete a role
 // that does not exist, and does not disturb another role's index entry.
 func TestBackendStorage_DeleteRole_NotFoundKeepsIndex(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 	putTestRole(t, storage, "acme", "role-1", "auditor")
@@ -255,6 +266,7 @@ func TestBackendStorage_DeleteRole_NotFoundKeepsIndex(t *testing.T) {
 // index segment sits outside the role record prefix, so the listing scan cannot
 // sweep up an index entry and try to decode it as a record.
 func TestBackendStorage_ListRoles_SkipsNameIndexEntries(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 	putTestRole(t, storage, "acme", "role-1", "auditor")
@@ -276,6 +288,7 @@ func TestBackendStorage_ListRoles_SkipsNameIndexEntries(t *testing.T) {
 // inconsistency as an ordinary absence would let a caller that keys idempotency
 // off not-found take the create path against a store that still holds the name.
 func TestBackendStorage_GetRoleByName_DanglingIndex(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
@@ -309,6 +322,7 @@ func (f *failingRoleIndexKV) Get(ctx context.Context, key string) ([]byte, error
 // identifier on not-found, so reporting an outage as "no such role" would bind
 // a grant to an identifier the tenant may not use.
 func TestBackendStorage_GetRoleByName_StoreFailure(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	outage := &dberrors.QBError{Code: dberrors.ErrInternal, Op: "kv.get", Err: errors.New("shard offline")}
 	storage := NewBackendStorage(&failingRoleIndexKV{KVStore: newMockKVStore(), failure: outage})
@@ -324,6 +338,7 @@ func TestBackendStorage_GetRoleByName_StoreFailure(t *testing.T) {
 // reading a store outage as "the name is free" and admitting a duplicate the
 // index cannot represent.
 func TestBackendStorage_CreateRole_IndexReadFailure(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	outage := &dberrors.QBError{Code: dberrors.ErrInternal, Op: "kv.get", Err: errors.New("shard offline")}
 	storage := NewBackendStorage(&failingRoleIndexKV{KVStore: newMockKVStore(), failure: outage})
@@ -337,6 +352,7 @@ func TestBackendStorage_CreateRole_IndexReadFailure(t *testing.T) {
 // behind, so a tenant recreated under the same id does not find its role names
 // already taken.
 func TestBackendStorage_DeleteTenant_ClearsRoleNameIndex(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
@@ -358,6 +374,7 @@ func TestBackendStorage_DeleteTenant_ClearsRoleNameIndex(t *testing.T) {
 // exists for: the lookup resolves a role that a single page of a listing would
 // never show.
 func TestBackendStorage_GetRoleByName_BeyondOnePage(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewBackendStorage(newMockKVStore())
 	const target = "role-249"
@@ -382,6 +399,7 @@ func TestBackendStorage_GetRoleByName_BeyondOnePage(t *testing.T) {
 
 // TestMemoryStorage_GetRoleByName_Hit resolves a created role by name.
 func TestMemoryStorage_GetRoleByName_Hit(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 	require.NoError(t, storage.CreateRole(ctx, &Role{ID: "role-1", TenantID: "acme", Name: "auditor"}))
@@ -395,6 +413,7 @@ func TestMemoryStorage_GetRoleByName_Hit(t *testing.T) {
 // TestMemoryStorage_GetRoleByName_Miss answers an unknown name, an empty name
 // and a foreign tenant with the ErrRoleNotFound sentinel.
 func TestMemoryStorage_GetRoleByName_Miss(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 	require.NoError(t, storage.CreateRole(ctx, &Role{ID: "role-1", TenantID: "acme", Name: "auditor"}))
@@ -416,6 +435,7 @@ func TestMemoryStorage_GetRoleByName_Miss(t *testing.T) {
 // second structure: the store scans its map, so the new name resolves and the
 // old one does not the moment the record changes.
 func TestMemoryStorage_GetRoleByName_Rename(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 	require.NoError(t, storage.CreateRole(ctx, &Role{ID: "role-1", TenantID: "acme", Name: "auditor"}))
@@ -433,6 +453,7 @@ func TestMemoryStorage_GetRoleByName_Rename(t *testing.T) {
 
 // TestMemoryStorage_GetRoleByName_AfterDelete stops resolving a deleted role.
 func TestMemoryStorage_GetRoleByName_AfterDelete(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 	require.NoError(t, storage.CreateRole(ctx, &Role{ID: "role-1", TenantID: "acme", Name: "auditor"}))
@@ -446,6 +467,7 @@ func TestMemoryStorage_GetRoleByName_AfterDelete(t *testing.T) {
 // TestMemoryStorage_GetRoleByName_ReturnsCopy hands back a copy, so a caller
 // mutating the answer cannot rewrite the stored record.
 func TestMemoryStorage_GetRoleByName_ReturnsCopy(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 	require.NoError(t, storage.CreateRole(ctx, &Role{ID: "role-1", TenantID: "acme", Name: "auditor"}))
@@ -466,6 +488,7 @@ func TestMemoryStorage_GetRoleByName_ReturnsCopy(t *testing.T) {
 // TestQRDBRoleStorage_GetRoleByName_Delegates passes the tenant and name to
 // qrdb and projects the transport role back into the broker model.
 func TestQRDBRoleStorage_GetRoleByName_Delegates(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	fc := &fakeRoleClient{byNameResp: &qrdbtransport.Role{
 		ID:          "role-1",
@@ -490,6 +513,7 @@ func TestQRDBRoleStorage_GetRoleByName_Delegates(t *testing.T) {
 // TestQRDBRoleStorage_GetRoleByName_NotFound translates qrdb's not-found into
 // the broker sentinel so IsRoleNotFound recognises it.
 func TestQRDBRoleStorage_GetRoleByName_NotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	fc := &fakeRoleClient{byNameErr: &qrdbsdk.RoleNotFoundError{ID: "auditor"}}
 	s := NewQRDBRoleStorage(&fakeRoleResolver{client: fc})
@@ -503,6 +527,7 @@ func TestQRDBRoleStorage_GetRoleByName_NotFound(t *testing.T) {
 // TestQRDBRoleStorage_GetRoleByName_Errors fails closed on a resolver that has
 // no client, and wraps an unknown store error rather than swallowing it.
 func TestQRDBRoleStorage_GetRoleByName_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	unconfigured := NewQRDBRoleStorage(nil)
@@ -526,6 +551,7 @@ func TestQRDBRoleStorage_GetRoleByName_Errors(t *testing.T) {
 // RoleServicer contract instead of dereferencing nil or reading it as an
 // absence — the latter would send first-boot down the derived-identifier path.
 func TestQRDBRoleStorage_GetRoleByName_NilRoleNilError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := NewQRDBRoleStorage(&fakeRoleResolver{client: &fakeRoleClient{}})
 
@@ -544,6 +570,7 @@ func TestQRDBRoleStorage_GetRoleByName_NilRoleNilError(t *testing.T) {
 
 // TestIdentityStore_GetRoleByName resolves through the configured storage.
 func TestIdentityStore_GetRoleByName(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{RoleStorage: mem, UserStorage: mem})
@@ -561,6 +588,7 @@ func TestIdentityStore_GetRoleByName(t *testing.T) {
 // TestIdentityStore_GetRoleByName_Validation rejects an empty tenant or name
 // with a field-named validation error instead of asking the store.
 func TestIdentityStore_GetRoleByName_Validation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{RoleStorage: mem, UserStorage: mem})

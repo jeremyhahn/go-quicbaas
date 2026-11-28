@@ -3000,10 +3000,19 @@ type mockServiceWithSessions struct {
 	service.QuicBaaS
 	mgr    SessionManager
 	mgrErr error
+
+	// oidc / oidcErr back GetOIDCProvider, which logout-all uses to revoke
+	// the caller's login credentials.
+	oidc    *iam.OIDCProvider
+	oidcErr error
 }
 
 func (m *mockServiceWithSessions) GetSessionManager(ctx context.Context) (SessionManager, error) {
 	return m.mgr, m.mgrErr
+}
+
+func (m *mockServiceWithSessions) GetOIDCProvider(ctx context.Context) (*iam.OIDCProvider, error) {
+	return m.oidc, m.oidcErr
 }
 
 // ResolveCallerAccount forwards to the embedded service, which the embedding
@@ -3363,7 +3372,7 @@ func TestIAM91_RevokeSession_Success(t *testing.T) {
 
 func TestIAM91_RevokeAllSessions_Success(t *testing.T) {
 	mgr := &mockSessionManager{}
-	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr, oidc: newLogoutOIDCProvider(t, iam.NewMemoryStorage())}
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 

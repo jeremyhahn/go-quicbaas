@@ -21,6 +21,7 @@ import (
 
 // CreateConsent validation rejects each missing required field.
 func TestBackendConsentStorage_CreateValidation(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendConsentStorage(kv, nil)
@@ -57,6 +58,7 @@ func TestBackendConsentStorage_CreateValidation(t *testing.T) {
 // CreateConsent and UpdateConsent populate optional fields and reconcile the
 // granted/withdrawn timestamps.
 func TestBackendConsentStorage_OptionalFields(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendConsentStorage(kv, nil)
@@ -111,6 +113,7 @@ func TestBackendConsentStorage_OptionalFields(t *testing.T) {
 // ListConsents without an explicit TenantID sweeps every tenant in the lister
 // and applies user/purpose/status filters.
 func TestBackendConsentStorage_ListAcrossTenants(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.barrierTenant("globex")
@@ -158,6 +161,7 @@ func TestBackendConsentStorage_ListAcrossTenants(t *testing.T) {
 // CreateDeletionRequest validation and optional fields (grace period, metadata,
 // categories) plus cross-tenant ListDeletionRequests.
 func TestBackendDeletionStorage_OptionalAndValidation(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.barrierTenant("globex")
@@ -212,6 +216,7 @@ func TestBackendDeletionStorage_OptionalAndValidation(t *testing.T) {
 
 // Cross-tenant ListExportRequests without an explicit TenantID.
 func TestBackendDataExportStorage_ListAcrossTenants(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.barrierTenant("globex")

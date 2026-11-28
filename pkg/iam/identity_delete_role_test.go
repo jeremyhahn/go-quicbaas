@@ -121,6 +121,7 @@ func assertRoleExists(t *testing.T, store *IdentityStore, roleID string, want bo
 }
 
 func TestDeleteRole_StripsHoldersAcrossPages(t *testing.T) {
+	t.Parallel()
 	// More holders than the old single 1000-user page, and several cascade
 	// pages, plus a few users holding only another role.
 	const holders = 4*deleteRoleCascadePage + 1
@@ -148,6 +149,7 @@ func TestDeleteRole_StripsHoldersAcrossPages(t *testing.T) {
 }
 
 func TestDeleteRole_StripsHoldersStraddlingPageBoundary(t *testing.T) {
+	t.Parallel()
 	store, users, role, all := newCascadeFixture(t, 2*deleteRoleCascadePage+1)
 	boundary := all[deleteRoleCascadePage-1 : deleteRoleCascadePage+1]
 	grantRole(t, users, boundary, role.ID)
@@ -163,6 +165,7 @@ func TestDeleteRole_StripsHoldersStraddlingPageBoundary(t *testing.T) {
 }
 
 func TestDeleteRole_ExactPageMultipleTerminates(t *testing.T) {
+	t.Parallel()
 	store, users, role, all := newCascadeFixture(t, 2*deleteRoleCascadePage)
 	grantRole(t, users, all, role.ID)
 
@@ -181,6 +184,7 @@ func TestDeleteRole_ExactPageMultipleTerminates(t *testing.T) {
 // shifts down one place in the offset listing; the cascade must still strip
 // the role from every remaining holder before deleting it (#435).
 func TestDeleteRole_ConcurrentUserDeleteBetweenPages(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		deleted int // index into the sorted users of the user deleted mid-cascade
@@ -190,6 +194,7 @@ func TestDeleteRole_ConcurrentUserDeleteBetweenPages(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			store, users, role, all := newCascadeFixture(t, deleteRoleCascadePage+1)
 			grantRole(t, users, all, role.ID)
 			ctx := context.Background()
@@ -215,6 +220,7 @@ func TestDeleteRole_ConcurrentUserDeleteBetweenPages(t *testing.T) {
 }
 
 func TestDeleteRole_ListFailureMidCascadeKeepsRoleForRetry(t *testing.T) {
+	t.Parallel()
 	store, users, role, all := newCascadeFixture(t, 2*deleteRoleCascadePage+1)
 	grantRole(t, users, all, role.ID)
 	users.failListPastFirstPage = true
@@ -243,6 +249,7 @@ func TestDeleteRole_ListFailureMidCascadeKeepsRoleForRetry(t *testing.T) {
 }
 
 func TestDeleteRole_UpdateFailureOnSecondPageKeepsRoleForRetry(t *testing.T) {
+	t.Parallel()
 	store, users, role, all := newCascadeFixture(t, 2*deleteRoleCascadePage+1)
 	grantRole(t, users, all, role.ID)
 	failing := all[deleteRoleCascadePage]
@@ -272,6 +279,7 @@ func TestDeleteRole_UpdateFailureOnSecondPageKeepsRoleForRetry(t *testing.T) {
 }
 
 func TestMemoryStorage_ListUsers_StableOffsetPages(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryStorage()
 	ctx := context.Background()
 	const n = 11
@@ -312,6 +320,7 @@ func TestMemoryStorage_ListUsers_StableOffsetPages(t *testing.T) {
 }
 
 func TestMemoryStorage_ListUsers_OffsetPastEnd(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryStorage()
 	ctx := context.Background()
 	if err := storage.CreateUser(ctx, &User{

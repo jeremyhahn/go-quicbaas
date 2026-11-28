@@ -57,6 +57,7 @@ func validChallenge(tenantID string, userID uint64) *MFAChallenge {
 // (a) An MFA secret for a barrier tenant lands in that tenant's own store and is
 // absent from the shared store.
 func TestBackendMFAStorage_SecretIsolatedToBarrier(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	tenantStore := kv.barrierTenant("acme")
 	store := NewBackendMFAStorage(kv, nil)
@@ -84,6 +85,7 @@ func TestBackendMFAStorage_SecretIsolatedToBarrier(t *testing.T) {
 // (b) Enrollment by-ID lookup parses the tenant from the encoded id and routes
 // to the owning tenant (round-trip).
 func TestBackendMFAStorage_EnrollmentByIDRoutes(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendMFAStorage(kv, nil)
@@ -116,6 +118,7 @@ func TestBackendMFAStorage_EnrollmentByIDRoutes(t *testing.T) {
 
 // Challenge by-ID lookup round-trips through the encoded id.
 func TestBackendMFAStorage_ChallengeByIDRoutes(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendMFAStorage(kv, nil)
@@ -144,6 +147,7 @@ func TestBackendMFAStorage_ChallengeByIDRoutes(t *testing.T) {
 // (c) A sealed barrier tenant fails closed on every MFA op and never writes to
 // the shared store.
 func TestBackendMFAStorage_SealedFailsClosed(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.sealTenant("acme")
@@ -167,6 +171,7 @@ func TestBackendMFAStorage_SealedFailsClosed(t *testing.T) {
 // Two barrier tenants must not see each other's enrollments via the by-user
 // index — isolation across tenants.
 func TestBackendMFAStorage_CrossTenantIsolation(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.barrierTenant("globex")
@@ -188,6 +193,7 @@ func TestBackendMFAStorage_CrossTenantIsolation(t *testing.T) {
 
 // CleanupExpired sweeps each tenant via the tenant lister (no global scan).
 func TestBackendMFAStorage_CleanupExpiredPerTenant(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.barrierTenant("globex")

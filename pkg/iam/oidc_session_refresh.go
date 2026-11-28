@@ -243,12 +243,18 @@ func (p *OIDCProvider) RefreshSession(ctx context.Context, req SessionRefreshReq
 		return nil, err
 	}
 
-	// Rotate BEFORE minting so a failure downstream cannot leave two live
-	// refresh credentials for one session.
-	if err := p.tokenService.storage.RevokeToken(withTokenTenant(ctx, stored.TenantID), stored.JTI); err != nil {
-		return nil, &SessionRefreshRejectedError{Reason: "refresh token could not be rotated"}
-	}
-
+	// Rotation mints everything first and revokes the presented credential
+	// LAST, so a failure at any step leaves the chain where it was: the
+	// presented credential still renews, and the client retries. Revoking
+	// first (as this used to) meant any failure after the revoke left the
+	// chain revoked with no successor, and the user was logged out at the
+	// next renewal (#282).
+	//
+	// Minting first does not open a window where the client holds two live
+	// refresh credentials. The successor's value exists only in this call
+	// until the revoke has succeeded; on any failure it is never returned, and
+	// what was stored for it is revoked again. If that compensating revoke
+	// fails too, the record left behind resolves a secret nobody holds.
 	now := time.Now()
 	expiresAt := now.Add(p.config.AccessTokenTTL)
 	jti, err := generateJTI()
@@ -296,8 +302,18 @@ func (p *OIDCProvider) RefreshSession(ctx context.Context, req SessionRefreshReq
 	if err != nil {
 		return nil, err
 	}
+	tenantCtx := withTokenTenant(ctx, stored.TenantID)
+	// Undo what this call stored, if a later step fails. Best effort: the
+	// caller sees the step's own error either way, and nothing undone here
+	// was ever returned to a client.
+	minted := []string{claims.JTI}
+	abandon := func() {
+		for _, jti := range minted {
+			_ = p.tokenService.storage.RevokeToken(tenantCtx, jti)
+		}
+	}
 
-	rotated, refreshExpiresAt, err := p.tokenService.issueRefreshCredential(ctx, SessionRefreshOptions{
+	rotated, successor, err := p.tokenService.prepareRefreshCredential(SessionRefreshOptions{
 		Subject:  stored.Subject,
 		TenantID: stored.TenantID,
 		ClientID: stored.ClientID,
@@ -305,8 +321,23 @@ func (p *OIDCProvider) RefreshSession(ctx context.Context, req SessionRefreshReq
 		Session:  session,
 	}, stored.Expires)
 	if err != nil {
+		abandon()
 		return nil, err
 	}
+	// Listed before the write: a store that fails part-way may still have
+	// persisted the record.
+	minted = append(minted, successor.JTI)
+	if err := p.tokenService.storeRefreshCredential(ctx, successor); err != nil {
+		abandon()
+		return nil, err
+	}
+
+	// The last write, and the only one that touches the presented credential.
+	if err := p.tokenService.storage.RevokeToken(tenantCtx, stored.JTI); err != nil {
+		abandon()
+		return nil, &SessionRefreshRejectedError{Reason: "refresh token could not be rotated"}
+	}
+	refreshExpiresAt := successor.Expires
 
 	return &SessionTokens{
 		AccessToken:      accessToken,
@@ -355,9 +386,24 @@ func sessionRefreshAudience(session TokenSessionContext, issuer string) []string
 // A non-zero absoluteExpiry pins the session's original deadline so rotation
 // cannot extend the session; a zero value starts a new RefreshTokenTTL window.
 func (s *TokenService) issueRefreshCredential(ctx context.Context, opts SessionRefreshOptions, absoluteExpiry time.Time) (string, time.Time, error) {
+	value, record, err := s.prepareRefreshCredential(opts, absoluteExpiry)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if err := s.storeRefreshCredential(ctx, record); err != nil {
+		return "", time.Time{}, err
+	}
+	return value, record.Expires, nil
+}
+
+// prepareRefreshCredential mints a refresh credential's secret value and the
+// record that resolves it, without writing anything. Rotation prepares the
+// successor before it touches the presented credential, so every step here
+// that can fail (entropy, the JTI) fails while the presented one is intact.
+func (s *TokenService) prepareRefreshCredential(opts SessionRefreshOptions, absoluteExpiry time.Time) (string, *Token, error) {
 	raw, err := xkms.Rand(refreshTokenEntropyBytes)
 	if err != nil {
-		return "", time.Time{}, &SessionRefreshEntropyError{Cause: err}
+		return "", nil, &SessionRefreshEntropyError{Cause: err}
 	}
 	value := base64.RawURLEncoding.EncodeToString(raw)
 
@@ -369,11 +415,11 @@ func (s *TokenService) issueRefreshCredential(ctx context.Context, opts SessionR
 
 	jti, err := generateJTI()
 	if err != nil {
-		return "", time.Time{}, err
+		return "", nil, err
 	}
 
 	session := opts.Session
-	record := &Token{
+	return value, &Token{
 		JTI:       jti,
 		Subject:   opts.Subject,
 		TenantID:  opts.TenantID,
@@ -384,11 +430,16 @@ func (s *TokenService) issueRefreshCredential(ctx context.Context, opts SessionR
 		TokenType: TokenTypeRefresh,
 		ValueHash: HashTokenValue(value),
 		Session:   &session,
+	}, nil
+}
+
+// storeRefreshCredential persists a prepared refresh record under its own
+// tenant.
+func (s *TokenService) storeRefreshCredential(ctx context.Context, record *Token) error {
+	if err := s.storage.StoreToken(withTokenTenant(ctx, record.TenantID), record); err != nil {
+		return &SessionRefreshStorageError{Cause: err}
 	}
-	if err := s.storage.StoreToken(withTokenTenant(ctx, opts.TenantID), record); err != nil {
-		return "", time.Time{}, &SessionRefreshStorageError{Cause: err}
-	}
-	return value, expires, nil
+	return nil
 }
 
 // withTokenTenant scopes a context to the token's tenant under go-qrdb's

@@ -20,6 +20,7 @@ import (
 )
 
 func TestClaims_Accessors(t *testing.T) {
+	t.Parallel()
 	claims := &Claims{
 		Subject:     "user-123",
 		Issuer:      "https://auth.example.com",
@@ -80,6 +81,7 @@ func TestClaims_Accessors(t *testing.T) {
 }
 
 func TestClaims_Accessors_Empty(t *testing.T) {
+	t.Parallel()
 	claims := &Claims{}
 
 	assert.Equal(t, "", claims.GetSubject())
@@ -96,6 +98,7 @@ func TestClaims_Accessors_Empty(t *testing.T) {
 }
 
 func TestOAuthASMetadata_Accessors(t *testing.T) {
+	t.Parallel()
 	metadata := &OAuthASMetadata{
 		Issuer:                            "https://auth.example.com",
 		AuthorizationEndpoint:             "https://auth.example.com/authorize",
@@ -157,6 +160,7 @@ func TestOAuthASMetadata_Accessors(t *testing.T) {
 }
 
 func TestOAuthASMetadata_Accessors_Empty(t *testing.T) {
+	t.Parallel()
 	metadata := &OAuthASMetadata{}
 
 	assert.Equal(t, "", metadata.GetIssuer())

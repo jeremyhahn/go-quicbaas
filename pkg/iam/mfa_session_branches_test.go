@@ -25,6 +25,7 @@ import (
 
 // MFA Save* reject invalid records; Get* report not-found.
 func TestBackendMFAStorage_ValidationAndNotFound(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendMFAStorage(kv, nil)
@@ -56,6 +57,7 @@ func TestBackendMFAStorage_ValidationAndNotFound(t *testing.T) {
 
 // CleanupExpired sweeps expired challenges (not just enrollments) per tenant.
 func TestBackendMFAStorage_CleanupExpiredChallenges(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendMFAStorage(kv, staticTenantLister{ids: []string{"acme"}})
@@ -86,6 +88,7 @@ func TestBackendMFAStorage_CleanupExpiredChallenges(t *testing.T) {
 
 // Session Create rejects invalid input and duplicates; Get reports not-found.
 func TestBackendSessionStorage_ValidationAndNotFound(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendSessionStorage(kv, nil)
@@ -113,6 +116,7 @@ func TestBackendSessionStorage_ValidationAndNotFound(t *testing.T) {
 
 // SessionExt Create validates and rejects duplicates; Get reports not-found.
 func TestBackendSessionExtStorage_ValidationAndNotFound(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendSessionExtStorage(kv, nil)
@@ -146,6 +150,7 @@ func TestBackendSessionExtStorage_ValidationAndNotFound(t *testing.T) {
 
 // Provider CreateProvider validates input and rejects duplicate name/id.
 func TestBackendProviderStorage_CreateValidationAndDuplicate(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendProviderStorage(kv)
@@ -178,6 +183,7 @@ func TestBackendProviderStorage_CreateValidationAndDuplicate(t *testing.T) {
 
 // Federation link Create validates and rejects duplicate external id.
 func TestBackendFederationStorage_CreateValidationAndDuplicate(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendFederationStorage(kv)
@@ -208,6 +214,7 @@ func TestBackendFederationStorage_CreateValidationAndDuplicate(t *testing.T) {
 
 // Consent DeleteConsent on a missing record surfaces not-found (QBError).
 func TestBackendConsentStorage_DeleteMissingIsNotFound(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendConsentStorage(kv, nil)

@@ -45,6 +45,7 @@ import (
 // capture the live 401's response body / WWW-Authenticate detail and the
 // exact endpoint the UI called (browser devtools Network tab) instead.
 func TestUIRefreshFlow_RenewedTokenAuthorizesTheSameEndpointTheLoginTokenDid(t *testing.T) {
+	t.Parallel()
 	const (
 		issuer       = "https://agent-04:18443"
 		requiredPerm = "orchestrator:status"

@@ -26,6 +26,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -95,8 +96,9 @@ func newAgentOAuthFixture(t *testing.T) *agentOAuthFixture {
 	return &agentOAuthFixture{server: srv, storage: storage, kv: kv, identity: identityRecords}
 }
 
-// agentOAuthSignedPeerCert mints a REAL self-signed agent certificate, parsed
-// from its DER so cert.Raw is populated. The mTLS client is pinned by the RFC
+// agentOAuthSignedPeerCert mints a REAL self-signed agent certificate with the
+// tenant-scoped svc SPIFFE SAN the fleet issuer mints, parsed from its DER so
+// cert.Raw is populated. The mTLS client is pinned by the RFC
 // 8705 thumbprint, which is a digest of exactly those bytes, so a template-only
 // certificate cannot tell two enrollments apart.
 func agentOAuthSignedPeerCert(t *testing.T, tenantID, commonName string) *x509.Certificate {
@@ -113,11 +115,12 @@ func agentOAuthSignedPeerCert(t *testing.T, tenantID, commonName string) *x509.C
 		Subject: pkix.Name{
 			CommonName:         commonName,
 			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{fleetRegistrarOU},
+			OrganizationalUnit: []string{tenantID},
 		},
 		NotBefore:   time.Now().Add(-time.Hour),
 		NotAfter:    time.Now().Add(time.Hour),
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		URIs:        []*url.URL{fleetNodeSPIFFEURI(t, tenantID, commonName)},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, priv)
 	require.NoError(t, err)
