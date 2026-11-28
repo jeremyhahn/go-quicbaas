@@ -5711,16 +5711,26 @@ func (s *agentServiceImpl) startJob(ctx context.Context, req *StartJobRequest, j
 	// A workflow file is a request-level convenience: it registers the
 	// definition with the loader so the envelope's name-based resolution
 	// finds it.
-	if req.WorkflowFile != "" && s.workflowLoader != nil {
-		wf, wfErr := s.workflowLoader.LoadFromFile(tenantID, req.WorkflowFile)
-		if wfErr == nil {
-			if req.WorkflowName == "" {
-				req.WorkflowName = wf.Name
+	// A file that does not load refuses the start, so a job never runs
+	// without the definition the caller asked for.
+	if req.WorkflowFile != "" {
+		if s.workflowLoader == nil {
+			return nil, &AgentServiceError{
+				Sentinel: ErrInvalidInput,
+				Message:  "workflow_file " + strconv.Quote(req.WorkflowFile) + " cannot be loaded: no workflow loader is installed",
 			}
-			s.logger.Infof("orchestration: loaded workflow from file %q (name=%s)", req.WorkflowFile, wf.Name)
-		} else {
-			s.logger.Warnf("orchestration: failed to load workflow file %q: %s", req.WorkflowFile, wfErr.Error())
 		}
+		wf, wfErr := s.workflowLoader.LoadFromFile(tenantID, req.WorkflowFile)
+		if wfErr != nil {
+			return nil, &AgentServiceError{
+				Sentinel: ErrInvalidInput,
+				Message:  "load workflow file: " + wfErr.Error(),
+			}
+		}
+		if req.WorkflowName == "" {
+			req.WorkflowName = wf.Name
+		}
+		s.logger.Infof("orchestration: loaded workflow from file %q (name=%s)", req.WorkflowFile, wf.Name)
 	}
 
 	lead, err := s.jobLead(ctx, tenantID, req)

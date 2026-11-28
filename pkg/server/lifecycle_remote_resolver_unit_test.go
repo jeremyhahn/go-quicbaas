@@ -24,14 +24,19 @@ package server
 
 import (
 	"context"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
 func TestServer_CentralTokenEndpoint_EmptyHostUsesLoopback(t *testing.T) {
@@ -68,6 +73,83 @@ func TestServer_CentralTokenEndpoint_RESTPortZeroFallsBackToGRPC(t *testing.T) {
 	got := srv.centralTokenEndpoint()
 	assert.True(t, strings.Contains(got, ":9001"),
 		"zero REST port must fall through to GRPC port so the OIDC endpoint is still reachable")
+}
+
+// setAllBindAddresses enables REST, gRPC and MCP on one shared bind address.
+func setAllBindAddresses(srv *Server, addr string) {
+	srv.config.Server.REST.Enabled = true
+	srv.config.Server.GRPC.Enabled = true
+	srv.config.Server.MCP.Enabled = true
+	srv.config.Server.REST.BindAddress = addr
+	srv.config.Server.GRPC.BindAddress = addr
+	srv.config.Server.MCP.BindAddress = addr
+}
+
+// With server.host a wildcard and every listener on a private IP, REST is not
+// on loopback: the token endpoint must be the private IP.
+func TestServer_CentralTokenEndpoint_PrivateBindAddressUsed(t *testing.T) {
+	srv := withTempServer(t)
+	srv.config.Server.Host = "0.0.0.0"
+	setAllBindAddresses(srv, "10.20.30.40")
+	srv.config.Server.REST.Port = 7103
+	assert.Equal(t, "https://10.20.30.40:7103/oauth2/token", srv.centralTokenEndpoint())
+}
+
+func TestServer_CentralTokenEndpoint_WildcardBindAddressUsesLoopback(t *testing.T) {
+	srv := withTempServer(t)
+	setAllBindAddresses(srv, "::")
+	srv.config.Server.REST.Port = 7104
+	assert.Equal(t, "https://127.0.0.1:7104/oauth2/token", srv.centralTokenEndpoint())
+}
+
+func TestServer_CentralTokenEndpoint_IPv6BindAddressBracketed(t *testing.T) {
+	srv := withTempServer(t)
+	setAllBindAddresses(srv, "fd00::5")
+	srv.config.Server.REST.Port = 7105
+	assert.Equal(t, "https://[fd00::5]:7105/oauth2/token", srv.centralTokenEndpoint())
+}
+
+// The pool's token source trusts this server's CA chain only when the pool's
+// token URL is the one the server derived for itself.
+func TestRemoteBackendPool_TokenSourceTrustsOwnCA(t *testing.T) {
+	p := newRemoteBackendPool(nil, &OrchestratorDaemonClient{ClientID: "c", ClientSecret: "s"},
+		"https://10.20.30.40:7103/oauth2/token", "/nonexistent/ca.crt", config.SchedulerHostAffinityConfig{}, nil)
+
+	p.tokenURLIsOwn = true
+	ts := p.newTokenSource()
+	assert.True(t, ts.ownCA)
+	assert.False(t, ts.loopback)
+
+	p.tokenURLIsOwn = false
+	assert.False(t, p.newTokenSource().ownCA)
+}
+
+// Off loopback, the own-endpoint source trusts this server's CA chain from
+// disk; without ownCA the system roots refuse the same certificate.
+func TestCentralOAuth2TokenSource_OwnCATrustedOffLoopback(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"abc.def","token_type":"Bearer","expires_in":3600}`))
+	}))
+	t.Cleanup(srv.Close)
+	caPath := filepath.Join(t.TempDir(), "ca-chain.crt")
+	require.NoError(t, os.WriteFile(caPath,
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600))
+	cred := &OrchestratorDaemonClient{ClientID: "client-id-1", ClientSecret: "client-secret-1"}
+
+	ts := newCentralOAuth2TokenSource(cred, srv.URL, caPath)
+	ts.loopback = false
+	ts.ownCA = true
+	tok, err := ts.Token(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "abc.def", tok.AccessToken)
+
+	untrusted := newCentralOAuth2TokenSource(cred, srv.URL, caPath)
+	untrusted.loopback = false
+	untrusted.ownCA = false
+	_, err = untrusted.Token(context.Background())
+	require.Error(t, err, "the system roots must not trust the server's own CA")
 }
 
 // ---------------------------------------------------------------------------

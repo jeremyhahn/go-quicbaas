@@ -488,6 +488,13 @@ type Server struct {
 	// Created by initializeCA() and used by all transport layers.
 	tlsConfig *tls.Config
 
+	// operatorListenerCert is set by initializeCA when the listener serves an
+	// operator-provided certificate.
+	operatorListenerCert bool
+	// operatorListenerCAFile is the CA file the operator configured for that
+	// certificate, empty when none.
+	operatorListenerCAFile string
+
 	// Barrier management - uses the interfaces.BarrierManager abstraction
 	// backed by qrdb's StorageBarrier via the BarrierSealManager adapter.
 	barrierManager interfaces.BarrierManager

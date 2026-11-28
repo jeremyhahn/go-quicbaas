@@ -18,7 +18,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -264,6 +267,136 @@ func TestWorkflowLoader_LoadFromFile_LoadsWithoutRetiredFields(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "be careful", def.Agents[0].PromptAppend)
+}
+
+// boundedWorkflowDoc is a valid minimal workflow definition the size-limit
+// tests pad with YAML comment lines.
+const boundedWorkflowDoc = "name: bounded\nmode: autonomous\nagents:\n" +
+	"  - role: worker\n    backend: claude\n"
+
+// loadFromFileWithin runs LoadFromFile and fails the test when it has not
+// returned within 5s, so a read that blocks (a FIFO without a writer) or never
+// ends (a device) fails instead of hanging the suite.
+func loadFromFileWithin(t *testing.T, loader *WorkflowLoader, path string) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() {
+		_, err := loader.LoadFromFile(SystemTenantID, path)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatalf("LoadFromFile(%q) did not return within 5s", path)
+		return nil
+	}
+}
+
+// requireNotRegular asserts err is the typed not-a-regular-file refusal for path.
+func requireNotRegular(t *testing.T, err error, path string) {
+	t.Helper()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrWorkflowLoad)
+	assert.ErrorIs(t, err, ErrWorkflowFileNotRegular)
+	var notRegular *WorkflowFileNotRegularError
+	require.ErrorAs(t, err, &notRegular)
+	assert.Equal(t, path, notRegular.Path)
+}
+
+// paddedWorkflowFile writes boundedWorkflowDoc followed by short YAML comment
+// lines so the file is exactly size bytes.
+func paddedWorkflowFile(t *testing.T, size int64) string {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString(boundedWorkflowDoc)
+	const line = 64 // "#" + 62 spaces + "\n"
+	for int64(b.Len())+line <= size {
+		b.WriteString("#" + strings.Repeat(" ", line-2) + "\n")
+	}
+	if rest := size - int64(b.Len()); rest > 0 {
+		b.WriteString("#" + strings.Repeat(" ", int(rest-1)))
+	}
+	require.Equal(t, size, int64(b.Len()))
+	path := filepath.Join(t.TempDir(), "padded.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(b.String()), 0o600))
+	return path
+}
+
+func TestWorkflowLoader_LoadFromFile_RefusesCharDevice(t *testing.T) {
+	if _, err := os.Stat("/dev/zero"); err != nil {
+		t.Skip("/dev/zero not available")
+	}
+	err := loadFromFileWithin(t, NewWorkflowLoader(), "/dev/zero")
+	requireNotRegular(t, err, "/dev/zero")
+}
+
+func TestWorkflowLoader_LoadFromFile_RefusesFIFO(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workflow.fifo")
+	require.NoError(t, syscall.Mkfifo(path, 0o600))
+
+	err := loadFromFileWithin(t, NewWorkflowLoader(), path)
+	requireNotRegular(t, err, path)
+}
+
+func TestWorkflowLoader_LoadFromFile_RefusesDirectory(t *testing.T) {
+	dir := t.TempDir()
+	err := loadFromFileWithin(t, NewWorkflowLoader(), dir)
+	requireNotRegular(t, err, dir)
+}
+
+func TestWorkflowLoader_LoadFromFile_RefusesSymlinkToDevice(t *testing.T) {
+	if _, err := os.Stat("/dev/zero"); err != nil {
+		t.Skip("/dev/zero not available")
+	}
+	link := filepath.Join(t.TempDir(), "zero.yaml")
+	require.NoError(t, os.Symlink("/dev/zero", link))
+
+	err := loadFromFileWithin(t, NewWorkflowLoader(), link)
+	requireNotRegular(t, err, link)
+}
+
+func TestWorkflowLoader_LoadFromFile_FollowsSymlinkToRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "clean.yaml")
+	doc := "name: clean\nmode: autonomous\nagents:\n" +
+		"  - role: worker\n    backend: claude\n    prompt_append: be careful\n"
+	require.NoError(t, os.WriteFile(target, []byte(doc), 0o600))
+	link := filepath.Join(dir, "link.yaml")
+	require.NoError(t, os.Symlink(target, link))
+
+	def, err := NewWorkflowLoader().LoadFromFile(SystemTenantID, link)
+
+	require.NoError(t, err)
+	assert.Equal(t, "clean", def.Name)
+}
+
+func TestWorkflowLoader_LoadFromFile_RefusesOversizedFile(t *testing.T) {
+	path := paddedWorkflowFile(t, MaxWorkflowFileBytes+1)
+	loader := NewWorkflowLoader()
+
+	_, err := loader.LoadFromFile(SystemTenantID, path)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrWorkflowLoad)
+	assert.ErrorIs(t, err, ErrWorkflowFileTooLarge)
+	var tooLarge *WorkflowFileTooLargeError
+	require.ErrorAs(t, err, &tooLarge)
+	assert.Equal(t, MaxWorkflowFileBytes, tooLarge.Limit)
+	_, getErr := loader.Get(SystemTenantID, "bounded")
+	assert.Error(t, getErr, "an oversized file must not be stored")
+}
+
+func TestWorkflowLoader_LoadFromFile_LoadsAtSizeLimit(t *testing.T) {
+	path := paddedWorkflowFile(t, MaxWorkflowFileBytes)
+	fi, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, MaxWorkflowFileBytes, fi.Size())
+
+	def, err := NewWorkflowLoader().LoadFromFile(SystemTenantID, path)
+
+	require.NoError(t, err)
+	assert.Equal(t, "bounded", def.Name)
 }
 
 func TestWorkflowLoader_LoadFromFile_MissingFile(t *testing.T) {

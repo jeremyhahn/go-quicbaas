@@ -1307,8 +1307,9 @@ func handleOrchestratorStartJob(ctx context.Context, conn *grpc.ClientConn, req 
 	}
 
 	return &orchestrator.StartJobResponse{
-		JobID:     protoResp.GetJobId(),
-		Timestamp: timestampToUnix(protoResp.GetTimestamp()),
+		JobID: protoResp.GetJobId(),
+		// Unix nanoseconds, as the embedded and MCP transports return it.
+		Timestamp: timestampToUnixNano(protoResp.GetTimestamp()),
 	}, nil
 }
 
@@ -2003,7 +2004,7 @@ func healthReportFromProto(r *pb.HealthCheckReport) *orchestrator.HealthCheckRep
 		Healthy:    r.GetUnhealthy() == 0,
 		Status:     healthStatusString(r.GetUnhealthy()),
 		Components: components,
-		Timestamp:  timestampToUnix(r.GetTimestamp()),
+		Timestamp:  timestampToUnixNano(r.GetTimestamp()),
 	}
 }
 

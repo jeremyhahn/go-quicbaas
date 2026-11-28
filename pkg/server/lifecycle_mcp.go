@@ -18,6 +18,7 @@ package server
 import (
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
 	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/xkmsca"
 )
 
 // newMCP is a seam injection point for unit testing buildMCPServer.
@@ -73,6 +74,13 @@ func (s *Server) buildMCPServer() (*mcpapi.Server, error) {
 	// online) the tools return TenantBarrierServiceUnavailableError.
 	mcpServer.SetTenantBarrierService(s.buildTenantBarrierService())
 	s.logger.Info("Tenant barrier service wired into MCP server")
+
+	// Wire the embedded TrustedCA behind the xkms.ca.* tools through the
+	// same xkmsca adapter the REST CA routes use (go-quicbaas#1631).
+	if s.xkmsCA != nil {
+		mcpServer.SetCAService(xkmsca.New(s.xkmsCA, s.config.IAM.SPIFFETrustDomain))
+		s.logger.Info("CA service wired into MCP server")
+	}
 
 	// Wire the qrdb user + user auth-factor lazy proxies into the MCP
 	// server so the qrdb_user_get* / qrdb_user_authfactor_* tools serve

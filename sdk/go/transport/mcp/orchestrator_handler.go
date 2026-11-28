@@ -170,6 +170,13 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 	"SubmitTaskArtifacts": decodeMCPInto[orchestrator.SubmitTaskArtifactsResponse]("SubmitTaskArtifacts", "artifact submit"),
 	"SpawnChildJob":       decodeMCPInto[orchestrator.SpawnChildJobResponse]("SpawnChildJob", "child job spawn"),
 
+	// Without these the raw tool result reached the client, whose type
+	// assertion then failed (go-quicbaas#1644).
+	"SpawnSession": decodeMCPInto[orchestrator.SpawnSessionResponse]("SpawnSession", "session spawn"),
+	"GetJobStatus": decodeMCPInto[orchestrator.JobStatus]("GetJobStatus", "job status"),
+	"StartJob":     decodeMCPStartJob,
+	"Health":       decodeMCPOrchestratorHealth,
+
 	// The workflow tools wrap the definition as {"workflow": ...}, as REST does.
 	"CreateWorkflow": decodeMCPWorkflow("CreateWorkflow"),
 	"GetWorkflow":    decodeMCPWorkflow("GetWorkflow"),
@@ -402,6 +409,93 @@ func decodeMCPInto[T any](method, what string) orchestratorMCPTransform {
 		}
 		return out, nil
 	}
+}
+
+// mcpInstantNanos reads an MCP tool's RFC 3339 timestamp as the Unix
+// nanoseconds the SDK types carry on every transport. A bare number is taken
+// as nanoseconds already; an empty value is zero.
+func mcpInstantNanos(raw json.RawMessage) (int64, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		var nanos int64
+		if numErr := json.Unmarshal(raw, &nanos); numErr != nil {
+			return 0, err
+		}
+		return nanos, nil
+	}
+	if text == "" {
+		return 0, nil
+	}
+	at, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return 0, err
+	}
+	return at.UnixNano(), nil
+}
+
+// decodeMCPStartJob decodes quicbaas_orchestrator_start_job, whose timestamp
+// is RFC 3339 text, into StartJobResponse's Unix nanoseconds.
+func decodeMCPStartJob(raw []byte) (interface{}, error) {
+	var wire struct {
+		JobID     string          `json:"job_id"`
+		Timestamp json.RawMessage `json:"timestamp"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.StartJob", "failed to decode MCP job start result")
+	}
+	nanos, err := mcpInstantNanos(wire.Timestamp)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.StartJob", "failed to decode MCP job start timestamp")
+	}
+	return &orchestrator.StartJobResponse{JobID: wire.JobID, Timestamp: nanos}, nil
+}
+
+// decodeMCPOrchestratorHealth builds the SDK HealthCheckReport from
+// quicbaas_orchestrator_health's session counts, as the embedded transport
+// builds it from the service's report: healthy when no session is
+// unhealthy, one component per session, the instant in Unix nanoseconds.
+func decodeMCPOrchestratorHealth(raw []byte) (interface{}, error) {
+	var wire struct {
+		Unhealthy int `json:"unhealthy"`
+		Results   []struct {
+			SessionID string `json:"session_id"`
+			Healthy   bool   `json:"healthy"`
+		} `json:"results"`
+		Timestamp json.RawMessage `json:"timestamp"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.Health", "failed to decode MCP orchestrator health result")
+	}
+	nanos, err := mcpInstantNanos(wire.Timestamp)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.Health", "failed to decode MCP orchestrator health timestamp")
+	}
+	components := make(map[string]string, len(wire.Results))
+	for _, r := range wire.Results {
+		state := "unhealthy"
+		if r.Healthy {
+			state = "healthy"
+		}
+		components[r.SessionID] = state
+	}
+	healthy := wire.Unhealthy == 0
+	status := "healthy"
+	if !healthy {
+		status = "degraded"
+	}
+	return &orchestrator.HealthCheckReport{
+		Healthy:    healthy,
+		Status:     status,
+		Components: components,
+		Timestamp:  nanos,
+	}, nil
 }
 
 // decodeMCPGetTask decodes the quicbaas_orchestrator_task_get result, which

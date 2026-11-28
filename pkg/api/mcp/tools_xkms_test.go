@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -636,9 +637,9 @@ func TestXKMSPIVHandlersNotInitialized(t *testing.T) {
 // CA Handler Tests - xkms not initialized
 // =============================================================================
 
-// TestTrustedCAHandlersNotInitialized verifies CA handlers return errors when
-// xkms is not initialized.
-func TestTrustedCAHandlersNotInitialized(t *testing.T) {
+// TestTrustedCAHandlersUnavailableWithoutCA verifies CA handlers fail closed
+// with a service-unavailable error when no CA is wired.
+func TestTrustedCAHandlersUnavailableWithoutCA(t *testing.T) {
 	log := newTestLogger(t)
 	svc := newMinimalMockService()
 	registry := NewToolRegistry(svc, log)
@@ -690,8 +691,9 @@ func TestTrustedCAHandlersNotInitialized(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := tt.handler(ctx, tt.args)
 			require.Error(t, err)
-			var initErr *XKMSNotInitializedError
-			assert.ErrorAs(t, err, &initErr)
+			var qbErr *dberrors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code, "with no CA wired the CA tools are unavailable")
 		})
 	}
 }
@@ -875,24 +877,25 @@ func TestXKMSVerifyUninitialized(t *testing.T) {
 // executeXKMSTool Dispatch Tests
 // =============================================================================
 
-// TestExecuteXKMSToolInitializesHandlerMap verifies the handler map is lazily
-// initialized on first call.
+// TestExecuteXKMSToolInitializesHandlerMap verifies each registry builds its
+// own handler table on first call.
 func TestExecuteXKMSToolInitializesHandlerMap(t *testing.T) {
 	log := newTestLogger(t)
 	svc := newMinimalMockService()
 	registry := NewToolRegistry(svc, log)
 	ctx := context.Background()
 
-	// Reset global handler map to test lazy initialization
-	xkmsHandlerMap = nil
-
 	// Any xkms tool call should initialize the map
 	_, err := registry.executeXKMSTool(ctx, "xkms.canSeal", map[string]interface{}{})
 	require.NoError(t, err)
 
 	// Map should now be initialized
-	assert.NotNil(t, xkmsHandlerMap)
-	assert.Greater(t, len(xkmsHandlerMap), 0)
+	assert.NotNil(t, registry.xkmsHandlers)
+	assert.Len(t, registry.xkmsHandlers, len(registry.initXKMSHandlers()))
+
+	// Another registry has not built its own table until its first call.
+	other := NewToolRegistry(svc, log)
+	assert.Nil(t, other.xkmsHandlers)
 }
 
 // TestSaveCertChainInvalidCertificateParse verifies that saveCertChain returns

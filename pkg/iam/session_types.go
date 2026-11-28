@@ -14,6 +14,7 @@
 package iam
 
 import (
+	"strconv"
 	"time"
 )
 
@@ -57,6 +58,51 @@ type SessionExt struct {
 
 	// Metadata contains additional session metadata
 	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+// SessionView is the caller-facing shape of a SessionExt: every field except
+// the token and refresh hashes, which never leave the server. The JSON tags
+// match SessionExt so a transport answers in the same wire shape.
+type SessionView struct {
+	ID          string            `json:"id"`
+	UserID      uint64            `json:"user_id,string"`
+	TenantID    string            `json:"tenant_id"`
+	MFAVerified bool              `json:"mfa_verified"`
+	DeviceInfo  *DeviceInfo       `json:"device_info,omitempty"`
+	IPAddress   string            `json:"ip_address"`
+	UserAgent   string            `json:"user_agent"`
+	Created     time.Time         `json:"created"`
+	LastActive  time.Time         `json:"last_active"`
+	ExpiresAt   time.Time         `json:"expires_at"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
+// View returns the session without its token and refresh hashes. A nil
+// session has a nil view.
+func (s *SessionExt) View() *SessionView {
+	if s == nil {
+		return nil
+	}
+	return &SessionView{
+		ID:          s.ID,
+		UserID:      s.UserID,
+		TenantID:    s.TenantID,
+		MFAVerified: s.MFAVerified,
+		DeviceInfo:  s.DeviceInfo,
+		IPAddress:   s.IPAddress,
+		UserAgent:   s.UserAgent,
+		Created:     s.Created,
+		LastActive:  s.LastActive,
+		ExpiresAt:   s.ExpiresAt,
+		Metadata:    s.Metadata,
+	}
+}
+
+// OwnedBy reports whether the session belongs to the user with the decimal ID
+// userID in tenantID. A nil session belongs to nobody. Every transport's
+// self-service session verb checks ownership through this one method.
+func (s *SessionExt) OwnedBy(userID, tenantID string) bool {
+	return s != nil && strconv.FormatUint(s.UserID, 10) == userID && s.TenantID == tenantID
 }
 
 // DeviceInfo contains information about the authenticated device.

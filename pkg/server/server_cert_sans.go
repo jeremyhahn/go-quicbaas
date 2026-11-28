@@ -19,8 +19,8 @@ import (
 const crlReasonSuperseded = 4
 
 // serverCertSANs returns the subject alternative names of the auto-issued
-// server TLS certificate: the loopback names, Server.Host, the machine
-// hostname and the operator's additional SANs.
+// server TLS certificate: the loopback names, Server.Host, the listeners'
+// resolved bind host, the machine hostname and the operator's additional SANs.
 //
 // The set is de-duplicated and keeps first-seen order. DNS names compare
 // case-insensitively and IPs compare by value, so "::1" and
@@ -34,6 +34,12 @@ func (s *Server) serverCertSANs() *xkmssdk.TrustedCASubjectAlternativeNames {
 	// When Host is a routable hostname or IP, include it so remote callers
 	// can verify this server.
 	if host := s.config.Server.Host; host != "" && host != "0.0.0.0" {
+		set.add(host)
+	}
+	// The host the listeners actually bind (a shared per-protocol
+	// bind_address), so a client dialing it, such as this server's own token
+	// exchange, can verify the certificate. A wildcard is not a name.
+	if host, wildcard := ownListenHost(&s.config.Server); !wildcard {
 		set.add(host)
 	}
 	// Include the machine hostname so peers can verify this node's certificate.

@@ -213,7 +213,18 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 	// module surfaces answer Unavailable until quicbaasd finishes composing
 	// the QuicBaaS facade.
 	if cfg.NetworkServing() {
-		qcfg.Server.Host = cfg.Server.Host
+		// The node has one host for every listener; a per-protocol
+		// bind_address becomes it. Overrides that differ refuse the boot
+		// rather than falling back to server.host: a fallback would put a
+		// listener kept on private ingress onto every interface.
+		host, conflictKey, ok := cfg.Server.NodeListenHost()
+		if !ok {
+			return nil, &config.ValidationError{
+				Field:   conflictKey,
+				Message: "the REST, gRPC and MCP listeners share one bind host on the embedded qrdb node; set the same bind_address on every enabled protocol",
+			}
+		}
+		qcfg.Server.Host = host
 		qcfg.Server.AdminPort = cfg.Server.REST.Port
 		qcfg.Server.GRPCPort = cfg.Server.GRPC.Port
 		qcfg.Protocols.REST = cfg.Server.REST.Enabled
@@ -1397,22 +1408,12 @@ func buildRaftMTLSConfig(cfg *config.Config) (*qrdbnode.RaftMTLSConfig, error) {
 
 // newNodeBackedShardedClient returns a *ShardedClient backed by the qrdb
 // node's SDK client. All shard-ID lookups return the same client via the
-// nodeClient short-circuit in ShardedClient.ForShard.
-//
-// The factory is wired with the embedded transport config so IsEmbedded()
-// returns true — callers that check the transport type still see the correct
-// embedded indicator. The qrdb node owns all per-shard storage; quicbaas
-// does not manage separate per-shard stores.
-//
-// The node client's lifetime is owned by the qrdb node, not the ShardedClient.
-// When nodeOwned is true, Close() is a no-op on the ShardedClient side;
-// the node closes the client during node.Close().
+// nodeClient in ShardedClient.ForShard. The qrdb node owns all per-shard
+// storage and the client's lifetime: the node closes the client during
+// node.Close(), and ShardedClient.Close never does.
 func newNodeBackedShardedClient(node *qrdbnode.Node) *ShardedClient {
-	embeddedCfg := &config.QRDBConfig{Transport: config.QRDBTransportEmbedded}
 	return &ShardedClient{
-		factory:    newTransportFactory(embeddedCfg, nil, nil),
 		nodeClient: node.Client(),
-		nodeOwned:  true,
 	}
 }
 

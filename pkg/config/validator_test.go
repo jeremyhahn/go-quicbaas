@@ -142,6 +142,18 @@ func TestValidateServerConfig(t *testing.T) {
 			errorField:  "server.mcp.port",
 		},
 		{
+			name: "MCP bind address differing from REST",
+			modify: func(cfg *Config) {
+				cfg.Server.REST.Enabled = true
+				cfg.Server.REST.BindAddress = "10.0.0.1"
+				cfg.Server.MCP.Enabled = true
+				cfg.Server.MCP.Port = 11443
+				cfg.Server.MCP.BindAddress = "127.0.0.1"
+			},
+			expectError: true,
+			errorField:  "server.mcp.bind_address",
+		},
+		{
 			name: "invalid read timeout",
 			modify: func(cfg *Config) {
 				cfg.Server.ReadTimeout = 0

@@ -15,8 +15,10 @@ package orchestration
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -202,5 +204,84 @@ func TestCodexExecBackend_PromptUsesSessionModel(t *testing.T) {
 	}
 	if resp.Model != "session-model" {
 		t.Fatalf("expected session-model, got %q", resp.Model)
+	}
+}
+
+// registerAutoMatchWorkflow registers a workflow the request's lead backend
+// auto-matches, so a start that ignored its workflow file would run on it.
+func registerAutoMatchWorkflow(t *testing.T, loader *WorkflowLoader) {
+	t.Helper()
+	def := &WorkflowDefinition{
+		Name: "matched",
+		Mode: WorkflowModeAutonomous,
+		Agents: []AgentRoleSpec{
+			{Role: "lead", Backend: "mock", Model: "mock-model"},
+			{Role: "worker", Backend: "mock", Model: "mock-model"},
+		},
+	}
+	if err := loader.Register("tenant-1", def); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+}
+
+// requireWorkflowFileRefused starts a job naming path as its workflow file
+// and requires an invalid-input refusal with no job started.
+func requireWorkflowFileRefused(t *testing.T, svc *agentServiceImpl, path string) error {
+	t.Helper()
+	resp, err := svc.StartJob(context.Background(), &StartJobRequest{
+		TenantID:      "tenant-1",
+		Description:   "workflow file refused",
+		WorkflowFile:  path,
+		routedBackend: "mock",
+	})
+	defer cancelAllJobs(svc)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("StartJob error = %v, want ErrInvalidInput", err)
+	}
+	if resp != nil {
+		t.Fatalf("StartJob response = %+v, want nil", resp)
+	}
+	jobs, listErr := svc.ListJobs(ContextWithTenant(context.Background(), "tenant-1"), "tenant-1", nil)
+	if listErr != nil {
+		t.Fatalf("ListJobs: %v", listErr)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("%d jobs started, want 0", len(jobs))
+	}
+	return err
+}
+
+func TestStartJob_WorkflowFileMalformedRefusesStart(t *testing.T) {
+	svc := newMockBackendService(t)
+	loader := NewWorkflowLoader()
+	svc.SetWorkflowLoader(loader)
+	registerAutoMatchWorkflow(t, loader)
+
+	path := filepath.Join(t.TempDir(), "wf.yaml")
+	if err := os.WriteFile(path, []byte("name: [unterminated"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	requireWorkflowFileRefused(t, svc, path)
+}
+
+func TestStartJob_WorkflowFileMissingRefusesStart(t *testing.T) {
+	svc := newMockBackendService(t)
+	loader := NewWorkflowLoader()
+	svc.SetWorkflowLoader(loader)
+	registerAutoMatchWorkflow(t, loader)
+
+	requireWorkflowFileRefused(t, svc, filepath.Join(t.TempDir(), "absent.yaml"))
+}
+
+func TestStartJob_WorkflowFileWithoutLoaderRefusesStart(t *testing.T) {
+	svc := newMockBackendService(t)
+
+	path := filepath.Join(t.TempDir(), "wf.yaml")
+	if err := os.WriteFile(path, []byte(startJobTestWorkflowYAML), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	err := requireWorkflowFileRefused(t, svc, path)
+	if !strings.Contains(err.Error(), "no workflow loader") {
+		t.Fatalf("error %q does not name the missing loader", err.Error())
 	}
 }

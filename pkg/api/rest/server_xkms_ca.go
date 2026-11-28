@@ -18,6 +18,8 @@ package rest
 import (
 	"net/http"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/xkmsca"
+
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -62,10 +64,10 @@ func (s *Server) SetCertificateAuthority(ca xkmssdk.TrustedCA) {
 		return
 	}
 
-	// newXKMSCAServicer wraps the TrustedCA so it satisfies go-xkms's
-	// transport CAService interface. go-xkms's CAHandlers then treats
-	// the adapter as a regular servicer.
-	servicer := newXKMSCAServicer(ca, s.config.SPIFFETrustDomain)
+	// xkmsca.New wraps the TrustedCA so it satisfies go-xkms's transport
+	// CAService interface. go-xkms's CAHandlers then treats the adapter as a
+	// regular servicer. MCP uses the same adapter.
+	servicer := xkmsca.New(ca, s.config.SPIFFETrustDomain)
 
 	// nil logger → CAHandlers falls back to slog.Default(), which is
 	// already configured by the server process.

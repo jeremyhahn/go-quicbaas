@@ -209,6 +209,37 @@ func TestServerCertSANs_KeepsOperatorEntriesAndRoutesIPs(t *testing.T) {
 		"an unparseable IP is kept for the validator, never silently dropped")
 }
 
+// A shared per-protocol bind address is the host clients dial, so the
+// certificate must name it even when server.host is a wildcard.
+func TestServerCertSANs_IncludesResolvedListenHost(t *testing.T) {
+	s := newSANTestServer(t)
+	s.config.Server.Host = "0.0.0.0"
+	s.config.Server.REST.Enabled = true
+	s.config.Server.REST.BindAddress = "10.20.30.40"
+	s.config.Server.MCP.Enabled = true
+	s.config.Server.MCP.BindAddress = "10.20.30.40"
+	s.config.Server.GRPC.Enabled = false
+
+	sans := s.serverCertSANs()
+
+	assert.Contains(t, sans.IPs, "10.20.30.40")
+}
+
+func TestServerCertSANs_WildcardListenHostNotAdded(t *testing.T) {
+	s := newSANTestServer(t)
+	s.config.Server.REST.Enabled = true
+	s.config.Server.REST.BindAddress = "::"
+	s.config.Server.GRPC.Enabled = true
+	s.config.Server.GRPC.BindAddress = "::"
+	s.config.Server.MCP.Enabled = true
+	s.config.Server.MCP.BindAddress = "::"
+
+	sans := s.serverCertSANs()
+
+	assert.NotContains(t, sans.IPs, "::")
+	assert.NotContains(t, sans.IPs, "0.0.0.0")
+}
+
 func TestMissingSANs_CoveredIgnoresCaseAndIPSpelling(t *testing.T) {
 	cert := newSANTestLeaf(t, "localhost", &xkmssdk.TrustedCASubjectAlternativeNames{
 		DNS: []string{"Node-1.Example.Test"},

@@ -166,35 +166,7 @@ func TestSIEMExporter_SendNilEvent(t *testing.T) {
 }
 
 func TestSIEMExporter_JSONFormat(t *testing.T) {
-	var receivedEvents []SIEMJSONEvent
-	var receivedCount atomic.Int64
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "application/x-ndjson", r.Header.Get("Content-Type"))
-
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		// Parse newline-delimited JSON
-		lines := strings.Split(strings.TrimSpace(string(body)), "\n")
-		for _, line := range lines {
-			if line == "" {
-				continue
-			}
-			var event SIEMJSONEvent
-			if err := json.Unmarshal([]byte(line), &event); err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			receivedEvents = append(receivedEvents, event)
-		}
-		receivedCount.Add(int64(len(lines)))
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	server, requests := newSIEMCaptureServer(t)
 
 	log := createTestLogger(t)
 
@@ -228,34 +200,20 @@ func TestSIEMExporter_JSONFormat(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
+	// The batch is flushed by Send or by the ticker, whichever takes it first.
+	req := receiveRequest(t, requests)
+	assert.Equal(t, "application/x-ndjson", req.header.Get("Content-Type"))
 
-	assert.Greater(t, receivedCount.Load(), int64(0))
-	if len(receivedEvents) > 0 {
-		lastEvent := receivedEvents[len(receivedEvents)-1]
-		assert.Equal(t, "quicbaas", lastEvent.Source)
-		assert.Equal(t, "audit", lastEvent.EventType)
-		assert.Equal(t, "testuser", lastEvent.User)
-		assert.Equal(t, "authenticate", lastEvent.Action)
-	}
+	var received SIEMJSONEvent
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(req.body)), &received))
+	assert.Equal(t, "quicbaas", received.Source)
+	assert.Equal(t, "audit", received.EventType)
+	assert.Equal(t, "testuser", received.User)
+	assert.Equal(t, "authenticate", received.Action)
 }
 
 func TestSIEMExporter_CEFFormat(t *testing.T) {
-	var receivedData string
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "text/plain", r.Header.Get("Content-Type"))
-
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		receivedData = string(body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	server, requests := newSIEMCaptureServer(t)
 
 	log := createTestLogger(t)
 
@@ -288,31 +246,18 @@ func TestSIEMExporter_CEFFormat(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
+	req := receiveRequest(t, requests)
+	assert.Equal(t, "text/plain", req.header.Get("Content-Type"))
 
 	// Verify CEF format
-	assert.Contains(t, receivedData, "CEF:0|TestVendor|TestProduct|2.0|")
-	assert.Contains(t, receivedData, "suser=testuser")
-	assert.Contains(t, receivedData, "act=authenticate")
-	assert.Contains(t, receivedData, "outcome=success")
+	assert.Contains(t, req.body, "CEF:0|TestVendor|TestProduct|2.0|")
+	assert.Contains(t, req.body, "suser=testuser")
+	assert.Contains(t, req.body, "act=authenticate")
+	assert.Contains(t, req.body, "outcome=success")
 }
 
 func TestSIEMExporter_LEEFFormat(t *testing.T) {
-	var receivedData string
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "text/plain", r.Header.Get("Content-Type"))
-
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		receivedData = string(body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	server, requests := newSIEMCaptureServer(t)
 
 	log := createTestLogger(t)
 
@@ -346,14 +291,14 @@ func TestSIEMExporter_LEEFFormat(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
+	req := receiveRequest(t, requests)
+	assert.Equal(t, "text/plain", req.header.Get("Content-Type"))
 
 	// Verify LEEF format
-	assert.Contains(t, receivedData, "LEEF:2.0|TestVendor|TestProduct|3.0|")
-	assert.Contains(t, receivedData, "usrName=testuser")
-	assert.Contains(t, receivedData, "action=read")
-	assert.Contains(t, receivedData, "result=denied")
+	assert.Contains(t, req.body, "LEEF:2.0|TestVendor|TestProduct|3.0|")
+	assert.Contains(t, req.body, "usrName=testuser")
+	assert.Contains(t, req.body, "action=read")
+	assert.Contains(t, req.body, "result=denied")
 }
 
 func TestSIEMExporter_UnsupportedFormat(t *testing.T) {
@@ -428,21 +373,13 @@ func TestSIEMExporter_RetryOnFailure(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for retries
-	time.Sleep(500 * time.Millisecond)
-
-	// Should have made 3 attempts
-	assert.GreaterOrEqual(t, requestCount.Load(), int32(3))
+	// Two refusals then a success: three attempts, made by Send or by the
+	// ticker, whichever takes the batch first.
+	require.Eventually(t, func() bool { return requestCount.Load() >= 3 }, asyncTimeout, asyncPoll)
 }
 
 func TestSIEMExporter_CustomHeaders(t *testing.T) {
-	var receivedHeaders http.Header
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedHeaders = r.Header.Clone()
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	server, requests := newSIEMCaptureServer(t)
 
 	log := createTestLogger(t)
 
@@ -474,11 +411,9 @@ func TestSIEMExporter_CustomHeaders(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
-
-	assert.Equal(t, "Bearer test-token", receivedHeaders.Get("Authorization"))
-	assert.Equal(t, "custom-value", receivedHeaders.Get("X-Custom-Header"))
+	req := receiveRequest(t, requests)
+	assert.Equal(t, "Bearer test-token", req.header.Get("Authorization"))
+	assert.Equal(t, "custom-value", req.header.Get("X-Custom-Header"))
 }
 
 func TestSIEMExporter_BatchFlush(t *testing.T) {
@@ -497,7 +432,7 @@ func TestSIEMExporter_BatchFlush(t *testing.T) {
 		Endpoint:      server.URL,
 		Format:        SIEMFormatJSON,
 		BatchSize:     5,
-		FlushInterval: 5 * time.Second, // Long interval to ensure batch size triggers flush
+		FlushInterval: time.Hour, // The ticker never fires: only the batch size can flush
 	}
 
 	exporter, err := NewSIEMExporter(cfg, log)
@@ -518,10 +453,8 @@ func TestSIEMExporter_BatchFlush(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Wait for batch flush
-	time.Sleep(200 * time.Millisecond)
-
-	assert.Greater(t, receivedBatches.Load(), int32(0))
+	// The fifth Send fills the batch and flushes it before returning.
+	assert.Equal(t, int32(1), receivedBatches.Load())
 }
 
 func TestSIEMExporter_GetStats(t *testing.T) {
@@ -558,11 +491,15 @@ func TestSIEMExporter_GetStats(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Wait for flush
-	time.Sleep(300 * time.Millisecond)
+	// Each batch is counted once its POST succeeds, whether Send or the ticker
+	// flushed it.
+	require.Eventually(t, func() bool {
+		sent, _ := exporter.GetStats()
+		return sent >= 3
+	}, asyncTimeout, asyncPoll)
 
 	sent, errors := exporter.GetStats()
-	assert.GreaterOrEqual(t, sent, int64(3))
+	assert.Equal(t, int64(3), sent)
 	assert.Equal(t, int64(0), errors)
 }
 
@@ -791,10 +728,7 @@ func TestAuditLogger_SIEMExporterIntegration(t *testing.T) {
 	log := createTestLogger(t)
 
 	// Create a test server to receive SIEM events
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	server, requests := newSIEMCaptureServer(t)
 
 	config := &AuditConfig{
 		Enabled:      true,
@@ -812,6 +746,7 @@ func TestAuditLogger_SIEMExporterIntegration(t *testing.T) {
 	al, err := NewAuditLogger(config, log)
 	require.NoError(t, err)
 	defer al.Close()
+	require.NotNil(t, al.siemExporter)
 
 	event := &AuditEvent{
 		Username: "test",
@@ -820,14 +755,12 @@ func TestAuditLogger_SIEMExporterIntegration(t *testing.T) {
 		Result:   ResultSuccess,
 	}
 
-	// Test SIEM exporter via the audit logger
-	if al.siemExporter != nil {
-		err = al.siemExporter.Send(event)
-		assert.NoError(t, err)
+	// One event does not fill a batch of ten, so only the ticker delivers it.
+	err = al.siemExporter.Send(event)
+	require.NoError(t, err)
 
-		// Wait for flush
-		time.Sleep(200 * time.Millisecond)
-	}
+	req := receiveRequest(t, requests)
+	assert.Contains(t, req.body, `"resource":"test"`)
 }
 
 // TestAuditLogger_SendToSIEMIntegration tests the sendToSIEM function
@@ -894,13 +827,7 @@ func TestAuditLogger_BothSyslogAndSIEM(t *testing.T) {
 
 func TestLog_WithSIEMExporter(t *testing.T) {
 	// Start a test HTTP server to receive SIEM events
-	received := make(chan []byte, 10)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		received <- body
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	server, requests := newSIEMCaptureServer(t)
 
 	tmpDir := t.TempDir()
 	logFile := filepath.Join(tmpDir, "audit.log")
@@ -909,6 +836,8 @@ func TestLog_WithSIEMExporter(t *testing.T) {
 		Enabled: true,
 		File:    logFile,
 		MaxSize: 100,
+		// SIEM switches the exporter on; SIEMConfig only shapes it.
+		SIEM: true,
 		SIEMConfig: &SIEMConfig{
 			Enabled:       true,
 			Endpoint:      server.URL,
@@ -931,6 +860,10 @@ func TestLog_WithSIEMExporter(t *testing.T) {
 		Result:   ResultSuccess,
 	})
 	require.NoError(t, err)
+
+	// Log hands the event to the exporter on a goroutine of its own.
+	req := receiveRequest(t, requests)
+	assert.Contains(t, req.body, `"resource":"test-siem"`)
 }
 
 // ---------------------------------------------------------------------------
@@ -1642,10 +1575,7 @@ func TestSendEvents_FormatBatchError(t *testing.T) {
 // TestAuditLogger_SIEMExporter_Full tests the full SIEM exporter functionality.
 func TestAuditLogger_SIEMExporter_Full(t *testing.T) {
 	// Create a test server to receive SIEM events
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	server, requests := newSIEMCaptureServer(t)
 
 	cfg := &AuditConfig{
 		Enabled:      true,
@@ -1667,7 +1597,7 @@ func TestAuditLogger_SIEMExporter_Full(t *testing.T) {
 	defer al.Close()
 
 	// Verify SIEM exporter was created
-	assert.NotNil(t, al.GetSIEMExporter())
+	require.NotNil(t, al.GetSIEMExporter())
 	assert.True(t, al.GetSIEMExporter().IsRunning())
 
 	event := &AuditEvent{
@@ -1677,19 +1607,20 @@ func TestAuditLogger_SIEMExporter_Full(t *testing.T) {
 		Result:   ResultSuccess,
 	}
 
-	// Send event through the SIEM exporter
-	if al.siemExporter != nil {
-		err = al.siemExporter.Send(event)
-		assert.NoError(t, err)
+	// Send event through the SIEM exporter; the ticker delivers it.
+	err = al.siemExporter.Send(event)
+	require.NoError(t, err)
 
-		// Wait for flush
-		time.Sleep(200 * time.Millisecond)
+	req := receiveRequest(t, requests)
+	assert.Contains(t, req.body, `"resource":"data"`)
 
-		// Get stats
-		sent, errs := al.siemExporter.GetStats()
-		assert.GreaterOrEqual(t, sent, int64(0))
-		assert.GreaterOrEqual(t, errs, int64(0))
-	}
+	// The exporter counts the event once the server has answered the POST.
+	require.Eventually(t, func() bool {
+		sent, _ := al.siemExporter.GetStats()
+		return sent == 1
+	}, asyncTimeout, asyncPoll)
+	_, errs := al.siemExporter.GetStats()
+	assert.Equal(t, int64(0), errs)
 }
 
 // ---------------------------------------------------------------------------

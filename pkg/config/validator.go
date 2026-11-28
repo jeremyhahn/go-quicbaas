@@ -196,6 +196,12 @@ func (v *Validator) validateServer(cfg *ServerConfig) {
 		}
 	}
 
+	// The embedded qrdb node binds every listener on one host, so the
+	// enabled protocols' bind_address overrides must agree.
+	if _, key, ok := cfg.NodeListenHost(); !ok {
+		v.addError(key, "the REST, gRPC and MCP listeners share one bind host on the embedded qrdb node; set the same bind_address on every enabled protocol")
+	}
+
 	// Validate port conflicts when both REST and gRPC are enabled
 	if cfg.REST.Enabled && cfg.GRPC.Enabled && cfg.REST.Port == cfg.GRPC.Port {
 		v.addError("server.grpc.port", "gRPC port must be different from REST port")

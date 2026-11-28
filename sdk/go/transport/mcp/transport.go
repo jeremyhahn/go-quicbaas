@@ -381,6 +381,10 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	if verb, ok := ollamaVerbs[method]; ok && isMCPOllamaService(service) {
 		return t.requestToolVerb(ctx, "mcp.ollama."+method, verb, reqBody)
 	}
+	// Health probes decode into the health client's response type.
+	if verb, ok := healthVerbs[method]; ok && isMCPHealthService(service) {
+		return t.requestToolVerb(ctx, "mcp.health."+method, verb, reqBody)
+	}
 
 	// These KMS verbs decode into the client types; the rest keep the
 	// generic path below.
@@ -1182,6 +1186,11 @@ func ToolName(service, method string) string {
 			return verb.tool
 		}
 	}
+	if isMCPHealthService(service) {
+		if verb, ok := healthVerbs[method]; ok {
+			return verb.tool
+		}
+	}
 	if isMCPPromptsService(service) {
 		if verb, ok := promptVerbs[method]; ok {
 			return verb.tool
@@ -1295,6 +1304,9 @@ func ToolName(service, method string) string {
 		}
 		return "quicbaas_rbac_" + camelToSnake(method)
 	case "Auth":
+		if toolName, ok := authSessionTools[method]; ok {
+			return toolName
+		}
 		switch method {
 		case "BeginLogin":
 			return "quicbaas_login_begin"

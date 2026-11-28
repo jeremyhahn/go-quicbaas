@@ -22,10 +22,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -74,6 +76,7 @@ func (s *Server) installRemoteBackendResolver(agentSvc orchestration.AgentServic
 	adapter := logger.NewAdapter(s.logger)
 	caCertPath := filepath.Join(s.config.Storage.DataDir, "certs", "ca-chain.crt")
 	pool := newRemoteBackendPool(s.fleetRegistry, s.orchestratorDaemonClient, s.centralTokenEndpoint(), caCertPath, s.config.Orchestration.HostAffinity, adapter)
+	s.configureTokenTrust(pool)
 	// A daemon silent past the heartbeat bound is not dispatched to, and a
 	// spawn that mounts this daemon's signing socket is placed only on an agent
 	// that proved it can reach this daemon's sockets root (go-quicbaas#981).
@@ -130,11 +133,12 @@ func (s *Server) embeddedHostMetricsSampler(log interfaces.Logger) (fleet.HostMe
 
 // centralTokenEndpoint returns the fully-qualified /oauth2/token URL for this
 // server. The resolver uses it to mint JWTs for outbound daemon calls using
-// the orchestrator's client_credentials app. Falls back to 127.0.0.1 when
-// Server.Host is 0.0.0.0 since the central dials itself.
+// the orchestrator's client_credentials app. The host is the one the node's
+// listeners actually bind (ownListenHost); only when that is a wildcard does
+// the central dial itself on 127.0.0.1. An IPv6 host is bracketed.
 func (s *Server) centralTokenEndpoint() string {
-	host := s.config.Server.Host
-	if host == "" || host == "0.0.0.0" {
+	host, wildcard := ownListenHost(&s.config.Server)
+	if wildcard {
 		host = "127.0.0.1"
 	}
 	port := s.config.Server.REST.Port
@@ -143,7 +147,51 @@ func (s *Server) centralTokenEndpoint() string {
 		// reach the OIDC provider which is registered on both transports.
 		port = s.config.Server.GRPC.Port
 	}
-	return fmt.Sprintf("https://%s:%d/oauth2/token", host, port)
+	return "https://" + net.JoinHostPort(host, strconv.Itoa(port)) + "/oauth2/token"
+}
+
+// ownListenHost returns the host this server's listeners actually bind: the
+// enabled listeners' shared bind_address (NodeListenHost), or server.host when
+// none is set. On a conflict the boot already refuses (buildQRDBConfig), so
+// server.host is only a fallback here. wildcard reports an empty or
+// unspecified address, which is not dialable as such.
+func ownListenHost(cfg *config.ServerConfig) (host string, wildcard bool) {
+	h := cfg.Host
+	if resolved, _, ok := cfg.NodeListenHost(); ok {
+		h = resolved
+	}
+	h = strings.TrimSpace(h)
+	if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		h = h[1 : len(h)-1]
+	}
+	if h == "" {
+		return "", true
+	}
+	if ip := net.ParseIP(h); ip != nil && ip.IsUnspecified() {
+		return h, true
+	}
+	return h, false
+}
+
+// newTokenSource builds the central token source for a remote backend. When
+// the pool's token URL is this server's own endpoint, the source trusts this
+// server's CA chain (ownCA); any other URL keeps the system roots.
+func (p *remoteBackendPool) newTokenSource() *centralOAuth2TokenSource {
+	ts := newCentralOAuth2TokenSource(p.centralCred, p.tokenURL, p.caCertPath)
+	ts.ownCA = p.tokenURLIsOwn
+	ts.operatorCert = p.tokenOperatorCert
+	ts.operatorCAFile = p.tokenOperatorCAFile
+	return ts
+}
+
+// configureTokenTrust marks the pool's token URL as this server's own
+// endpoint, so trust follows the certificate its listener serves: this
+// server's CA chain for a self-issued certificate, the system roots plus the
+// operator's CA file for an operator-provided one.
+func (s *Server) configureTokenTrust(p *remoteBackendPool) {
+	p.tokenURLIsOwn = true
+	p.tokenOperatorCert = s.operatorListenerCert
+	p.tokenOperatorCAFile = s.operatorListenerCAFile
 }
 
 // =============================================================================
@@ -163,6 +211,17 @@ type remoteBackendPool struct {
 	tokenURL    string
 	caCertPath  string
 	logger      interfaces.Logger
+
+	// tokenURLIsOwn is set when tokenURL is this server's own token endpoint
+	// (centralTokenEndpoint), so the exchange trusts this server's CA chain.
+	tokenURLIsOwn bool
+
+	// tokenOperatorCert is set when the token URL's listener serves an
+	// operator certificate, so the exchange keeps the system roots plus the
+	// operator's CA file (tokenOperatorCAFile, empty when none), not this
+	// server's CA chain.
+	tokenOperatorCert   bool
+	tokenOperatorCAFile string
 
 	// hostAffinityCfg carries the operator-level enforcement default for
 	// host_affinity hints. Per-request HostAffinityStrict overrides via
@@ -925,7 +984,7 @@ func (p *remoteBackendPool) backendFor(
 	// agents; only remote daemon backends need OAuth2 bearer tokens.
 	var tokenSource orchestration.RemoteTokenSource
 	if !isEmbedded {
-		tokenSource = newCentralOAuth2TokenSource(p.centralCred, p.tokenURL, p.caCertPath)
+		tokenSource = p.newTokenSource()
 	}
 
 	built, err := orchestration.NewRemoteACPBackend(orchestration.RemoteACPBackendDeps{
@@ -1025,6 +1084,14 @@ type centralOAuth2TokenSource struct {
 	tokenURL   string
 	loopback   bool
 	caCertPath string
+	// ownCA is set when tokenURL is this server's own token endpoint, so its
+	// certificate comes from this server's CA chain.
+	ownCA bool
+	// operatorCert is set when the token endpoint's listener serves an
+	// operator-provided certificate; the exchange then trusts the system
+	// roots plus operatorCAFile (empty when the operator configured none).
+	operatorCert   bool
+	operatorCAFile string
 
 	// mu guards cached and flight and is never held across the network
 	// call: a caller that finds a fetch in flight waits on it outside the
@@ -1048,10 +1115,11 @@ const centralTokenExpiryLeeway = 5 * time.Second
 
 // newCentralOAuth2TokenSource constructs the source. The http.Client is the
 // default client — we rely on the central's cert being self-trusted via the
-// system trust store. For loopback-local token endpoint calls (central
-// talking to itself on 127.0.0.1) we build a dedicated http.Client that
-// trusts the daemon's on-disk ca-chain.crt, since the cert was issued by
-// the daemon's own CA and is not in the system trust store.
+// system trust store. For calls to this server's own token endpoint,
+// loopback or not (a loopback URL, or ownCA set by the pool for the URL it
+// derived for itself), we build a dedicated http.Client that trusts the
+// daemon's on-disk ca-chain.crt, since the cert was issued by the daemon's
+// own CA and is not in the system trust store.
 func newCentralOAuth2TokenSource(cred *OrchestratorDaemonClient, tokenURL, caCertPath string) *centralOAuth2TokenSource {
 	return &centralOAuth2TokenSource{
 		client:     &http.Client{Timeout: 15 * time.Second},
@@ -1121,7 +1189,13 @@ func (t *centralOAuth2TokenSource) refresh(ctx context.Context) (*oauth2.Token, 
 	req.SetBasicAuth(t.cred.ClientID, t.cred.ClientSecret)
 
 	client := t.client
-	if t.loopback {
+	if t.operatorCert {
+		opClient, opErr := operatorTrustedClient(t.operatorCAFile)
+		if opErr != nil {
+			return nil, &ServerCauseError{Message: "operator token client", Cause: opErr}
+		}
+		client = opClient
+	} else if t.loopback || t.ownCA {
 		lbClient, lbErr := loopbackTrustedClient(t.caCertPath)
 		if lbErr != nil {
 			return nil, &ServerCauseError{Message: "loopback token client", Cause: lbErr}
@@ -1185,8 +1259,10 @@ func isLoopback(rawURL string) bool {
 }
 
 // loopbackTrustedClient returns an http.Client that trusts the daemon's own
-// CA chain from disk. Used when the central is talking to itself on 127.0.0.1
-// (the cert is issued by the daemon's CA). QuicBaaS bans insecure TLS, so we
+// CA chain from disk. Used when the central is talking to its own token
+// endpoint, loopback or not (the cert is issued by the daemon's CA). It only
+// replaces the system roots with this server's CA chain; the hostname is
+// still verified. QuicBaaS bans insecure TLS, so we
 // load the on-disk ca-chain.crt explicitly rather than skip verification.
 //
 // The caCertPath is set on the remoteBackendPool at construction time from
@@ -1203,6 +1279,35 @@ func loopbackTrustedClient(caCertPath string) (*http.Client, error) {
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caPEM) {
 		return nil, &ServerMessageError{Message: fmt.Sprintf("no PEM certs in ca-chain %s", caCertPath)}
+	}
+	return &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs:    pool,
+				MinVersion: tls.VersionTLS13,
+			},
+		},
+	}, nil
+}
+
+// operatorTrustedClient returns an http.Client for a token endpoint whose
+// listener serves an operator-provided certificate: it trusts the system
+// roots plus the operator's CA file when one is configured. It is never
+// insecure; the hostname is still verified.
+func operatorTrustedClient(caFile string) (*http.Client, error) {
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if caFile != "" {
+		caPEM, readErr := os.ReadFile(caFile)
+		if readErr != nil {
+			return nil, &ServerCauseError{Message: fmt.Sprintf("read operator CA %s", caFile), Cause: readErr}
+		}
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, &ServerMessageError{Message: fmt.Sprintf("no PEM certs in operator CA %s", caFile)}
+		}
 	}
 	return &http.Client{
 		Timeout: 15 * time.Second,

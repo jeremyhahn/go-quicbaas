@@ -367,7 +367,8 @@ func TestHealthReportFromProto_AllHealthy(t *testing.T) {
 	require.NotNil(t, result)
 	assert.True(t, result.Healthy)
 	assert.Equal(t, "healthy", result.Status)
-	assert.Equal(t, now.AsTime().Unix(), result.Timestamp)
+	// Unix nanoseconds, as the embedded and MCP transports report it (go-quicbaas#1644).
+	assert.Equal(t, now.AsTime().UnixNano(), result.Timestamp)
 	assert.Equal(t, "healthy", result.Components["s1"])
 	assert.Equal(t, "healthy", result.Components["s2"])
 }

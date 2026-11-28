@@ -52,8 +52,9 @@ RUN file quicbaasd && file quicbaas
 FROM alpine:3.24.1
 
 # Runtime dependencies, patched.
+# docker CLI and git: the daemon runs worker and train containers (#2228).
 RUN apk upgrade --no-cache && \
-    apk --no-cache add ca-certificates tzdata
+    apk --no-cache add ca-certificates tzdata docker-cli git
 
 # Create non-root user
 RUN addgroup -g 1000 quicbaas && \
