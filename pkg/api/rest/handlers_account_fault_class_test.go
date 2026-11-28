@@ -188,6 +188,36 @@ func TestAccountErrorStatus_UnclassifiedIs500(t *testing.T) {
 	}
 }
 
+// TestAccountErrorStatus_SpendRefusalIs409 pins that a credential release the
+// spend cap refuses answers 409, not 500, so a daemon can back off from it.
+func TestAccountErrorStatus_SpendRefusalIs409(t *testing.T) {
+	refusals := []error{
+		&orchestration.AccountQuotaExhaustedError{AccountID: "a", Provider: orchestration.AccountProviderCodex, Window: "5h"},
+		&orchestration.AccountBreakerOpenError{AccountID: "a", Provider: orchestration.AccountProviderCodex, Failures: 3},
+		&orchestration.AccountBreakerTrialHeldError{AccountID: "a", Provider: orchestration.AccountProviderCodex, Failures: 3},
+		&orchestration.AccountLimitedError{AccountID: "a", Provider: orchestration.AccountProviderCodex},
+	}
+	for _, err := range refusals {
+		if got := accountErrorStatus(err); got != http.StatusConflict {
+			t.Errorf("accountErrorStatus(%T) = %d, want 409", err, got)
+		}
+	}
+}
+
+// TestAccountErrorStatus_SpendAuthorityFaultIs503 pins that a spend authority
+// that cannot decide answers 503, like an unwired dependency.
+func TestAccountErrorStatus_SpendAuthorityFaultIs503(t *testing.T) {
+	faults := []error{
+		&orchestration.AccountSpendUnknownVerdictError{AccountID: "a", Reason: "ledger unreachable"},
+		&orchestration.SpendAuthorityConfigError{Field: "policy", Message: "missing"},
+	}
+	for _, err := range faults {
+		if got := accountErrorStatus(err); got != http.StatusServiceUnavailable {
+			t.Errorf("accountErrorStatus(%T) = %d, want 503", err, got)
+		}
+	}
+}
+
 // TestAccountErrorStatus_TenantRefusalIs403 pins the #1150 refusals: a caller
 // naming another tenant, and a caller carrying no tenant at all, are both
 // forbidden rather than reported as a server fault.

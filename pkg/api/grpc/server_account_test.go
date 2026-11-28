@@ -26,6 +26,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/lease"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
@@ -331,6 +332,13 @@ func TestConvertAccountError(t *testing.T) {
 		{&orchestration.AccountSecretRefUnresolvedError{TenantID: "t", AccountID: "a", Ref: "agents/x"}, codes.FailedPrecondition},
 		{&orchestration.AccountSecretResolverNotConfiguredError{AccountID: "a"}, codes.Unavailable},
 		{status.Error(codes.Unknown, "other"), codes.Internal},
+		{&lease.LeaseRevokedError{LeaseID: "l"}, codes.FailedPrecondition},
+		{&orchestration.AccountQuotaExhaustedError{AccountID: "a", Window: "5h"}, codes.ResourceExhausted},
+		{&orchestration.AccountBreakerOpenError{AccountID: "a", Failures: 3}, codes.Unavailable},
+		{&orchestration.AccountBreakerTrialHeldError{AccountID: "a", Failures: 3}, codes.Unavailable},
+		{&orchestration.AccountLimitedError{AccountID: "a"}, codes.FailedPrecondition},
+		{&orchestration.AccountSpendUnknownVerdictError{AccountID: "a", Reason: "ledger unreachable"}, codes.Unavailable},
+		{&orchestration.SpendAuthorityConfigError{Field: "policy", Message: "missing"}, codes.Unavailable},
 	}
 	for _, tc := range cases {
 		if got := status.Code(convertAccountError(tc.err)); got != tc.want {

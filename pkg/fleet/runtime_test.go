@@ -449,3 +449,52 @@ func TestRuntime_Spawn_ContainerRuntimeReachesResolver(t *testing.T) {
 		t.Fatalf("container image = %q, want %q", got.ContainerImage, "quicbaas/acp:test")
 	}
 }
+
+// pinnedCodexAccountResolver is an AccountResolver that answers every request
+// with one env-credential codex account.
+type pinnedCodexAccountResolver struct{}
+
+func (pinnedCodexAccountResolver) Resolve(_ context.Context, req orchestration.AccountResolveRequest) (*orchestration.ResolvedAccountCredential, error) {
+	return &orchestration.ResolvedAccountCredential{
+		AccountID: req.AccountID,
+		Strategy:  "pinned",
+		Env:       map[string]string{"OPENAI_API_KEY": "sk-test"},
+	}, nil
+}
+
+// TestRuntime_SetAccountResolverReachesCodexExec pins that the daemon's
+// late-bound resolver reaches a codex exec backend, not only ACP ones: the
+// embedded fleet node serves codex that way.
+func TestRuntime_SetAccountResolverReachesCodexExec(t *testing.T) {
+	t.Parallel()
+
+	codex := orchestration.NewCodexExecBackend(orchestration.CodexExecBackendConfig{Command: "codex"})
+	rt, err := NewRuntime(RuntimeConfig{
+		Backends: map[string]orchestration.AgentBackend{"codex": codex},
+		Logger:   &testLogger{t: t},
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+
+	req := &orchestration.SpawnRequest{WorkDir: t.TempDir(), AccountID: "acct-cx"}
+	_, spawnErr := codex.Spawn(context.Background(), req)
+	var notConfigured *orchestration.AccountResolverNotConfiguredError
+	if !errors.As(spawnErr, &notConfigured) {
+		t.Fatalf("Spawn before SetAccountResolver: error = %v, want AccountResolverNotConfiguredError", spawnErr)
+	}
+
+	rt.SetAccountResolver(pinnedCodexAccountResolver{})
+
+	sess, spawnErr := codex.Spawn(context.Background(), &orchestration.SpawnRequest{WorkDir: t.TempDir(), AccountID: "acct-cx"})
+	if errors.As(spawnErr, &notConfigured) {
+		t.Fatalf("Spawn after SetAccountResolver still fails closed: %v", spawnErr)
+	}
+	if spawnErr != nil {
+		t.Fatalf("Spawn after SetAccountResolver: %v", spawnErr)
+	}
+	defer codex.Close(context.Background(), sess.ID)
+	if sess.AccountID != "acct-cx" {
+		t.Fatalf("Session.AccountID = %q, want acct-cx", sess.AccountID)
+	}
+}

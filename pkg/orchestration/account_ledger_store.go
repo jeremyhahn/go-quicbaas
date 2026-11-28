@@ -32,6 +32,7 @@ const (
 	consumptionPlaneTenant  = "tenant-quota"
 	consumptionPlaneAgent   = "agent-quota"
 	consumptionPlaneChain   = "attribution"
+	consumptionPlanePending = "pending"
 )
 
 // consumptionChainDepth is how many chain levels a key carries: tenant,
@@ -46,6 +47,12 @@ type kvConsumptionLedger struct {
 	// construction. Nil when the store cannot decide a contested write, in
 	// which case Record refuses instead of probing and hoping.
 	creator guardedCreator
+
+	// deleter and swapper are kv's compare-and-delete and compare-and-swap
+	// capabilities, asserted once at construction. The turn admission
+	// record (account_ledger_admission.go) needs both; nil refuses it.
+	deleter guardedDeleter
+	swapper guardedSwapper
 }
 
 // Compile-time interface satisfaction check.
@@ -61,6 +68,12 @@ func NewConsumptionLedger(kv interfaces.KVStore) ConsumptionLedger {
 	ledger := &kvConsumptionLedger{kv: kv}
 	if creator, ok := kv.(guardedCreator); ok {
 		ledger.creator = creator
+	}
+	if deleter, ok := kv.(guardedDeleter); ok {
+		ledger.deleter = deleter
+	}
+	if swapper, ok := kv.(guardedSwapper); ok {
+		ledger.swapper = swapper
 	}
 	return ledger
 }

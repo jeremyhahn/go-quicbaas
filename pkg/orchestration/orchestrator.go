@@ -99,6 +99,23 @@ type agentServiceImpl struct {
 	// mirror answers. See SetAccountCredentialGenerations.
 	accountGenerations AccountCredentialGenerationReader
 
+	// turnSpend is the spend cap a pooled session's account is checked
+	// against before every turn — the same authority the spawn gate asks.
+	// Optional: without it a session is gated only when it is spawned. See
+	// SetSpendAuthority and turn_spend_gate.go.
+	turnSpend SpendAuthority
+
+	// turnLocks holds one lock per session with a turn running or waiting,
+	// so a session's turns run one at a time from the spend check to the
+	// usage record; an entry is removed when the last one leaves. See
+	// lockSessionTurn in turn_spend_gate.go.
+	turnLocks sessionTurnLocks
+
+	// pendingLedger holds consumption entries whose ledger write failed.
+	// A session's next turn retries them before its spend check and is
+	// refused while they still fail. See turn_consumption_pending.go.
+	pendingLedger pendingConsumption
+
 	// limitClassifier decides whether a failed turn was a provider limit.
 	// Nil selects the built-in heuristic (see NewAccountLimitClassifier).
 	limitClassifier AccountLimitClassifier
@@ -2194,6 +2211,15 @@ type promptTurnPlan struct {
 	// paths one identity: the async ack returns this value, and the entry the
 	// ledger holds for that turn is filed under the same one.
 	turnID string
+
+	// admittedAccountID is the pooled account the spend gate admitted the
+	// turn against. runPromptTurn sets it; the turn is recorded against it
+	// when this node's registry misses the session.
+	admittedAccountID string
+
+	// admission is the turn's hold on its session's shared admission
+	// record, nil when the ledger keeps none. runPromptTurn sets it.
+	admission *turnAdmissionHold
 }
 
 // planPromptTurn validates a prompt request and resolves everything the turn
@@ -2205,6 +2231,18 @@ func (s *agentServiceImpl) planPromptTurn(ctx context.Context, req *PromptSessio
 	}
 	if req == nil || req.Prompt == "" {
 		return nil, &AgentServiceError{Sentinel: ErrPromptRequired}
+	}
+
+	// A caller naming another tenant's session is told it does not exist,
+	// the ownership rule every session verb applies. It is refused here,
+	// before the turn lock, the pending-consumption retry, the spend check
+	// or the prompt event: each of those acts on the owning tenant's data.
+	if req.SessionID != "" {
+		if mem, ok := s.liveSessionRecord(req.SessionID); ok {
+			if caller := TenantFromContext(ctx); caller != "" && caller != mem.TenantID {
+				return nil, &SessionNotFoundError{SessionID: req.SessionID}
+			}
+		}
 	}
 
 	// A CONCLUDED SESSION TAKES NO MORE TURNS, and the refusal happens HERE —
@@ -2322,12 +2360,14 @@ func (s *agentServiceImpl) planPromptTurn(ctx context.Context, req *PromptSessio
 // otherwise have its spend filed under a model that never ran.
 func (p *promptTurnPlan) completedTurn(sessionID, servedModel string, duration time.Duration) completedTurn {
 	return completedTurn{
-		turnID:    p.turnID,
-		sessionID: sessionID,
-		projectID: p.request.ProjectID,
-		engine:    p.backendName,
-		model:     resolveTurnModel(servedModel, p.model, p.backend),
-		duration:  duration,
+		turnID:            p.turnID,
+		sessionID:         sessionID,
+		projectID:         p.request.ProjectID,
+		admittedAccountID: p.admittedAccountID,
+		admission:         p.admission,
+		engine:            p.backendName,
+		model:             resolveTurnModel(servedModel, p.model, p.backend),
+		duration:          duration,
 	}
 }
 
@@ -2387,6 +2427,50 @@ func (p *promptTurnPlan) appendPromptSubmitted(s *agentServiceImpl) {
 // ctx is passed explicitly rather than taken from the plan: the asynchronous
 // path runs on a context detached from the request that accepted the turn.
 func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPlan) (*PromptSessionResponse, error) {
+	// ONE TURN AT A TIME PER SESSION, from the spend check below to the
+	// usage record at the end. Without it, turns queued on one session all
+	// pass the check while the account is under its cap and then run after
+	// the first has spent it. See lockSessionTurn.
+	unlock, err := s.lockSessionTurn(ctx, plan.request.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
+	// THE SPEND CAP, ASKED AGAIN FOR THIS TURN. A session gated only at spawn
+	// runs on past its account's window; refusing here, before the session is
+	// reconstituted or the backend runs anything, leaves the refused turn
+	// uncharged. See turn_spend_gate.go.
+	//
+	// An earlier turn whose ledger write failed is retried first: the cap
+	// reads the ledger, and a sum without that turn's tokens would admit
+	// this one. While the retry fails the turn is refused.
+	if err := s.flushPendingConsumption(ctx, plan.request.SessionID); err != nil {
+		return nil, err
+	}
+	// ONE TURN AT A TIME PER SESSION ACROSS NODES. The lock above is this
+	// node's; the admission record is in the ledger's shared store, held
+	// from before the spend check until the turn's consumption is visible
+	// to every node. See turn_admission.go.
+	admission, waited, err := s.admitTurn(ctx, plan.request.SessionID, plan.turnID)
+	if err != nil {
+		return nil, err
+	}
+	defer admission.releaseUnlessKept(ctx)
+	plan.admission = admission
+	if waited {
+		// Another node's turn on this session finished while this one waited;
+		// its consumption is in the ledger or the shared pending list now.
+		if err := s.flushPendingConsumption(ctx, plan.request.SessionID); err != nil {
+			return nil, err
+		}
+	}
+	accountID, err := s.authorizeTurnSpend(ctx, plan.request.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	plan.admittedAccountID = accountID
+
 	// A session restored from the durable store has no agent process until
 	// something needs one. Reconstituting it here — rather than at boot —
 	// keeps a daemon restart from forking a subprocess for every session

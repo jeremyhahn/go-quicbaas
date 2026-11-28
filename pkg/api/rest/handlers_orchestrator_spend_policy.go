@@ -57,7 +57,7 @@ func (s *Server) HandleGetTenantSpendPolicy(w http.ResponseWriter, r *http.Reque
 
 // HandleSetTenantSpendPolicy serves PUT /api/v1/orchestrator/spend-policy
 // [?tenant_id=]: it replaces the tenant's limits and answers with the stored
-// policy and its usage. Gated on orchestrator:spend_policy.
+// policy and its usage. Gated on spend_policy:write.
 func (s *Server) HandleSetTenantSpendPolicy(w http.ResponseWriter, r *http.Request) {
 	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
 	if !tenantOK {

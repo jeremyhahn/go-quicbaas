@@ -44,6 +44,11 @@ type CodexExecBackend struct {
 	args         []string
 	defaultModel string
 	sessions     sync.Map // map[string]*codexExecSession
+
+	// accountResolver and accountLeases draw a pooled provider account at
+	// Spawn (see SetAccountResolver, SetAccountCredentialLeaser).
+	accountResolver AccountResolver
+	accountLeases   AccountCredentialLeaser
 }
 
 // CodexExecBackendConfig configures the codex exec backend.
@@ -66,6 +71,10 @@ type codexExecSession struct {
 	args    []string
 	env     []string
 	created time.Time
+
+	// accountCleanup removes the session's materialized account credential
+	// directory. Nil when the session drew no file-based account.
+	accountCleanup func()
 }
 
 // NewCodexExecBackend constructs a backend ready to run `codex exec`.
@@ -104,8 +113,12 @@ func (b *CodexExecBackend) Capabilities() BackendCapabilities {
 }
 
 // Spawn registers a session so the orchestrator's session bookkeeping works.
-// No subprocess is started here — codex exec is launched per Prompt.
-func (b *CodexExecBackend) Spawn(_ context.Context, req *SpawnRequest) (*Session, error) {
+// No subprocess is started here — codex exec is launched per Prompt. A request
+// that names a pooled account (AccountID or AccountAuto) resolves it here: its
+// credential joins the session's environment, a file credential is found
+// through CODEX_HOME, and the returned Session carries the account, its grant
+// and its reservation.
+func (b *CodexExecBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Session, error) {
 	if req == nil {
 		return nil, &InputValidationError{Field: "request", Message: "cannot be nil"}
 	}
@@ -113,8 +126,16 @@ func (b *CodexExecBackend) Spawn(_ context.Context, req *SpawnRequest) (*Session
 		return nil, &InputValidationError{Field: "work_dir", Message: "cannot be empty"}
 	}
 
+	// The account is resolved before env is built from req.Env, so the
+	// credential it supplies reaches every codex exec of the session.
+	account, accountErr := b.resolveAccount(ctx, req)
+	if accountErr != nil {
+		return nil, accountErr
+	}
+
 	id, err := newCodexExecSessionID()
 	if err != nil {
+		b.releaseResolvedAccount(ctx, account)
 		return nil, &CodexExecError{Op: "generate session id", Cause: err}
 	}
 
@@ -136,9 +157,12 @@ func (b *CodexExecBackend) Spawn(_ context.Context, req *SpawnRequest) (*Session
 		env:     env,
 		created: time.Now(),
 	}
+	if account != nil {
+		sess.accountCleanup = account.cleanup
+	}
 	b.sessions.Store(id, sess)
 
-	return &Session{
+	out := &Session{
 		ID:        id,
 		ProjectID: req.ProjectID,
 		Backend:   b.Type(),
@@ -146,7 +170,15 @@ func (b *CodexExecBackend) Spawn(_ context.Context, req *SpawnRequest) (*Session
 		Status:    SessionStateIdle,
 		WorkDir:   req.WorkDir,
 		CreatedAt: sess.created.UnixNano(),
-	}, nil
+	}
+	if account != nil {
+		out.AccountID = account.AccountID
+		out.AccountStrategy = account.Strategy
+		out.AccountGeneration = account.Generation
+		out.CredentialLeaseID = account.LeaseID
+		out.ReservationID = account.ReservationID
+	}
+	return out, nil
 }
 
 // Prompt invokes `codex exec [PROMPT]` in the session's work directory and
@@ -371,10 +403,16 @@ func (b *CodexExecBackend) Status(_ context.Context, sessionID string) (*Session
 	}, nil
 }
 
-// Close removes the session bookkeeping. There is no subprocess to terminate.
+// Close removes the session bookkeeping and the session's materialized
+// account credential directory, when it has one. There is no subprocess to
+// terminate.
 func (b *CodexExecBackend) Close(_ context.Context, sessionID string) error {
-	if _, ok := b.sessions.LoadAndDelete(sessionID); !ok {
+	v, ok := b.sessions.LoadAndDelete(sessionID)
+	if !ok {
 		return &SessionNotFoundError{SessionID: sessionID}
+	}
+	if sess, isSess := v.(*codexExecSession); isSess && sess.accountCleanup != nil {
+		sess.accountCleanup()
 	}
 	return nil
 }

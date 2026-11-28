@@ -1107,8 +1107,8 @@ var (
 // still in flight. It is not a failure of that work: what it names keeps its
 // non-terminal record and is resumed by RecoverJobs on the next start.
 type DrainTimeoutError struct {
-	// Phase is the drain phase that gave up, DrainPhaseJobs or
-	// DrainPhaseTurns.
+	// Phase is the drain phase that gave up: DrainPhaseJobs, DrainPhaseTurns
+	// or DrainPhaseConsumption.
 	Phase string
 
 	// Waited is how long that phase waited before giving up.

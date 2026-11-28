@@ -18,6 +18,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,6 +43,7 @@ func TestOrchestratorRotateAccountCommandStructure(t *testing.T) {
 
 	assert.NotNil(t, cmd.Flags().Lookup("reason"))
 	assert.NotNil(t, cmd.Flags().Lookup("hold-outgoing"))
+	assert.NotNil(t, cmd.Flags().Lookup("available-at"))
 }
 
 // TestOrchestratorRotateAccountIsRegistered keeps the verb reachable: a
@@ -89,6 +91,47 @@ func TestOrchestratorRunOrchRotateAccount(t *testing.T) {
 		assert.Equal(t, "sess_123", got.SessionID)
 		assert.Equal(t, "seat retired", got.Reason)
 		assert.True(t, got.HoldOutgoing)
+	})
+
+	t.Run("AvailableAtReachesTheRequest", func(t *testing.T) {
+		var got *orchestratorSDK.RotateSessionAccountRequest
+		mock := &mockOrchestratorClient{
+			rotateAccountFn: func(_ context.Context, req *orchestratorSDK.RotateSessionAccountRequest) (*orchestratorSDK.RotateSessionAccountResponse, error) {
+				got = req
+				return &orchestratorSDK.RotateSessionAccountResponse{SessionID: req.SessionID, AccountID: "acct-b"}, nil
+			},
+		}
+		setMockOrchestratorFactory(mock)
+		orchOutputFmt = "json"
+
+		cmd := newOrchRotateAccountCommand()
+		require.NoError(t, cmd.Flags().Set("hold-outgoing", "true"))
+		require.NoError(t, cmd.Flags().Set("available-at", "2026-12-01T00:00:00Z"))
+		require.NoError(t, cmd.RunE(cmd, []string{"sess_123"}))
+
+		require.NotNil(t, got)
+		assert.True(t, got.HoldOutgoing)
+		assert.True(t, got.AvailableAt.Equal(time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)),
+			"AvailableAt = %v, want 2026-12-01T00:00:00Z", got.AvailableAt)
+	})
+
+	t.Run("BadAvailableAtFailsBeforeTheClient", func(t *testing.T) {
+		called := false
+		mock := &mockOrchestratorClient{
+			rotateAccountFn: func(context.Context, *orchestratorSDK.RotateSessionAccountRequest) (*orchestratorSDK.RotateSessionAccountResponse, error) {
+				called = true
+				return &orchestratorSDK.RotateSessionAccountResponse{}, nil
+			},
+		}
+		setMockOrchestratorFactory(mock)
+
+		cmd := newOrchRotateAccountCommand()
+		require.NoError(t, cmd.Flags().Set("hold-outgoing", "true"))
+		require.NoError(t, cmd.Flags().Set("available-at", "tomorrow"))
+		err := cmd.RunE(cmd, []string{"sess_123"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--available-at")
+		assert.False(t, called, "a bad --available-at must fail before any client call")
 	})
 
 	t.Run("FactoryError", func(t *testing.T) {

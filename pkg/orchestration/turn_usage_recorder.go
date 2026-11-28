@@ -126,6 +126,10 @@ func (s *agentServiceImpl) recordTurnUsage(ctx context.Context, turn completedTu
 	if s.costTracker == nil && s.ledger == nil {
 		return
 	}
+	// The turn spent its tokens whether or not its caller is still there:
+	// the record is written on a context the turn's cancellation cannot end.
+	ctx, cancel := recordingContext(ctx)
+	defer cancel()
 
 	// A REPAIRED TURN IS NOT A FREE TURN, and before #242 the two were the same
 	// four zeroes. {"input_tokens":1,"output_tokens":-1} summed to zero, was
@@ -218,6 +222,16 @@ type completedTurn struct {
 	sessionID string
 	projectID string
 
+	// admittedAccountID is the pooled account the spend gate checked this
+	// turn against. sessionOfTurn charges it when this node's registry does
+	// not hold the session: a turn sent through another control-plane node
+	// still draws on its account's cap.
+	admittedAccountID string
+
+	// admission is the turn's hold on its session's shared admission
+	// record; nil when the ledger keeps none.
+	admission *turnAdmissionHold
+
 	// engine is the backend registry name that served the turn; model is the
 	// model it resolved to.
 	engine string
@@ -303,10 +317,14 @@ func (s *agentServiceImpl) recordConsumption(
 	settings := s.tenantCostSettings(ctx, entry.TenantID)
 	s.prices.StampWithEnergy(&entry, settings, s.measureTurnEnergy(ctx, &entry, settings))
 	stampBilling(&entry, s.accountBilling(ctx, entry.TenantID, entry.AccountID))
-	if err := s.ledger.Record(ctx, entry); err != nil {
-		s.logger.Warnf(
-			"orchestration: failed to record consumption; spend reports and caps are now under-counting: session=%s account=%s entry=%s err=%s",
-			turn.sessionID, session.accountID, turn.turnID, err.Error())
+	// A FAILED WRITE IS KEPT, NOT LOGGED AND LOST. The spend cap is read
+	// from the ledger before the session's next turn; an entry missing from
+	// it would admit that turn against a sum that leaves these tokens out.
+	// recordLedgerEntry keeps it pending, and flushPendingConsumption retries
+	// it and refuses the next turn while it still fails.
+	// The turn's admission record is released once the entry is visible
+	// to every node, and kept, marked unrecorded, while it is not.
+	if !s.recordLedgerEntryHeld(ctx, entry, turn.admission) {
 		return
 	}
 	// Counted only once the ledger holds the entry, so the metrics and the
@@ -363,7 +381,10 @@ type turnSession struct {
 // sessionOfTurn resolves the account, project and host of a turn from its live
 // session record. The project the turn was planned under wins over the
 // session's; a session that ran on this node rather than a named worker host
-// is attributed to this node.
+// is attributed to this node. A live hit charges the record's current account,
+// since rotation may have moved it; on a registry miss the turn is charged to
+// the account the spend gate admitted it against (admittedAccountID), so a
+// turn sent through another control-plane node still draws on its cap.
 func (s *agentServiceImpl) sessionOfTurn(turn completedTurn) turnSession {
 	session := turnSession{projectID: turn.projectID}
 	if mem, ok := s.liveSessionRecord(turn.sessionID); ok {
@@ -373,6 +394,8 @@ func (s *agentServiceImpl) sessionOfTurn(turn completedTurn) turnSession {
 		if session.projectID == "" {
 			session.projectID = mem.ProjectID
 		}
+	} else {
+		session.accountID = turn.admittedAccountID
 	}
 	if session.host == "" {
 		session.host = s.node
@@ -418,5 +441,7 @@ func (s *agentServiceImpl) recordFailedTurn(ctx context.Context, turn completedT
 	if s.ledger == nil {
 		return
 	}
+	ctx, cancel := recordingContext(ctx)
+	defer cancel()
 	s.recordConsumption(ctx, turn, TurnAttributionFromContext(ctx), s.sessionOfTurn(turn), usage, ConsumptionOutcomeFailure)
 }

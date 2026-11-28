@@ -98,17 +98,27 @@ type resolvedSpawnAccount struct {
 // every pre-existing spawn path is completely unaffected by this feature unless
 // a caller explicitly opts in.
 func (b *ACPBackend) resolveAccount(ctx context.Context, req *SpawnRequest) (*resolvedSpawnAccount, error) {
+	return resolveSpawnAccount(ctx, b.accountResolver, b.Type(), b.accountProvider(), req,
+		func(a *resolvedSpawnAccount) { b.releaseAccountReservation(ctx, a) })
+}
+
+// resolveSpawnAccount resolves req's pooled provider account for a backend
+// of type backendType drawing on provider, and folds it into req in place
+// (see the ACPBackend.resolveAccount doc). release gives back a reservation
+// the resolution took when a later step refuses the spawn.
+func resolveSpawnAccount(ctx context.Context, resolver AccountResolver, backendType string, provider AccountProvider,
+	req *SpawnRequest, release func(*resolvedSpawnAccount)) (*resolvedSpawnAccount, error) {
 	if req.AccountID == "" && !req.AccountAuto {
 		return nil, nil
 	}
-	if b.accountResolver == nil {
-		return nil, &AccountResolverNotConfiguredError{Backend: b.Type()}
+	if resolver == nil {
+		return nil, &AccountResolverNotConfiguredError{Backend: backendType}
 	}
 
-	resolved, resolveErr := b.accountResolver.Resolve(ctx, AccountResolveRequest{
+	resolved, resolveErr := resolver.Resolve(ctx, AccountResolveRequest{
 		TenantID:          TenantFromContext(ctx),
 		ProjectID:         req.ProjectID,
-		Provider:          b.accountProvider(),
+		Provider:          provider,
 		JobID:             req.JobID,
 		AccountID:         req.AccountID,
 		ReplacesSessionID: req.ReplacesSessionID,
@@ -136,7 +146,7 @@ func (b *ACPBackend) resolveAccount(ctx context.Context, req *SpawnRequest) (*re
 	// leaves the request exactly as the caller built it.
 	for k, v := range resolved.Env {
 		if held, stated := req.Env[k]; stated && held != v {
-			b.releaseAccountReservation(ctx, out)
+			release(out)
 			return nil, &AccountEnvConflictError{AccountID: resolved.AccountID, Key: k}
 		}
 	}
@@ -157,7 +167,7 @@ func (b *ACPBackend) resolveAccount(ctx context.Context, req *SpawnRequest) (*re
 	if len(resolved.Files) > 0 {
 		dir, cleanup, matErr := materializeAccountFiles(resolved.Files)
 		if matErr != nil {
-			b.releaseAccountReservation(ctx, out)
+			release(out)
 			return nil, matErr
 		}
 		req.AccountHomeDir = dir

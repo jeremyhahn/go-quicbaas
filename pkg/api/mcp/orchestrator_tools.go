@@ -332,7 +332,7 @@ func (r *ToolRegistry) registerAgentTools() {
 	r.addTool(ToolDefinition{
 		Name: "quicbaas_orchestrator_spend_policy_set",
 		Description: "Replace a tenant's own spend limits. Limits with no windows make the tenant unmetered. " +
-			"The limits are stored and reported against the tenant's usage; admission does not enforce them yet.",
+			"The limits are stored, reported against the tenant's usage, and enforced at admission: while one of the tenant's windows is spent, every project of the tenant is deferred until it frees up.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

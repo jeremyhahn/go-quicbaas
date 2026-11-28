@@ -176,6 +176,18 @@ const (
 	// succeeds.
 	FaultAccountBreakerTripped = "account_breaker_tripped"
 
+	// FaultConsumptionPending is a turn refused before it reached the
+	// backend because an earlier turn's consumption is not in the ledger,
+	// so the spend cap cannot be read. It requeues, and it is never charged:
+	// nothing the work does causes a ledger write to fail.
+	FaultConsumptionPending = "consumption_pending"
+
+	// FaultSpendCheckUnavailable is a turn refused before it reached the
+	// backend because the account record or the spend ledger could not be
+	// read, so the spend cap could not be checked. It requeues, and it is
+	// never charged: nothing the work does makes a store read fail.
+	FaultSpendCheckUnavailable = "spend_check_unavailable"
+
 	// FaultForgeUnreachable is a forge that did not answer a call the job
 	// needed: no response inside the call's deadline, a dropped connection,
 	// or a gateway reporting the forge behind it unavailable, still so after
@@ -370,6 +382,8 @@ var resolverFaultClasses = map[string]bool{
 	FaultProjectCapacityExceeded:  true,
 	FaultAccountQuotaExhausted:    true,
 	FaultAccountBreakerTripped:    true,
+	FaultConsumptionPending:       true,
+	FaultSpendCheckUnavailable:    true,
 	FaultForgeUnreachable:         true,
 	FaultAgentInterrupted:         true,
 }
@@ -410,6 +424,8 @@ var faultClassMeanings = map[string]string{
 	FaultProjectCapacityExceeded:  "the project's concurrency budget was already fully held",
 	FaultAccountQuotaExhausted:    "the account's configured spend cap for the window is spent",
 	FaultAccountBreakerTripped:    "the account's circuit breaker took it out of service after repeated failures",
+	FaultConsumptionPending:       "an earlier turn's token use could not yet be written to the spend ledger, so the cap could not be checked and no turn ran",
+	FaultSpendCheckUnavailable:    "the account or spend ledger could not be read before the turn, so the cap could not be checked and no turn ran",
 	FaultForgeUnreachable:         "the forge did not answer a call the job needed, even after bounded retries",
 	FaultAgentInterrupted:         "the fleet node stopped serving the worker's turn: it shut down, restarted or lost its connection",
 	FaultWorkspaceUnfit: "the workspace the work needed was not fit: no checkout, an empty one, " +
@@ -458,7 +474,9 @@ var faultsNeedingAHuman = map[string]bool{
 // the park is the backstop, and a person readmits the task once the fleet is
 // healthy with its budget intact.
 var faultsNeverCharged = map[string]bool{
-	FaultAgentInterrupted: true,
+	FaultAgentInterrupted:      true,
+	FaultConsumptionPending:    true,
+	FaultSpendCheckUnavailable: true,
 }
 
 // faultRequeues reports whether a fault of this class puts the task back in
@@ -594,6 +612,10 @@ func classifyEnvironmentFault(err error) (EnvironmentFault, bool) {
 			Reason:         breakerTrippedReason(err),
 			RetryNotBefore: breakerTrippedRetryAt(err),
 		}, true
+	case errors.Is(err, ErrConsumptionPending):
+		return EnvironmentFault{Class: FaultConsumptionPending, Reason: consumptionPendingReason(err)}, true
+	case errors.Is(err, ErrSpendCheckUnavailable):
+		return EnvironmentFault{Class: FaultSpendCheckUnavailable, Reason: spendCheckUnavailableReason(err)}, true
 
 	case errors.Is(err, ErrProjectCapacityExceeded):
 		return EnvironmentFault{
@@ -842,6 +864,40 @@ func quotaExhaustedReason(err error) string {
 	}
 	b.WriteString(".")
 	return b.String()
+}
+
+// consumptionPendingReason explains a turn refused because an earlier
+// turn's consumption is not yet in the spend ledger.
+func consumptionPendingReason(err error) string {
+	var pending *ConsumptionPendingError
+	if !errors.As(err, &pending) {
+		return "an earlier turn's token use could not yet be written to the spend ledger, " +
+			"so the spend cap could not be checked. No turn ran and this attempt was not charged; " +
+			"the task is retried once the spend ledger accepts writes again."
+	}
+	var b strings.Builder
+	b.WriteString("the token use of ")
+	b.WriteString(strconv.Itoa(pending.Pending))
+	b.WriteString(" earlier turn(s)")
+	if pending.AccountID != "" {
+		b.WriteString(" on pooled account ")
+		b.WriteString(strconv.Quote(pending.AccountID))
+	}
+	b.WriteString(" could not yet be written to the spend ledger, so the spend cap could not be checked. ")
+	b.WriteString("No turn ran and this attempt was not charged; the task is retried once the spend ledger accepts writes again.")
+	return b.String()
+}
+
+// spendCheckUnavailableReason explains a turn refused because the account
+// record or the spend ledger could not be read before it.
+func spendCheckUnavailableReason(err error) string {
+	const tail = "No turn ran and this attempt was not charged; the task is retried."
+	var unavailable *SpendCheckUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.AccountID == "" {
+		return "the account or spend ledger could not be read before the turn, so the spend cap could not be checked. " + tail
+	}
+	return "pooled account " + strconv.Quote(unavailable.AccountID) +
+		" or its spend ledger could not be read before the turn, so the spend cap could not be checked. " + tail
 }
 
 // breakerTrippedRetryAt is when an open breaker admits its next trial. A

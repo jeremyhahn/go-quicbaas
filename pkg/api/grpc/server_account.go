@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/lease"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -509,6 +510,13 @@ func convertAccountError(err error) error {
 	var noSecretResolver *orchestration.AccountSecretResolverNotConfiguredError
 	var noReserver *service.AccountSessionReserverNotConfiguredError
 	var missingTenant *tenantctx.MissingTenantError
+	var leaseRevoked *lease.LeaseRevokedError
+	var quotaExhausted *orchestration.AccountQuotaExhaustedError
+	var breakerOpen *orchestration.AccountBreakerOpenError
+	var breakerTrialHeld *orchestration.AccountBreakerTrialHeldError
+	var limited *orchestration.AccountLimitedError
+	var spendUnknown *orchestration.AccountSpendUnknownVerdictError
+	var spendConfig *orchestration.SpendAuthorityConfigError
 
 	switch {
 	case stderrors.As(err, &notFound):
@@ -545,6 +553,21 @@ func convertAccountError(err error) error {
 		// rewrite that kept losing, or an inline rotation overtaken by a switch
 		// to a secret reference. Nothing was written; the caller may retry.
 		return status.Error(codes.Aborted, err.Error())
+	case stderrors.As(err, &leaseRevoked):
+		// FailedPrecondition: the delivery grant's state refuses; a new grant clears it.
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case stderrors.As(err, &quotaExhausted):
+		// ResourceExhausted: a spent spend window, like a saturated account.
+		return status.Error(codes.ResourceExhausted, err.Error())
+	case stderrors.As(err, &breakerOpen), stderrors.As(err, &breakerTrialHeld):
+		// Unavailable: the account's breaker is open or its one trial is in flight.
+		return status.Error(codes.Unavailable, err.Error())
+	case stderrors.As(err, &limited):
+		// FailedPrecondition: the provider limited the account, a state that clears on its own.
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case stderrors.As(err, &spendUnknown), stderrors.As(err, &spendConfig):
+		// Unavailable: the spend authority cannot decide, like an unwired dependency.
+		return status.Error(codes.Unavailable, err.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())
 	}
