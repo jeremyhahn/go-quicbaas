@@ -183,3 +183,29 @@ type VectorStorage interface {
 	// Close releases storage resources.
 	Close() error
 }
+
+// VectorFullScanner is implemented by a VectorStorage that can read a whole
+// namespace, every vector once and ordered by ID, more cheaply than by offset
+// pages of ScanNamespace. Index rebuilds use it when the storage offers it.
+type VectorFullScanner interface {
+	// ScanAllVectors returns every vector of the namespace once each, ordered
+	// by ID. opts selects whether embeddings and metadata are included; its
+	// paging fields are ignored.
+	ScanAllVectors(ctx context.Context, namespace string, opts *VectorScanOptions) ([]*VectorValue, error)
+}
+
+// VectorScanInvalidator is implemented by a VectorStorage that caches
+// namespace scans. A caller that writes a namespace through another path
+// calls InvalidateScan so later scans read the write.
+type VectorScanInvalidator interface {
+	InvalidateScan(namespace string)
+}
+
+// VectorWriteTracker is implemented by a VectorStorage whose full scans
+// must notice writes made through another path. A caller that writes a
+// namespace through another path calls BeginVectorWrite before it sends
+// the write and the returned func once the write returns, whatever its
+// result.
+type VectorWriteTracker interface {
+	BeginVectorWrite(namespace string) (done func())
+}

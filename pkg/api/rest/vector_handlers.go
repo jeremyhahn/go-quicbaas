@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -1257,15 +1256,50 @@ func (s *Server) HandleGetIndexProgress(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Granular progress tracking is not available for this index type.
-	// Return an informational response indicating the operation status.
-	resp := &IndexProgressResponse{
-		OperationID: operationID,
-		Namespace:   namespace,
-		Status:      "in_progress",
+	vectorService := s.service.Vector()
+	if vectorService == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, &ServiceUnavailableError{
+			Message: "vector service not available",
+		})
+		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, resp)
+	// The service finds the job in the caller's tenant only.
+	progress, err := vectorService.GetRebuildProgress(r.Context(), &service.GetRebuildProgressRequest{
+		JobID:     operationID,
+		Namespace: namespace,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+	if progress.Namespace != namespace {
+		RespondError(w, r, http.StatusNotFound, &NotFoundError{Resource: "rebuild job " + operationID})
+		return
+	}
+
+	vectorsIndexed, err := conv.SafeUint64ToInt64(progress.VectorsProcessed)
+	if err != nil {
+		RespondInternalError(w, r, err)
+		return
+	}
+	totalVectors, err := conv.SafeUint64ToInt64(progress.TotalVectors)
+	if err != nil {
+		RespondInternalError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, &IndexProgressResponse{
+		OperationID:          progress.JobID,
+		Namespace:            progress.Namespace,
+		VectorsIndexed:       vectorsIndexed,
+		TotalVectors:         totalVectors,
+		PercentComplete:      progress.PercentComplete,
+		ElapsedTimeMs:        progress.ElapsedTimeMs,
+		EstimatedRemainingMs: progress.EstimatedTimeRemainingMs,
+		Status:               progress.Status,
+		ErrorMessage:         progress.Error,
+	})
 }
 
 // ========================================
@@ -1366,17 +1400,28 @@ func (s *Server) HandleCompactNamespace(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Generate operation ID
-	operationID := uuid.New().String()
-
-	// Note: Actual compaction would require storage-level support
-	// For now, return accepted with operation ID
-	resp := &CompactNamespaceResponse{
-		OperationID: operationID,
-		Started:     time.Now(),
+	vectorService := s.service.Vector()
+	if vectorService == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, &ServiceUnavailableError{
+			Message: "vector service not available",
+		})
+		return
 	}
 
-	RespondJSON(w, r, http.StatusAccepted, resp)
+	// The service records the operation, so its progress can be read back.
+	compacted, err := vectorService.CompactNamespace(r.Context(), &service.CompactNamespaceRequest{
+		Namespace: reqBody.Namespace,
+		Async:     true,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusAccepted, &CompactNamespaceResponse{
+		OperationID: compacted.OperationID,
+		Started:     timestampToTime(compacted.StartedAt),
+	})
 }
 
 // HandleGetCompactionProgress returns the progress of a compaction.
@@ -1388,19 +1433,46 @@ func (s *Server) HandleGetCompactionProgress(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Note: Compaction progress tracking not implemented
-	resp := &CompactionProgressResponse{
-		OperationID:         operationID,
-		Namespace:           "",
-		BytesCompacted:      0,
-		TotalBytes:          0,
-		PercentComplete:     0.0,
-		ElapsedTimeMs:       0,
-		SpaceReclaimedBytes: 0,
-		Status:              "unknown",
+	vectorService := s.service.Vector()
+	if vectorService == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, &ServiceUnavailableError{
+			Message: "vector service not available",
+		})
+		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, resp)
+	// The service finds the operation in the caller's tenant only.
+	progress, err := vectorService.GetCompactionProgress(r.Context(), &service.GetCompactionProgressRequest{
+		OperationID: operationID,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	var status string
+	switch {
+	case progress.Error != "":
+		status = "failed"
+	case progress.InProgress:
+		status = "running"
+	default:
+		status = "completed"
+	}
+	elapsed := time.Since(time.Unix(0, progress.StartedAt))
+	if progress.CompletedAt != nil {
+		elapsed = time.Unix(0, *progress.CompletedAt).Sub(time.Unix(0, progress.StartedAt))
+	}
+
+	RespondJSON(w, r, http.StatusOK, &CompactionProgressResponse{
+		OperationID:     progress.OperationID,
+		Namespace:       progress.Namespace,
+		BytesCompacted:  progress.BytesCompacted,
+		TotalBytes:      progress.TotalBytes,
+		PercentComplete: progress.PercentComplete,
+		ElapsedTimeMs:   elapsed.Milliseconds(),
+		Status:          status,
+	})
 }
 
 // HandleExportVectors exports vectors from a namespace.

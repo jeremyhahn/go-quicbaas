@@ -62,5 +62,21 @@ MCP tools: `qrdb_vector_batch_delete`, `qrdb_vector_batch_upsert`, `qrdb_vector_
 | `UpdateMetadata` | `PUT /api/v1/vector/namespaces/{namespace}/vectors/{id}/metadata` | yes | yes | yes | `quicbaas.Vector/UpdateMetadata` | `vector:update_metadata` |
 | `Upsert` | `POST /api/v1/vector/namespaces/{namespace}/vectors` | **no** | yes | yes | `quicbaas.Vector/Upsert` | — |
 
+### go-qrdb's vector and HNSW service — `sdk/go/qrdb_vector.go`
 
+`QRDBClient.Vector()` returns go-qrdb's own `VectorClient`, re-exported as
+`quicbaas.QRDBVectorClient`. `sdk/go/qrdb_vector.go` re-exports every type a
+call needs, so a consumer does not import go-qrdb:
 
+- the request, response and result types, with a `QRDB` prefix (for example
+  `QRDBCreateNamespaceRequest`, `QRDBSearchSimilarRequest` and
+  `QRDBRebuildIndexRequest`)
+- the namespace and vector error types, and `QRDBDimensionMismatchError` for a vector of the wrong dimension
+- the distance metrics `QRDBDistanceCosine`, `QRDBDistanceEuclidean` and
+  `QRDBDistanceDotProduct`
+- the index types `QRDBIndexHNSW`, `QRDBIndexFlat` and `QRDBIndexIVFFlat`
+
+HNSW parameters go in `QRDBCreateNamespaceRequest.IndexConfig` (for example
+`m` and `ef_construction`) and in `QRDBSearchSimilarRequest.EfSearch`.
+QuicBaaS's own `quicbaas.Vector` (above) is a parallel implementation. It
+stays until the owner orders its removal.

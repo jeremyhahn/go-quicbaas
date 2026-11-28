@@ -69,21 +69,42 @@ type vectorServiceMetrics struct {
 
 // RebuildJobState tracks the state of an index rebuild job.
 type RebuildJobState struct {
-	JobID            string
-	Namespace        string
+	JobID     string
+	Namespace string
+	// Tenant is the tenant that started the job, in the services' convention
+	// ("" is the system scope). Progress lookups return the job only to it.
+	Tenant           string
 	InProgress       bool
 	VectorsProcessed uint64
 	TotalVectors     uint64
 	StartedAt        time.Time
 	CompletedAt      *time.Time
 	Error            error
-	mu               sync.RWMutex
+	// DistanceMetric is the namespace's stored metric, read when the job starts.
+	DistanceMetric string
+	mu             sync.RWMutex
+}
+
+// vectorIndexDistanceMetric maps a namespace's stored distance metric to the
+// index config's metric name; anything unrecognised gives l2.
+func vectorIndexDistanceMetric(stored string) string {
+	switch stored {
+	case "COSINE", "cosine":
+		return "cosine"
+	case "DOT_PRODUCT", "dot_product":
+		return "dot_product"
+	default:
+		return "l2"
+	}
 }
 
 // CompactionJobState tracks the state of a compaction job.
 type CompactionJobState struct {
-	OperationID    string
-	Namespace      string
+	OperationID string
+	Namespace   string
+	// Tenant is the tenant that started the job, in the services' convention
+	// ("" is the system scope). Progress lookups return the job only to it.
+	Tenant         string
 	InProgress     bool
 	BytesCompacted int64
 	TotalBytes     int64
@@ -353,15 +374,7 @@ func (v *vectorService) ensureIndex(ctx context.Context, namespace string) (inte
 	}
 
 	// Parse distance metric from storage
-	var distanceMetric string
-	switch info.DistanceMetric {
-	case "COSINE", "cosine":
-		distanceMetric = "cosine"
-	case "DOT_PRODUCT", "dot_product":
-		distanceMetric = "dot_product"
-	default:
-		distanceMetric = "l2"
-	}
+	distanceMetric := vectorIndexDistanceMetric(info.DistanceMetric)
 
 	// Create vector index via factory
 	config := interfaces.DefaultVectorIndexConfig()
@@ -431,6 +444,24 @@ func (v *vectorService) vectorClient() (qrdbtransport.VectorClient, error) {
 		}
 	}
 	return client.Vector(), nil
+}
+
+// invalidateScan tells a storage that caches namespace scans that the
+// namespace was written through the SDK client, not through the storage.
+func (v *vectorService) invalidateScan(namespace string) {
+	if inv, ok := v.storage.(interfaces.VectorScanInvalidator); ok {
+		inv.InvalidateScan(namespace)
+	}
+}
+
+// beginStorageWrite tells a storage whose full scans check for writes that
+// a write of namespace through the SDK client starts. Call the returned
+// func once the write returns, before invalidateScan.
+func (v *vectorService) beginStorageWrite(namespace string) func() {
+	if t, ok := v.storage.(interfaces.VectorWriteTracker); ok {
+		return t.BeginVectorWrite(namespace)
+	}
+	return func() {}
 }
 
 // =============================================================================
@@ -586,10 +617,13 @@ func (v *vectorService) DeleteNamespace(ctx context.Context, req *DeleteNamespac
 	v.logger.WithField("namespace", req.Namespace).Debug("deleting namespace via SDK")
 
 	// Delegate to SDK which handles Raft consensus internally
+	done := v.beginStorageWrite(scopedNamespace)
 	sdkResp, err := vc.DeleteNamespace(ctx, &qrdbtransport.DeleteNamespaceRequest{
 		Namespace: scopedNamespace,
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
+	done()
+	v.invalidateScan(scopedNamespace)
 	if err != nil {
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("delete_namespace", "sdk_error").Inc()
@@ -872,6 +906,7 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 	}
 
 	// Delegate to SDK which handles Raft consensus internally
+	done := v.beginStorageWrite(scopedNamespace)
 	sdkResp, err := vc.UpsertVector(ctx, &qrdbtransport.UpsertVectorRequest{
 		Namespace: scopedNamespace,
 		ID:        req.ID,
@@ -879,6 +914,8 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 		Metadata:  req.Metadata,
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
+	done()
+	v.invalidateScan(scopedNamespace)
 	if err != nil {
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("upsert_vector", "sdk_error").Inc()
@@ -1028,11 +1065,14 @@ func (v *vectorService) DeleteVector(ctx context.Context, req *DeleteVectorReque
 	}
 
 	// Delegate to SDK which handles Raft consensus internally
+	done := v.beginStorageWrite(scopedNamespace)
 	sdkResp, err := vc.DeleteVector(ctx, &qrdbtransport.DeleteVectorRequest{
 		Namespace: scopedNamespace,
 		ID:        req.ID,
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
+	done()
+	v.invalidateScan(scopedNamespace)
 	if err != nil {
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("delete_vector", "sdk_error").Inc()
@@ -1120,11 +1160,14 @@ func (v *vectorService) BatchUpsert(ctx context.Context, req *BatchUpsertRequest
 	}
 
 	// Delegate to SDK which handles Raft consensus internally
+	done := v.beginStorageWrite(scopedNamespace)
 	sdkResp, err := vc.BatchUpsert(ctx, &qrdbtransport.BatchUpsertRequest{
 		Namespace: scopedNamespace,
 		Vectors:   sdkVectors,
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
+	done()
+	v.invalidateScan(scopedNamespace)
 	if err != nil {
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("batch_upsert", "sdk_error").Inc()
@@ -1479,10 +1522,12 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 	job := &RebuildJobState{
 		JobID:            jobID,
 		Namespace:        scopedNamespace,
+		Tenant:           tenantID,
 		InProgress:       true,
 		VectorsProcessed: 0,
 		TotalVectors:     info.VectorCount,
 		StartedAt:        time.Now(),
+		DistanceMetric:   info.DistanceMetric,
 	}
 
 	v.jobMu.Lock()
@@ -1492,7 +1537,9 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 	// If async, start background rebuild
 	if req.Async {
 		go func() {
-			if err := v.performIndexRebuild(ctx, jobID, scopedNamespace, req.IndexConfig); err != nil {
+			// The request context ends when the accepted response is written;
+			// the background job keeps its values but not its cancellation.
+			if err := v.performIndexRebuild(context.WithoutCancel(ctx), jobID, scopedNamespace, req.IndexConfig); err != nil {
 				v.logger.WithFields(map[string]interface{}{
 					"job_id":    jobID,
 					"namespace": req.Namespace,
@@ -1545,19 +1592,36 @@ func (v *vectorService) GetRebuildProgress(ctx context.Context, req *GetRebuildP
 		return nil, err
 	}
 
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scoped := vectorTenantScopedNamespace(tenantID, req.Namespace)
+
 	var job *RebuildJobState
 	var found bool
 
 	v.jobMu.RLock()
 	if req.JobID != "" {
-		// Find by job ID
+		// Find by job ID; a job of another tenant, or of another namespace
+		// when one is requested, is reported as not found
 		job, found = v.rebuildJobs[req.JobID]
+		if found {
+			job.mu.RLock()
+			if job.Tenant != tenantID {
+				found = false
+			}
+			if req.Namespace != "" && job.Namespace != scoped {
+				found = false
+			}
+			job.mu.RUnlock()
+		}
 	} else {
 		// Find by namespace (return most recent job)
 		var latestStartTime time.Time
 		for _, j := range v.rebuildJobs {
 			j.mu.RLock()
-			if j.Namespace == req.Namespace && j.StartedAt.After(latestStartTime) {
+			if j.Tenant == tenantID && j.Namespace == scoped && j.StartedAt.After(latestStartTime) {
 				job = j
 				latestStartTime = j.StartedAt
 				found = true
@@ -1629,7 +1693,7 @@ func (v *vectorService) GetRebuildProgress(ctx context.Context, req *GetRebuildP
 
 	return &GetRebuildProgressResponse{
 		JobID:                    job.JobID,
-		Namespace:                job.Namespace,
+		Namespace:                vectorTenantStripNamespace(tenantID, job.Namespace),
 		Status:                   status,
 		VectorsProcessed:         job.VectorsProcessed,
 		TotalVectors:             job.TotalVectors,
@@ -1676,8 +1740,11 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 		}
 	}
 
-	// Create new vector index via factory
+	// Create new vector index via factory, with the namespace's metric
 	config := interfaces.DefaultVectorIndexConfig()
+	job.mu.RLock()
+	config.DistanceMetric = vectorIndexDistanceMetric(job.DistanceMetric)
+	job.mu.RUnlock()
 
 	// Parse custom config if provided
 	if indexConfig != nil {
@@ -1724,30 +1791,22 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 		}
 	}
 
-	// Scan all vectors and rebuild index
+	// Scan all vectors and rebuild index; the index needs the embeddings.
 	opts := &interfaces.VectorScanOptions{
-		Limit: 1000,
+		Limit:          1000,
+		IncludeVectors: true,
 	}
-
-	offset := 0
-	for {
-		opts.Offset = offset
-		vecs, err := v.storage.ScanNamespace(ctx, namespace, opts)
-		if err != nil {
-			job.mu.Lock()
-			job.Error = err
-			job.mu.Unlock()
-			return &qbErrors.QBError{
-				Code: qbErrors.ErrInternal,
-				Op:   "vector.performIndexRebuild",
-				Err:  &api.OperationFailedError{Operation: "scan vectors", Cause: err},
-			}
+	scanFailed := func(err error) error {
+		job.mu.Lock()
+		job.Error = err
+		job.mu.Unlock()
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
+			Op:   "vector.performIndexRebuild",
+			Err:  &api.OperationFailedError{Operation: "scan vectors", Cause: err},
 		}
-
-		if len(vecs) == 0 {
-			break
-		}
-
+	}
+	insertAll := func(vecs []*interfaces.VectorValue) {
 		for _, vec := range vecs {
 			if err := newIndex.Insert(vec.ID, vec.Embedding); err != nil {
 				v.logger.WithFields(map[string]interface{}{
@@ -1761,12 +1820,36 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 			job.VectorsProcessed++
 			job.mu.Unlock()
 		}
+	}
 
-		offset += len(vecs)
+	if full, ok := v.storage.(interfaces.VectorFullScanner); ok {
+		// One read: each offset page would reread the whole namespace.
+		vecs, err := full.ScanAllVectors(ctx, namespace, &interfaces.VectorScanOptions{IncludeVectors: true})
+		if err != nil {
+			return scanFailed(err)
+		}
+		insertAll(vecs)
+	} else {
+		offset := 0
+		for {
+			opts.Offset = offset
+			vecs, err := v.storage.ScanNamespace(ctx, namespace, opts)
+			if err != nil {
+				return scanFailed(err)
+			}
 
-		// Break if we got less than requested
-		if len(vecs) < opts.Limit {
-			break
+			if len(vecs) == 0 {
+				break
+			}
+
+			insertAll(vecs)
+
+			offset += len(vecs)
+
+			// Break if we got less than requested
+			if len(vecs) < opts.Limit {
+				break
+			}
 		}
 	}
 
@@ -2281,6 +2364,7 @@ func (v *vectorService) CompactNamespace(ctx context.Context, req *CompactNamesp
 	job := &CompactionJobState{
 		OperationID: operationID,
 		Namespace:   scopedNamespace,
+		Tenant:      tenantID,
 		InProgress:  true,
 		TotalBytes:  int64(info.StorageBytes),
 		StartedAt:   time.Now(),
@@ -2435,12 +2519,31 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	}
 	v.mu.RUnlock()
 
+	// A job is returned only to the tenant that started it: the scoped
+	// namespace alone does not name the owner, since a system namespace can
+	// spell a tenant's scoped name.
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scoped := vectorTenantScopedNamespace(tenantID, req.Namespace)
+
 	v.jobMu.RLock()
 	defer v.jobMu.RUnlock()
 
-	// If operation ID provided, look for specific job
+	// If operation ID provided, look for specific job; a job of another
+	// tenant, or of another namespace when one is requested, is reported
+	// as not found.
 	if req.OperationID != "" {
 		job, exists := v.compactionJobs[req.OperationID]
+		if exists {
+			job.mu.RLock()
+			exists = job.Tenant == tenantID
+			if req.Namespace != "" && job.Namespace != scoped {
+				exists = false
+			}
+			job.mu.RUnlock()
+		}
 		if !exists {
 			return nil, &qbErrors.QBError{
 				Code: qbErrors.ErrNotFound,
@@ -2473,7 +2576,7 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 
 		return &GetCompactionProgressResponse{
 			OperationID:     job.OperationID,
-			Namespace:       job.Namespace,
+			Namespace:       vectorTenantStripNamespace(tenantID, job.Namespace),
 			BytesCompacted:  job.BytesCompacted,
 			TotalBytes:      job.TotalBytes,
 			PercentComplete: percentComplete,
@@ -2487,11 +2590,13 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	// Find the most recent job for the namespace
 	var latestJob *CompactionJobState
 	for _, job := range v.compactionJobs {
-		if job.Namespace == req.Namespace {
+		job.mu.RLock()
+		if job.Tenant == tenantID && job.Namespace == scoped {
 			if latestJob == nil || job.StartedAt.After(latestJob.StartedAt) {
 				latestJob = job
 			}
 		}
+		job.mu.RUnlock()
 	}
 
 	if latestJob == nil {
@@ -2526,7 +2631,7 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 
 	return &GetCompactionProgressResponse{
 		OperationID:     latestJob.OperationID,
-		Namespace:       latestJob.Namespace,
+		Namespace:       vectorTenantStripNamespace(tenantID, latestJob.Namespace),
 		BytesCompacted:  latestJob.BytesCompacted,
 		TotalBytes:      latestJob.TotalBytes,
 		PercentComplete: percentComplete,
@@ -2840,8 +2945,9 @@ func (v *vectorService) UpdateMetadata(ctx context.Context, req *UpdateVectorMet
 	}
 
 	// Update vector using upsert with existing embedding values
+	// UpsertVector scopes the namespace to the tenant itself, so it takes the caller's unscoped name.
 	upsertReq := &UpsertVectorRequest{
-		Namespace: scopedNamespace,
+		Namespace: req.Namespace,
 		ID:        req.ID,
 		Vector:    existingVector.Embedding,
 		Metadata:  newMetadata,
