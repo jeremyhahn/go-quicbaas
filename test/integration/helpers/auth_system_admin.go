@@ -50,7 +50,7 @@ var systemAdminBearers = &systemAdminBearerCache{bearers: map[string]systemAdmin
 func (c *systemAdminBearerCache) bearer(ctx context.Context, baseURL string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if cached, ok := c.bearers[baseURL]; ok && time.Now().Before(cached.expiry) {
+	if cached, ok := c.bearers[baseURL]; ok && pivCachedTokenUsable(pivCachedToken{Bearer: cached.token, ExpiresAt: cached.expiry}, time.Now()) {
 		return cached.token, nil
 	}
 	token, expiry, err := AuthPIVSession(ctx, baseURL, "", "", "")

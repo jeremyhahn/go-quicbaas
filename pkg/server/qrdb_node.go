@@ -654,7 +654,7 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 	// every native unseal goes through the hooked barrier facade
 	// (go-quicbaas 2212). The router's inner servicer is the node's own
 	// service, never GetQRDBTenantServicer, which returns the router.
-	s.tenantUnsealRouter = newTenantUnsealRouter(s.rawQRDBTenantServicer, s.buildTenantBarrierService)
+	s.tenantUnsealRouter = s.newNodeTenantRouter(s.rawQRDBTenantServicer)
 	serverOpts = append(serverOpts, qrdbserver.WithTenantService(s.tenantUnsealRouter))
 	serverOpts = append(serverOpts, s.nodeBarrierServerOptions(sealEnabled)...)
 	// Compose go-qrdb's embedding service on REST, gRPC, QUIC, Unix and MCP.

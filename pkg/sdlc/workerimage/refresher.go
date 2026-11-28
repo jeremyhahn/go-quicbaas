@@ -778,8 +778,9 @@ func (r *Refresher) smokePlan(staleUses []imageUse) []smokeTarget {
 	return plan
 }
 
-// gate runs the probes against exactly imageID and the smokes against its tag,
-// then proves the tag still names the gated build.
+// gate runs the probes against exactly imageID and the smokes against the same
+// build (see stage), then proves the tag still names the gated build, because
+// local mode repoints Agents to the tag.
 func (r *Refresher) gate(ctx context.Context, report *Report, build softwarefactoryworker.Build,
 	imageID, localRef string, staleUses []imageUse) error {
 	probes, err := RunProbes(ctx, r.deps.Engine, imageID, build)
@@ -791,10 +792,19 @@ func (r *Refresher) gate(ctx context.Context, report *Report, build softwarefact
 		return &GateError{Image: localRef, Failed: failed}
 	}
 
+	plan := r.smokePlan(staleUses)
+	smokeRef := imageID
+	if len(plan) > 0 {
+		staged, err := r.stage(ctx, imageID, build, localRef)
+		if err != nil {
+			return err
+		}
+		smokeRef = staged
+	}
 	var failed []string
-	for _, target := range r.smokePlan(staleUses) {
+	for _, target := range plan {
 		name := target.use.Backend + "/" + cmp.Or(target.model, "(backend default)")
-		reply, err := r.smoke(ctx, target, localRef)
+		reply, err := r.smoke(ctx, target, smokeRef)
 		result := CheckResult{Name: name, Passed: err == nil, Detail: tail(reply)}
 		if err != nil {
 			result.Detail = tail(err.Error())
@@ -806,8 +816,9 @@ func (r *Refresher) gate(ctx context.Context, report *Report, build softwarefact
 		return &GateError{Image: localRef, Failed: failed}
 	}
 
-	// The smokes spawned by TAG; the probes ran by ID. They are the same build
-	// only if nothing retagged the candidate while the gate ran.
+	// The probes ran by ID, and the smokes by ID or by the staged digest:
+	// neither can name a substitute build. Local mode repoints the Agents to
+	// the tag, so the tag must still name the gated build at promotion.
 	after, err := r.deps.Engine.InspectImage(ctx, localRef)
 	if err != nil {
 		return err
@@ -818,7 +829,8 @@ func (r *Refresher) gate(ctx context.Context, report *Report, build softwarefact
 	return nil
 }
 
-// smoke runs one smoke on the agent that holds the candidate.
+// smoke runs one smoke of the candidate on the agent's host: its image ID,
+// or with a registry the staged candidate's digest-pinned reference.
 func (r *Refresher) smoke(ctx context.Context, target smokeTarget, image string) (string, error) {
 	host := r.cfg.SmokeHost
 	if host == "" {
@@ -832,6 +844,34 @@ func (r *Refresher) smoke(ctx context.Context, target smokeTarget, image string)
 		TenantID: target.use.TenantID, ProjectID: target.use.ProjectID,
 		Backend: target.use.Backend, Model: target.model, Image: image, Host: host,
 	})
+}
+
+// CandidateTagSuffix names the staging tag a candidate is pushed under before
+// its smokes: the build's own tag, suffixed, so the release tag moves only
+// once the gate has passed.
+const CandidateTagSuffix = "-candidate"
+
+// stage makes the exact candidate reachable by the agent the smokes run on.
+// The candidate is built in this process's engine store, which an agent's
+// in-process runtime does not share, so with a registry configured it is
+// pushed under the staging tag and smoked by the digest that push returned:
+// the agent pulls that build and no other. With no registry (local mode) the
+// smokes take the built image ID, which only an agent on the same engine
+// holds and no engine can pull a substitute for.
+func (r *Refresher) stage(ctx context.Context, imageID string, build softwarefactoryworker.Build, localRef string) (string, error) {
+	if r.cfg.Registry == "" {
+		return imageID, nil
+	}
+	remote := r.cfg.Registry + ":" + build.Tag() + CandidateTagSuffix
+	digest, err := r.push(ctx, imageID, remote)
+	if err != nil {
+		return "", err
+	}
+	if digest == "" {
+		return "", &GateError{Image: localRef, Failed: []string{"the staged candidate " + remote + " has no digest to smoke"}}
+	}
+	r.deps.Logger.Info("worker image: staged candidate", "reference", remote, "digest", digest)
+	return remote + "@" + digest, nil
 }
 
 // publish returns the reference Agents are repointed to. With a registry it

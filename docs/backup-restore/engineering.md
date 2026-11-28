@@ -5,6 +5,29 @@
 
 QuicBaaS supports multiple storage backends for backup operations.
 
+## What Is Backed Up
+
+The server builds the backup manager (`pkg/backup`) on
+`backupLiveStorage` (`pkg/server/backup_live_storage.go`), an
+`interfaces.Storage` over the embedded qrdb node's platform shard
+(`qbshards.PlatformShardID`, raw keys, so tenant-routed keys under their
+prefixes are included). The adapter resolves the node's key/value store on
+every call, so the manager can start before the node and always reads
+the running node. With no qrdb client it returns
+`BackupStoreUnavailableError` instead of panicking.
+
+The server passes no raft node, so `CreateBackup` takes one whole-store
+snapshot as shard 0 (`wholeStoreShardID`, `NumShards` 1) with zero Raft
+index and term. The iterator is a sorted scan taken at call time. With a
+raft node the manager still snapshots each shard the node reports.
+`RestoreBackup` writes each record back with `Set`, honouring
+`SkipExisting`, and deletes nothing, so keys created after the backup
+remain. `Compact`, `Flush` and `Close` are no-ops: the node owns its
+storage.
+
+The qrdb.v1 `BackupCreate` proxy is separate and still refuses until
+go-qrdb gains a durable backup sink.
+
 ## Supported Backends
 
 | Backend | Type Flag | Description |
@@ -91,7 +114,7 @@ Azure Blob Storage for enterprise Azure environments.
 **Environment Variables:**
 - `AZURE_STORAGE_ACCOUNT`: Storage account name
 - `AZURE_STORAGE_KEY`: Storage account key
-- `AZURE_STORAGE_CONNECTION_STRING`: Full connection string (alternative)
+- `AZURE_STORAGE_CONNECTION_STRING`: not supported by the backup storage backend (refused)
 - `AZURE_STORAGE_CONTAINER`: Default container name
 
 **Example:**
@@ -106,7 +129,7 @@ quicbaas backup create my-backup \
 ```
 
 ```bash
-# Using connection string
+# Not supported: the backup storage backend refuses a connection string
 export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=..."
 
 quicbaas backup create my-backup \

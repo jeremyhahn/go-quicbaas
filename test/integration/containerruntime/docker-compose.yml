@@ -1,13 +1,5 @@
 ##############################################################################
-# Container Runtime Integration Test Environment
-#
-#   registry   — local OCI registry the tests push their images to
-#   test       — privileged runner: pulls from the registry, unpacks with
-#                go.podman.io/storage and runs containers with libcontainer
-#
-# Usage:
-#   make integration-test-containerruntime
-##############################################################################
+############################################################################## Container runtime integration test environment.
 
 services:
   registry:
@@ -40,8 +32,7 @@ networks:
   containerruntime-net:
     driver: bridge
 
-# Staged by `make stage-gomodauth` and emptied after the build
-# (docs/testing/private-modules.md).
+# Staged by `make stage-gomodauth` and emptied after the build.
 secrets:
   gomodauth:
     file: ${GOMODAUTH_ENV:-/tmp/quicbaas-gomodauth.env}

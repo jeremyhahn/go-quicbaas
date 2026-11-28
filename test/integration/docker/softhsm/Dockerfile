@@ -1,5 +1,4 @@
-# Multi-stage build for SoftHSM v2
-# Based on Alpine 3.22.1 for minimal image size
+# SoftHSM v2 on Alpine 3.22.1.
 
 # Build stage
 FROM alpine:3.22.1 AS builder
